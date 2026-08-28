@@ -362,7 +362,22 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
     auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
     for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
       auto image = reinterpret_cast<VkImage>(session.SwapchainImage(i));
-      xr_textures.push_back(std::make_unique<plume::VulkanTexture>(vk_device, image));
+      auto tex = std::make_unique<plume::VulkanTexture>(vk_device, image);
+      // The VkImage constructor sets only the handle and the device - desc,
+      // imageFormat and the subresource range are all left zeroed, because
+      // plume normally fills them in from the swapchain that owns the image.
+      // Without them copyTexture computes a 0x0 region and copies nothing,
+      // which is a black layer rather than any kind of error.
+      tex->desc.width = session.SwapchainWidth();
+      tex->desc.height = session.SwapchainHeight();
+      tex->desc.depth = 1;
+      tex->desc.mipLevels = 1;
+      tex->desc.arraySize = 1;
+      tex->desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
+      tex->desc.format = plume::RenderFormat::R8G8B8A8_UNORM;
+      tex->imageFormat = static_cast<VkFormat>(session.SwapchainFormat());
+      tex->imageSubresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+      xr_textures.push_back(std::move(tex));
     }
     swapchain_ready = true;
     BD_INFO("[xr] quad swapchain ready, {} images wrapped", xr_textures.size());
@@ -380,12 +395,18 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
   s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0, to_copy, 2);
   s.command_list->copyTexture(dst, back);
 
-  // Back to what the flat present expects to hand to the swapchain.
-  const plume::RenderTextureBarrier to_present[] = {
+  // Both images have to be handed back in the layout their owner expects.
+  // OpenXR requires a released swapchain image to be in the layout implied by
+  // its usage flags - COLOR_ATTACHMENT_OPTIMAL for a colour attachment - and
+  // leaving it in COPY_DEST is undefined, which on Quest shows as a black
+  // layer rather than an error. The back buffer goes back to PRESENT for the
+  // flat present that follows.
+  const plume::RenderTextureBarrier restore[] = {
+      plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COLOR_WRITE),
       plume::RenderTextureBarrier(back, plume::RenderTextureLayout::PRESENT),
   };
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
-                           to_present, 1);
+                           restore, 2);
 
   session.ReleaseSwapchainImage();
   // 2 m wide at 2 m distance is roughly a 60-inch screen - big enough to read

@@ -423,7 +423,9 @@ bool Session::CreateSwapchain(u32 width, u32 height) {
 
   int64_t chosen = 0;
   for (int64_t format : formats) {
-    if (format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_R8G8B8A8_UNORM) {
+    // UNORM ahead of SRGB: the game's own swapchain is UNORM and the frame is
+    // copied across verbatim, so matching exactly avoids a colour shift.
+    if (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB) {
       chosen = format;
       break;
     }
