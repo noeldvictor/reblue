@@ -109,15 +109,34 @@ bool BuildNullTextureDescriptors(VideoState &s) {
 } // namespace
 
 bool BuildPipelineLayout(VideoState &s) {
+  // The bindless sets below use a variable-size descriptor array, which is
+  // VK_EXT_descriptor_indexing - core in Vulkan 1.2, optional at 1.1. A driver
+  // without it does not refuse politely; plume builds the set anyway and the
+  // result is a jump through a pointer holding a small integer. Say so instead.
+  const bool bindless_ok = s.device->getCapabilities().descriptorIndexing;
+  BD_INFO("[device] descriptorIndexing={} bindless textures={} samplers={}",
+          bindless_ok, kBindlessTextureCount, kBindlessSamplerCount);
+  if (!bindless_ok) {
+    BD_ERROR("This GPU has no descriptor indexing, which the bindless renderer "
+             "requires. A non-bindless path would be needed here.");
+    return false;
+  }
+
   plume::RenderPipelineLayoutBuilder layout_builder;
+  BD_INFO("[device] layout_builder.begin");
   layout_builder.begin(false, true);
 
   plume::RenderDescriptorSetBuilder tex_set_builder;
+  BD_INFO("[device] tex_set_builder.begin");
   tex_set_builder.begin();
+  BD_INFO("[device] tex_set_builder.addTexture");
   tex_set_builder.addTexture(0, kBindlessTextureCount);
+  BD_INFO("[device] tex_set_builder.end");
   tex_set_builder.end(true, kBindlessTextureCount);
 
+  BD_INFO("[device] tex_set_builder.create");
   s.texture_descriptor_set = tex_set_builder.create(s.device.get());
+  BD_INFO("[device] texture descriptor set created");
   if (!s.texture_descriptor_set) {
     BD_ERROR("Plume createDescriptorSet for bindless textures failed");
     return false;

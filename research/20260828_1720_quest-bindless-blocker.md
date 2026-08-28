@@ -1,4 +1,13 @@
-# Research: the Quest 2 blocker is bindless, not the port
+# Research: tracing the Quest 2 GPU-init crash
+
+> **Correction, later the same session.** The first version of this note
+> concluded the blocker was the 65,536-entry bindless heap on a Vulkan 1.1
+> device without descriptor indexing. **That was wrong**, and testing it on
+> hardware is what showed it: the Adreno 650 reports
+> `descriptorIndexing=true`, and with the heap cut to 4096 the descriptor set
+> is created successfully. The crash is one call further on. The reasoning
+> below is kept because the elimination is worth having; the conclusion in
+> §3 is superseded by §6.
 
 Date: 2026-08-28 17:20
 Topic: why the runtime crashes on a Quest 2 after Vulkan comes up, and what it means for the port.
@@ -72,7 +81,30 @@ instructions are 4-byte aligned. That is a jump through a pointer holding a smal
 data access — the shape of calling an entry point that was never loaded, or dereferencing a handle
 the driver refused to create.
 
-## 4. What this means for the port
+## 6. What the device actually said
+
+Probing each statement, on the Quest:
+
+```
+[device] descriptorIndexing=true bindless textures=4096 samplers=256
+[device] layout_builder.begin
+[device] tex_set_builder.begin / addTexture / end / create
+[device] texture descriptor set created      <-- succeeds
+================ reblue host crash ================
+```
+
+So descriptor indexing is present, a 4096-entry bindless texture set builds
+fine, and the crash is in the **next** call: `BuildNullTextureDescriptors(s)`,
+which creates the placeholder textures and writes their descriptors. That is
+where to look next, and it is a much smaller target than "the bindless
+renderer".
+
+The 65,536 heap is still worth sizing from
+`maxDescriptorSetUpdateAfterBindSampledImages` rather than hardcoding - it is a
+desktop number and this is a 512 MB console game - but it is not what is
+crashing.
+
+## 7. What this means for the port
 
 The remaining work is a **renderer** change, not a platform one. Options, cheapest first:
 
