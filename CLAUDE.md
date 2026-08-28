@@ -19,8 +19,9 @@ services or reaches into the recompiled guest through hooks.
 3. **Cel shading on characters**, optional and toggled from the in-game options menu.
 4. **Tourist mode** — infinite HP, 999 stats, encounter suppression, for sightseeing in VR.
 
-None of it is playable yet. The VR maths, camera modes and stereo culling are written and tested;
-the OpenXR session, the stereo renderer and the Android target are not.
+Blue Dragon boots into VR on a Quest 2 at its native 30 fps, with working Touch controllers and
+the head pose driving the game's own camera. What is missing is genuine stereo: the scene renders
+once, from one eye, onto a world-locked quad. Cel shading and tourist mode are untouched.
 **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md) is the working plan** and the place to look before
 starting anything; the section below is the condensed version.
 
@@ -114,11 +115,17 @@ The Android target builds and runs on a Quest 2. `tools/build_apk.sh` packages i
 from `tools/extract_game_data.py`, and `args.txt` beside the game data appends cvars without
 rebuilding the APK - use it, a 62 MB reinstall to change a log level is not a dev loop.
 
-It gets as far as: XEX loaded, 154 kernel imports patched, guest heap up, VFS mounting 70008 records
-of real game data, Vulkan 1.1 on the Adreno 650, swapchain created. It then crashes in
-`BuildPipelineLayout`, and the cause is architectural rather than a porting gap: `kBindlessTextureCount`
-is **65536**, and the Quest 2 is a Vulkan 1.1 device where descriptor indexing is optional and mobile
-descriptor limits are far lower. See `research/20260828_1720_quest-bindless-blocker.md`.
+It runs: XEX loaded, 154 kernel imports patched, guest heap up, VFS mounting 70008 records of real
+game data, Vulkan 1.1 on the Adreno 650, the guest rendering, and OpenXR compositing it at 30 fps.
+
+The one shortcut still in place is the sun occlusion descriptor set, which is **dropped** on Android
+rather than fixed. Adreno exposes `maxBoundDescriptorSets = 4` where a desktop GPU reports 8 or 32,
+and this renderer wants five. Dropping it costs four pipelines that still declare bindings there, so
+they fail to create. The real fix is to collapse sets 0/1/2, which are one physical descriptor set
+bound three times to satisfy three HLSL register spaces. See
+`research/20260828_1720_quest-bindless-blocker.md` - and note that note's own correction: the
+65536-entry bindless heap was a wrong first hypothesis, since the Adreno 650 does report
+`descriptorIndexing`.
 
 Diagnostics that exist now and should be used before guessing: the SDK logs to logcat on Android
 (spdlog android_sink), `crash_handler.cpp` unwinds with `_Unwind_Backtrace` and reports the faulting
