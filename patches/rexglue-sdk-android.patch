@@ -274,7 +274,7 @@ index 1645848..25d960e 100644
    auto sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
  #endif
 diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
-index b52bf39..2cdcd55 100644
+index b52bf39..d68a01f 100644
 --- a/src/core/memory_posix.cpp
 +++ b/src/core/memory_posix.cpp
 @@ -53,8 +53,7 @@
@@ -287,6 +287,38 @@ index b52bf39..2cdcd55 100644
  #endif
  
  namespace rex {
+@@ -432,6 +431,31 @@ bool QueryProtect(void* base_address, size_t& length, PageAccess& access_out) {
+ FileMappingHandle CreateFileMappingHandle(const std::filesystem::path& path, size_t length,
+                                           PageAccess access, bool commit) {
+ #if REX_PLATFORM_ANDROID
++  // Prefer a sparse file in the app's own temporary directory.
++  //
++  // ASharedMemory is tmpfs-backed, and tmpfs is capped near half of RAM. The
++  // guest arena is ~4.5 GB of *address space* - the console itself only had
++  // 512 MB - so on a 6 GB device the region is created and mapped happily and
++  // then SIGBUSes the moment a page is faulted in, because there is nothing to
++  // back it. SIGBUS rather than SIGSEGV is the tell: the mapping exists, the
++  // object behind it is short.
++  //
++  // A regular file on the app's storage is sparse, so it costs only the pages
++  // actually touched. Android points TMPDIR at the app's cache directory.
++  if (const char* tmpdir = getenv("TMPDIR")) {
++    std::string file_path = std::string(tmpdir) + "/" + path.string();
++    int fd = open(file_path.c_str(), O_RDWR | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
++    if (fd >= 0) {
++      // Unlink immediately: the fd keeps it alive, and nothing has to clean up
++      // several gigabytes of file if the process dies badly.
++      unlink(file_path.c_str());
++      if (ftruncate(fd, static_cast<off_t>(length)) == 0) {
++        return static_cast<FileMappingHandle>(fd);
++      }
++      close(fd);
++    }
++  }
++
+   // TODO(Triang3l): Check if memfd can be used instead on API 30+.
+   if (android_ASharedMemory_create_) {
+     int sharedmem_fd = android_ASharedMemory_create_(path.c_str(), length);
 diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
 index 9ac8d15..5fe628a 100644
 --- a/src/core/threading_posix.cpp

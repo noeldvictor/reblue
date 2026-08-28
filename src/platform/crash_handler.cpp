@@ -41,11 +41,11 @@ extern "C"
 #else
 #include <cxxabi.h>
 #include <dlfcn.h>
-#if !defined(__ANDROID__)
+#if defined(__ANDROID__)
 // bionic ships no <execinfo.h>: backtrace() and backtrace_symbols() are glibc
-// extensions Android never adopted. Its own debuggerd writes a tombstone with
-// a proper unwound stack on a fatal signal, which is strictly better than what
-// this would have produced anyway.
+// extensions Android never adopted. The unwinder is there regardless.
+#include <unwind.h>
+#else
 #include <execinfo.h>
 #endif
 #include <pthread.h>
@@ -157,10 +157,41 @@ void LogBacktrace(u64 base) {
   }
 #elif defined(__ANDROID__)
   (void)base;
-  // See the include guard above: no backtrace() here. The signal is left to
-  // reach debuggerd, whose tombstone carries the unwound stack, and logcat
-  // already has everything BD_CRITICAL wrote on the way down.
-  BD_CRITICAL("backtrace unavailable on Android; see the tombstone in logcat");
+  // bionic has no backtrace(), and installing our own signal handler means
+  // debuggerd never writes a tombstone either - so without this a crash on
+  // Android reports an address and nothing else. libgcc's unwinder is always
+  // present, and dladdr turns each frame into a symbol.
+  struct Frames {
+    void *pc[32];
+    int count;
+  } frames{};
+  _Unwind_Backtrace(
+      [](_Unwind_Context *ctx, void *arg) -> _Unwind_Reason_Code {
+        auto *f = static_cast<Frames *>(arg);
+        const uintptr_t ip = _Unwind_GetIP(ctx);
+        if (!ip || f->count >= 32)
+          return _URC_END_OF_STACK;
+        f->pc[f->count++] = reinterpret_cast<void *>(ip);
+        return _URC_NO_REASON;
+      },
+      &frames);
+
+  BD_CRITICAL("backtrace ({} frames, top frames are the crash handler):",
+              frames.count);
+  for (int i = 0; i < frames.count; ++i) {
+    const u64 a = reinterpret_cast<u64>(frames.pc[i]);
+    Dl_info info{};
+    if (dladdr(frames.pc[i], &info) && info.dli_fname) {
+      // Offsets are relative to the shared object, which is what an addr2line
+      // against the unstripped .so wants.
+      const u64 rel = a - reinterpret_cast<u64>(info.dli_fbase);
+      BD_CRITICAL("    [{:>2}] {:#018x}  {}+{:#x}{}{}", i, a, info.dli_fname,
+                  rel, info.dli_sname ? "  " : "",
+                  info.dli_sname ? info.dli_sname : "");
+    } else {
+      BD_CRITICAL("    [{:>2}] {:#018x}", i, a);
+    }
+  }
 #else
   (void)base;
   void *frames[32] = {};
@@ -394,7 +425,7 @@ const char *SignalName(int sig) {
 // SIGSEGV/SIGILL stay with the SDK dispatcher, which needs first refusal on
 // them to service guest MMIO. These three have no owner, so take them directly:
 // without this the process vanishes with nothing in the log at all.
-void FatalSignalHandler(int sig, siginfo_t *info, void * /*context*/) {
+void FatalSignalHandler(int sig, siginfo_t *info, void *context) {
   if (s_reporting.test_and_set(std::memory_order_acq_rel))
     DieWithDefaultDisposition(sig);
 
@@ -404,6 +435,24 @@ void FatalSignalHandler(int sig, siginfo_t *info, void * /*context*/) {
   if (info && (sig == SIGBUS || sig == SIGFPE)) {
     BD_CRITICAL("fault address: {:#018x}",
                 reinterpret_cast<u64>(info->si_addr));
+#if defined(__ANDROID__) && defined(__aarch64__)
+    // The unwinder cannot walk back across __kernel_rt_sigreturn, so the
+    // backtrace below starts inside this handler and never reaches the code
+    // that faulted. The context does carry it: report the faulting PC and its
+    // offset within whichever shared object owns it, which is what an
+    // addr2line against the unstripped .so needs.
+    if (context) {
+      const auto *uc = static_cast<const ucontext_t *>(context);
+      const u64 pc = uc->uc_mcontext.pc;
+      Dl_info info_pc{};
+      if (dladdr(reinterpret_cast<void *>(pc), &info_pc) && info_pc.dli_fname) {
+        BD_CRITICAL("faulting pc:   {:#018x}  {}+{:#x}", pc, info_pc.dli_fname,
+                    pc - reinterpret_cast<u64>(info_pc.dli_fbase));
+      } else {
+        BD_CRITICAL("faulting pc:   {:#018x}", pc);
+      }
+    }
+#endif
   }
   LogBacktrace(HostModuleBase());
   BD_CRITICAL("===================================================");
