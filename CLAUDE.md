@@ -81,13 +81,18 @@ thirdparty/             plume (render backend), XenosRecomp, implot, stb, zstd, 
 | `src/ui/` | `bd::ui` | ImGui-based overlays and dialogs |
 | `src/audio/` | `bd::audio` | audio settings and debug |
 | `src/installer/` | `bd::installer` | the first-run disc wizard (desktop-only, `REBLUE_BUILD_INSTALLER`) |
-| `src/xr/` | `bd::xr` | VR: head pose to per-eye matrices, camera modes, world scale, XR settings |
+| `src/xr/` | `bd::xr` | VR: head pose to per-eye matrices, camera modes, world scale, stereo culling, XR settings |
 
-`src/xr/` splits deliberately. `xr_math.h`, `xr_camera.*` and `xr_settings.*` reach no OpenXR
-header, so they compile in every configuration and can be reasoned about without a headset — the
-coordinate conversion and the camera composition are the parts most likely to be subtly wrong, and
-keeping them dependency-free is what makes them checkable. The session, swapchain, frame loop and
-input go in `reblue_openxr_only` in `src/CMakeLists.txt` and build only under `REBLUE_OPENXR`.
+`src/xr/` splits deliberately. `xr_math.h`, `xr_camera.*`, `xr_cull.*` and `xr_settings.*` reach no
+OpenXR header, so they compile in every configuration and can be reasoned about without a headset —
+the coordinate conversion and the camera composition are the parts most likely to be subtly wrong,
+and keeping them dependency-free is what makes them checkable. The session, swapchain, frame loop
+and input go in `reblue_openxr_only` in `src/CMakeLists.txt` and build only under `REBLUE_OPENXR`.
+
+**Keep it that way.** `xr_camera` and `xr_cull` take their settings pushed in (`CameraTuning`,
+a margin argument) rather than reading `bd::xr::Settings`. That is not incidental — it is the only
+reason `tools/xr_math_test` can exercise them, and it has already caught two real bugs. Do not
+reintroduce a reach into the cvar singleton from either file.
 
 **Handedness lives in one place.** OpenXR is right-handed with -Z forward; Blue Dragon is D3D9-era
 left-handed with +Z forward, row-vector, row-major. They differ by a mirror on Z. Everything
@@ -289,8 +294,10 @@ right. Do not attempt to invent a VR renderer on a device with no debugger.
    `CreateVulkanInterface()` stays. It is a patch rather than a plume fork because forking a
    submodule means owning its history; see `patches/README.md`. **Not compiled** — no Vulkan SDK
    here — so building it is the first thing that happens on a real toolchain.
-2. `src/xr/` skeleton — **done** for the dependency-free half (maths, camera, settings, wired into
-   `ReblueApp::OnPostInitLogging`). The OpenXR half is next.
+2. `src/xr/` — **done** for the dependency-free half: `xr_math` (handedness, view, per-eye
+   projection), `xr_camera` (all four modes, world scale, recentre, snap turn), `xr_cull` (combined
+   two-eye volume), `xr_settings` (15 cvars, wired into `ReblueApp::OnPostInitLogging`). 49 checks
+   passing under `tools/xr_math_test`. The OpenXR half is next and needs a real toolchain.
 3. Black stereo frame on the Quest over Link, from the desktop Vulkan build.
 4. Stereo scene rendering, then the 6DOF camera and its modes.
 5. In parallel and independently, because it is pure information and the longest pole: attempt the

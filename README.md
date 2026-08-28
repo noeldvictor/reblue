@@ -33,19 +33,28 @@ can wander around and look at it instead of fighting things.
 
 ## What this fork is trying to do
 
-Roughly in priority order. **Nothing below is built. All of it is aspirational.**
+Roughly in priority order. **Nothing here is playable yet**, and a full build is not even possible
+in this tree — it needs the ReXGlue SDK and the game executable from your own discs, neither of
+which lives in a repo.
 
 | Goal | State | Notes |
 | --- | --- | --- |
-| **VR with 6DOF head tracking** | Not started | The critical one. Head drives the camera, controller drives the character. |
-| — third-person, head-anchored orbit | Not started | Default mode. The game's own follow camera gets suppressed. |
-| — first person | Not started | Animations are authored third-person, so expect this to be a novelty. |
-| — diorama + world scale | Not started | Tabletop view. Probably the mode that actually works best. |
+| **VR with 6DOF head tracking** | Foundations built and tested | Head drives the camera, controller drives the character. |
+| — camera maths | **Done, 49 checks passing** | Handedness, per-eye projection, all four camera modes, world scale, recentre, stereo culling volume. Compiles and runs standalone. |
+| — third-person, head-anchored orbit | Composition done | Default mode. The game's own follow camera still needs suppressing. |
+| — first person | Composition done | Animations are authored third-person, so expect a novelty. |
+| — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
+| — OpenXR session, stereo rendering | Not started | Blocked on the plume patch landing on a real toolchain. |
 | **ARM64 Android (AYN Thor, etc.)** | Not started | Native APK. Blocked on cross-building the ReXGlue SDK with the NDK. |
 | **Quest 2, native** | Not started | Downstream of the Android port. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
 | Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |
+
+`patches/plume-openxr-seam.patch` unblocks the largest risk: OpenXR insists on naming the Vulkan
+instance extensions, device extensions and physical device, and plume picked its own. 69 insertions,
+backward compatible, applies cleanly — but written against a tree with no Vulkan SDK, so it has
+never been compiled.
 
 **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md)** is the actual plan, with the guest camera addresses,
 the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version
