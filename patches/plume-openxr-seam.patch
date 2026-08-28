@@ -1,0 +1,145 @@
+diff --git a/plume_vulkan.cpp b/plume_vulkan.cpp
+index c0b9c11..7113e64 100644
+--- a/plume_vulkan.cpp
++++ b/plume_vulkan.cpp
+@@ -3785,10 +3785,18 @@ namespace plume {
+             }
+ 
+             std::string deviceName(deviceProperties.deviceName);
++
++            // An XR runtime names the one device it can present from. Skip
++            // every other one rather than scoring it, so no heuristic can win.
++            const VkPhysicalDevice forced = renderInterface->options.forcedPhysicalDevice;
++            if ((forced != VK_NULL_HANDLE) && (physicalDevices[i] != forced)) {
++                continue;
++            }
++
+             uint32_t deviceTypeScore = deviceTypeScoreTable[deviceTypeIndex];
+             bool preferDeviceTypeScore = (deviceTypeScore > currentDeviceTypeScore);
+             bool preferUserChoice = preferredDeviceName == deviceName;
+-            bool preferOption = preferDeviceTypeScore || preferUserChoice;
++            bool preferOption = preferDeviceTypeScore || preferUserChoice || (forced != VK_NULL_HANDLE);
+             if (preferOption) {
+                 physicalDevice = physicalDevices[i];
+                 description.name = deviceName;
+@@ -4057,6 +4065,22 @@ namespace plume {
+             enabledExtensions.push_back(extension.c_str());
+         }
+ 
++        // Whatever xrGetVulkanDeviceExtensionsKHR asked for, minus anything
++        // already enabled above: Vulkan rejects a duplicated extension name.
++        for (const std::string &extension : renderInterface->options.extraDeviceExtensions) {
++            bool alreadyEnabled = false;
++            for (const char *enabled : enabledExtensions) {
++                if (extension == enabled) {
++                    alreadyEnabled = true;
++                    break;
++                }
++            }
++
++            if (!alreadyEnabled) {
++                enabledExtensions.push_back(extension.c_str());
++            }
++        }
++
+         VkDeviceCreateInfo createInfo = {};
+         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+         createInfo.pNext = createDeviceChain;
+@@ -4476,7 +4500,11 @@ namespace plume {
+ 
+     // VulkanInterface
+ 
+-    VulkanInterface::VulkanInterface() {
++    VulkanInterface::VulkanInterface(const VulkanInterfaceOptions *optionsIn) {
++        if (optionsIn != nullptr) {
++            options = *optionsIn;
++        }
++
+         VkResult res = volkInitialize();
+         if (res != VK_SUCCESS) {
+             fprintf(stderr, "volkInitialize failed with error code 0x%X.\n", res);
+@@ -4489,6 +4517,9 @@ namespace plume {
+         appInfo.pEngineName = "plume";
+         appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+         appInfo.apiVersion = VK_API_VERSION_1_2;
++        if (options.minApiVersion > appInfo.apiVersion) {
++            appInfo.apiVersion = options.minApiVersion;
++        }
+ 
+         VkInstanceCreateInfo createInfo = {};
+         createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+@@ -4531,6 +4562,13 @@ namespace plume {
+         }
+ #   endif
+ 
++        // Inserted as required rather than optional on purpose: if the driver
++        // cannot provide what the XR runtime asked for, the existing missing-
++        // extension path names it instead of failing later in xrCreateSession.
++        for (const std::string &extension : options.extraInstanceExtensions) {
++            requiredExtensions.insert(extension);
++        }
++
+         std::unordered_set<std::string> missingRequiredExtensions = requiredExtensions;
+         for (uint32_t i = 0; i < extensionCount; i++) {
+             const std::string extensionName(availableExtensions[i].extensionName);
+@@ -4640,8 +4678,12 @@ namespace plume {
+ 
+     // Global creation function.
+ 
+-    std::unique_ptr<RenderInterface> CreateVulkanInterface() {
+-        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>();
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(const VulkanInterfaceOptions *options) {
++        std::unique_ptr<VulkanInterface> createdInterface = std::make_unique<VulkanInterface>(options);
+         return createdInterface->isValid() ? std::move(createdInterface) : nullptr;
+     }
++
++    std::unique_ptr<RenderInterface> CreateVulkanInterface() {
++        return CreateVulkanInterface(nullptr);
++    }
+ };
+diff --git a/plume_vulkan.h b/plume_vulkan.h
+index 589d0f9..d274ffa 100644
+--- a/plume_vulkan.h
++++ b/plume_vulkan.h
+@@ -448,13 +448,33 @@ namespace plume {
+         bool endCapture() override;
+     };
+ 
++    // Lets an OpenXR runtime dictate the parts of Vulkan setup it owns. The
++    // runtime names the instance extensions, the device extensions and the
++    // physical device it will present from; an app that picks its own gets
++    // XR_ERROR_GRAPHICS_DEVICE_INVALID at session creation.
++    //
++    // Every field is optional. A null options pointer keeps the original
++    // behaviour exactly.
++    struct VulkanInterfaceOptions {
++        std::vector<std::string> extraInstanceExtensions;
++        std::vector<std::string> extraDeviceExtensions;
++        // From xrGetVulkanGraphicsDeviceKHR. Overrides the scoring below,
++        // which would otherwise pick the discrete GPU on a laptop whose
++        // headset is wired to the integrated one.
++        VkPhysicalDevice forcedPhysicalDevice = VK_NULL_HANDLE;
++        // From xrGetVulkanGraphicsRequirementsKHR. Only ever raises the
++        // version plume asks for, never lowers it.
++        uint32_t minApiVersion = 0;
++    };
++
+     struct VulkanInterface : RenderInterface {
+         VkInstance instance = VK_NULL_HANDLE;
+         VkApplicationInfo appInfo = {};
+         RenderInterfaceCapabilities capabilities;
+         std::vector<std::string> deviceNames;
++        VulkanInterfaceOptions options;
+ 
+-        VulkanInterface();
++        VulkanInterface(const VulkanInterfaceOptions *options = nullptr);
+ 
+         ~VulkanInterface() override;
+         std::unique_ptr<RenderDevice> createDevice(const std::string &preferredDeviceName) override;
+@@ -462,4 +482,6 @@ namespace plume {
+         const std::vector<std::string> &getDeviceNames() const override;
+         bool isValid() const;
+     };
++
++    std::unique_ptr<RenderInterface> CreateVulkanInterface(const VulkanInterfaceOptions *options);
+ };

@@ -282,14 +282,13 @@ right. Do not attempt to invent a VR renderer on a device with no debugger.
 
 ### Order of work
 
-1. Fork `zolaware/plume` and widen the Vulkan device-creation seam. **Located** — it is smaller
-   than feared. In `thirdparty/plume/plume_vulkan.cpp`: `VulkanInterface::VulkanInterface()` builds
-   `enabledExtensions` from a required plus optional list before `vkCreateInstance`, and
-   `VulkanDevice::VulkanDevice(VulkanInterface *, const std::string &preferredDeviceName)` selects
-   the adapter *by name* before `VkDeviceCreateInfo`. So OpenXR needs three things threaded through
-   `CreateVulkanInterface()`: extra instance extensions, extra device extensions, and an explicit
-   `VkPhysicalDevice` rather than a name. Note `appInfo.apiVersion` is `VK_API_VERSION_1_2` and must
-   satisfy `xrGetVulkanGraphicsRequirements2KHR`. This still gates everything VR.
+1. The Vulkan device-creation seam — **written, as `patches/plume-openxr-seam.patch`.** 69
+   insertions across `plume_vulkan.h` and `plume_vulkan.cpp`, adding `VulkanInterfaceOptions` so an
+   OpenXR runtime can name the instance extensions, device extensions, physical device and minimum
+   API version. Backward compatible: the options pointer defaults to null and the no-argument
+   `CreateVulkanInterface()` stays. It is a patch rather than a plume fork because forking a
+   submodule means owning its history; see `patches/README.md`. **Not compiled** — no Vulkan SDK
+   here — so building it is the first thing that happens on a real toolchain.
 2. `src/xr/` skeleton — **done** for the dependency-free half (maths, camera, settings, wired into
    `ReblueApp::OnPostInitLogging`). The OpenXR half is next.
 3. Black stereo frame on the Quest over Link, from the desktop Vulkan build.
