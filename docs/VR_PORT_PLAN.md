@@ -427,9 +427,23 @@ the Lite is SD865/Adreno 650). Work, in dependency order:
    is already forced OFF off Windows, so the Vulkan-only path comes free — and because the Vulkan
    backend uses real spec constants rather than runtime DXC linking, **no shader compiler is needed
    on the device.** That is a large problem this project simply does not have.
-4. **Platform layer.** `src/platform/` assumes a desktop: GTK/SDL file dialogs, desktop shortcuts,
+4. **The Android target is a shared library, not an executable.** `rex/ui/windowed_app.h` defines
+   `XE_UI_WINDOWED_APPS_IN_LIBRARY` when `REX_PLATFORM_ANDROID`, swapping the entry point from a
+   `GetWindowedAppCreator()` that an executable's `main` calls, to a registration table a library
+   exports. Correct for Android — an APK loads a `.so` from an Activity rather than exec-ing a
+   binary. So `add_executable` becomes `add_library(... SHARED)` there, the SDK's
+   `windowed_app_main_sdl.cpp` template must not be compiled, and the app registers itself with
+   `REX_DEFINE_APP`. **This is the current stopping point; everything else compiles.**
+
+5. **The shader cache is empty without the asset dumps.** XenosRecomp globs `assets/` for
+   `*.vso`/`*.pso`/`*.xex`. With only `default.xex` present it emits
+   `g_shaderCacheEntries[] = {}` — the build links but has no shaders to draw with. The dumps live
+   in the private `zolaware/reblue-assets` repo. Extracting them from the discs, or from a running
+   capture, is its own task and is required before anything renders.
+
+6. **Platform layer.** `src/platform/` assumes a desktop: GTK/SDL file dialogs, desktop shortcuts,
    crash handler, WinHTTP/libcurl. Needs SAF for file access and an activity/APK harness.
-5. **Installer off.** `src/installer/` wants three DVD images and produces ~15 GB. Build with
+7. **Installer off.** `src/installer/` wants three DVD images and produces ~15 GB. Build with
    `REBLUE_BUILD_INSTALLER=OFF` and side-load a pre-extracted `game/` directory under
    `Android/data/` to unblock everything else. A proper SAF import flow comes later or never.
 
