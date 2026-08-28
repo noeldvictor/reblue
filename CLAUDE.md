@@ -93,6 +93,26 @@ input go in `reblue_openxr_only` in `src/CMakeLists.txt` and build only under `R
 left-handed with +Z forward, row-vector, row-major. They differ by a mirror on Z. Everything
 crossing that boundary goes through `FromOpenXRPose` in `xr_math.h`. Do not convert at a call site.
 
+## Dev loop
+
+**Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
+diagnosing a slow build. The short version:
+
+- **Do not go to the device.** Phases 0–5 run as a desktop executable against **Meta XR Simulator**,
+  a virtual Quest presented as an OpenXR runtime on the PC. Selected with `XR_RUNTIME_JSON`, so
+  simulator / Link / Monado is an environment variable, not a rebuild. The Quest is for comfort,
+  real performance numbers, and driver bugs only.
+- **Do not rebuild the guest.** `reblue_recomp` and `reblue_generated` are separate OBJECT libraries
+  so a change in `src/` never touches the 54 recompiled TUs or the multi-megabyte shader cache. If
+  they rebuild, a codegen input changed — find out which.
+- **Never wipe the build directory.** Reconfigure in place.
+- **Build one target**, e.g. `--target reblue_vk`, not the default that links two executables.
+- **PCH or compiler cache, never both.** They fight — no compiler cache caches a PCH compilation,
+  which is why CI sets `REBLUE_PCH=OFF`. Locally: PCH on while editing, cache on while
+  reconfiguring.
+- **A full local build is not possible in this tree** — no `assets/default.xex`, no SDK, so codegen
+  cannot run. Say so rather than reporting a success that did not happen.
+
 ## Research notes
 
 Findings from web research go in `research/` as `YYYYMMDD_HHMM_<slug>.md`, dated at the time of

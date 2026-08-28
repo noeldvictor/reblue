@@ -23,9 +23,15 @@ literally, the most important work is behind the longest pole.
 and on Linux. OpenXR has desktop runtimes — SteamVR and Monado — and a Quest 2 on Link or Air Link
 presents to a PC OpenXR runtime like any other headset. So:
 
-> Build and debug the entire VR camera system on desktop Vulkan, wearing the actual Quest 2 over
-> Link, with a real debugger and RenderDoc attached. Port to native Android only once the camera is
-> right.
+> Build and debug the entire VR camera system on desktop Vulkan against **Meta XR Simulator** — a
+> virtual Quest presented as an OpenXR runtime on the PC — with a real debugger and RenderDoc
+> attached. Port to native Android only once the camera is right.
+
+The simulator removes the headset from the loop as well as the device. It implements OpenXR at the
+API level and supports native development, so the same code path runs unchanged in the simulator,
+over Quest Link, and on-device — selected by the `XR_RUNTIME_JSON` environment variable, with no
+rebuild and no registry edit. Input is simulated from keyboard, mouse, or an Xbox pad. Reach for the
+actual Quest for comfort checks, real performance numbers, and driver bugs; nothing else.
 
 This is the single most important decision in this document. It gets the critical work started
 immediately, it front-loads all the hard rendering and camera questions onto the platform where
@@ -125,6 +131,18 @@ Touches:
 **Watch for:** anything caching per-frame state that is now per-eye. The PSO predictor
 (`src/gpu/pipeline/pso_predictor.cpp`) and the occlusion queries are the likely offenders — both
 will see double the draws and may mispredict.
+
+**Get the MSAA resolve right here, not in Phase 8.** On a tile-based GPU the MSAA samples never need
+to leave on-chip memory — but only if the render pass declares a 4x colour and depth attachment with
+a non-MSAA image in `pResolveAttachments`. Meta measure the alternative, resolving through memory, at
+roughly 3 ms on the GPU, which is over a fifth of a 72 Hz frame.
+
+`src/gpu/resolve.cpp` currently resolves with a full-screen shader pass reading a `Texture2DMS`,
+which forces the MSAA buffer to main memory. That is the right design for what it does — emulating
+the Xbox 360's guest-driven EDRAM resolve, which is not a render-pass-end event — so **do not replace
+it. Separate it.** The guest EDRAM path keeps the shader; the XR eye buffers get a render pass with
+resolve attachments. They are two different problems sharing one code path today, and splitting them
+after the render pass structure is built is far worse than splitting them now.
 
 **Done when:** the scene appears in both eyes with correct stereo separation and no per-eye
 divergence in effects.
@@ -437,7 +455,14 @@ handles today. Profile it before assuming it is fine on an Adreno 650-class devi
 
 **VR-specific acceleration on Quest:**
 
-- **Fixed foveated rendering** (`XR_FB_foveation`). Large, nearly free win on Adreno. Do this early.
+- **Fixed foveated rendering** (`XR_FB_foveation`) **together with subsampled layout**. Large, nearly
+  free win on Adreno for anything fill-bound, which a stereo JRPG at 72 Hz will be. Two caveats:
+  FFR works best rendering directly into the eye textures, so re:Blue's composite chain
+  (`src/gpu/output.cpp`, `present.cpp`) gives up part of the benefit; and enabling FFR *without*
+  subsampled layout leaves most of the win on the table — that is the explanation behind most "FFR
+  did nothing for me" reports. Never ship one without the other.
+- **Prefer MSAA to render scale.** If fill-bound, scale resolution down and add MSAA rather than the
+  reverse — MSAA is close to free through resolve attachments, extra pixels never are.
 - **Application SpaceWarp** (`XR_FB_space_warp`). Renders at half rate and synthesises intermediate
   frames from a motion vector buffer plus depth. Vulkan-only, which suits us. It requires generating
   motion vectors, which the guest renderer does not produce — but `src/engine/frame_interp.cpp` and

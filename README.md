@@ -49,7 +49,13 @@ Roughly in priority order. **Nothing below is built. All of it is aspirational.*
 
 **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md)** is the actual plan, with the guest camera addresses,
 the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version
-plus the codebase notes.
+plus the codebase notes. [research/](research/) is the dated log of what was found and when.
+
+The approach, in one line: **build the VR camera on the desktop against a simulated Quest, and only
+go near real hardware for comfort, performance, and driver bugs.** Meta XR Simulator presents a
+virtual headset as an OpenXR runtime on the PC, so the same code path runs in the simulator, over
+Link, and on-device — chosen by an environment variable rather than a rebuild. That keeps the loop
+at edit-build-run instead of edit-build-deploy-headset-swear.
 
 ## Table of Contents
 
