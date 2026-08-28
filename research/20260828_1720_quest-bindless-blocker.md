@@ -183,3 +183,38 @@ Vulkan takes the layout from five sets to three, comfortably under the limit.
 That is not free - the register spaces are baked into the SPIR-V that XenosRecomp emits, so the
 translated shaders have to agree - but it is a contained change to a known place, and it is the one
 thing standing between this port and a rendered frame.
+
+
+## 9. Confirmed: the game runs
+
+Dropping the occlusion set on Android takes the layout from five sets to four, exactly at Adreno's
+limit. The pipeline layout is created, and **Blue Dragon's guest code executes on the Quest 2**:
+
+```
+[krnl] XMPGetStatus(703AFF50)          <-- the game's own music-player poll, in its main loop
+[bd]   SurfacePool cold alloc 1.29ms 1280x800 fmt=20 msaa=1 RT 3.9 MiB
+[bd]   pso: render-thread compile pass=7 vs=0x280256B44D1C5B2E ps=0xFF2C108217046270
+[fs]   VFS: entry not found for 'D:\snd_streamgm'
+```
+
+Guest running, render surfaces allocating, shaders compiling, the VFS answering the game's own file
+requests. (The missing `snd_streamgm` is `--skip-media` doing its job, and is not fatal.)
+
+That confirms §8: five descriptor sets was the blocker.
+
+### But the shortcut has a consequence
+
+```
+[error] CreateHostGraphicsPipeline(pipeline) failed: backend pipeline null
+```
+
+Removing set 4 from the *layout* does not remove it from the *shaders* - the SPIR-V XenosRecomp
+emits still declares bindings there, so the pipelines no longer match the layout they are created
+against. So this is a diagnosis, not a fix: it proved the cause and got the guest running, and it
+has to be replaced by the real change.
+
+**The real fix is the one §8 already identified**: collapse sets 0/1/2, which all bind the same
+physical descriptor set and exist only to satisfy three HLSL register spaces. That frees a slot
+without removing anything the shaders reference, leaving the occlusion set where it is and the
+layout at four. It needs the register-space mapping in the DXC invocation to agree, which is the
+work.

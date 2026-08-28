@@ -239,6 +239,19 @@ bool BuildPipelineLayout(VideoState &s) {
 
   // Sun occlusion counter UAV, set 4: one set per frame slot, pointed at the
   // lazily created counter by Occlusion::Begin.
+  //
+  // Skipped on Android, because this set is what pushes the layout over the
+  // edge. Sets 0/1/2 are the three texture spaces, 3 is the samplers, and this
+  // is the fifth - but Adreno exposes maxBoundDescriptorSets = 4, where a
+  // desktop GPU reports 8 or 32. Creating a five-set layout there does not fail
+  // politely; it takes the driver somewhere that jumps through a small integer.
+  //
+  // Dropping it costs the lens flare occlusion query, which is a single
+  // cosmetic draw. The real fix is to collapse sets 0/1/2, which all bind the
+  // same physical descriptor set and exist only to satisfy three HLSL register
+  // spaces - that would leave room for this one. See
+  // research/20260828_1720_quest-bindless-blocker.md.
+#if !defined(__ANDROID__)
   plume::RenderDescriptorSetBuilder occlusion_set_builder;
   occlusion_set_builder.begin();
   occlusion_set_builder.addReadWriteByteAddressBuffer(0);
@@ -251,8 +264,8 @@ bool BuildPipelineLayout(VideoState &s) {
       return false;
     }
   }
-  BD_INFO("[device] addDescriptorSet (occlusion, set 4)");
   layout_builder.addDescriptorSet(occlusion_set_builder);
+#endif
 #endif
 
   BD_INFO("[device] layout_builder.end");
