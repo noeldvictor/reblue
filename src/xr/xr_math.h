@@ -189,8 +189,11 @@ inline Mat4 ProjectionFromFov(const Fov &fov, f32 nearZ, f32 farZ) {
   Mat4 out;
   out.m[0][0] = 2.0f / tanWidth;
   out.m[1][1] = 2.0f / tanHeight;
-  out.m[2][0] = (tanR + tanL) / tanWidth;
-  out.m[2][1] = (tanU + tanD) / tanHeight;
+  // Negated, matching XMMatrixPerspectiveOffCenterLH. The sign only shows up
+  // when the frustum is off-centre, so a symmetric test frustum passes either
+  // way - which is exactly how this gets shipped wrong.
+  out.m[2][0] = -(tanR + tanL) / tanWidth;
+  out.m[2][1] = -(tanU + tanD) / tanHeight;
   out.m[2][2] = farZ / (farZ - nearZ);
   out.m[2][3] = 1.0f;
   out.m[3][2] = -(farZ * nearZ) / (farZ - nearZ);

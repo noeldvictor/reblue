@@ -51,6 +51,30 @@ path changed.
   reporting success. The dependency-free half of `src/xr/` exists partly so it can be reasoned about
   by reading.
 
+## Verify without the SDK
+
+A full build is impossible in this tree, but `xr_math.h` depends on nothing but the integer
+aliases, so the piece most likely to be silently wrong *can* be compiled and run:
+
+```sh
+cmake -S tools/xr_math_test -B out/xr_math_test -G Ninja
+cmake --build out/xr_math_test
+./out/xr_math_test/xr_math_test
+```
+
+On this machine there is no compiler on `PATH`, but VS 2022 Build Tools ships clang 19:
+
+```
+C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin/clang++.exe
+```
+
+Pass it as `-DCMAKE_CXX_COMPILER=` with **forward slashes** — CMake reads `\P` in a Windows path as
+an invalid escape and the configure fails with a confusing message.
+
+This earns its keep: it caught the off-centre projection sign on its first run. Extend it whenever
+new maths lands, and prefer moving logic *into* the dependency-free files so it stays reachable from
+here.
+
 ## Run
 
 The OpenXR loader picks its runtime from `XR_RUNTIME_JSON`. That is the whole switch — no rebuild,

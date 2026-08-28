@@ -112,6 +112,10 @@ diagnosing a slow build. The short version:
   reconfiguring.
 - **A full local build is not possible in this tree** — no `assets/default.xex`, no SDK, so codegen
   cannot run. Say so rather than reporting a success that did not happen.
+- **But the maths is testable.** `tools/xr_math_test/` compiles `xr_math.h` standalone against a
+  stub `rex/types.h` and runs assertions on it. It caught the off-centre projection sign on its
+  first run. Keep new maths in the dependency-free files so it stays reachable from here, and extend
+  the test when it lands.
 
 ## Research notes
 
