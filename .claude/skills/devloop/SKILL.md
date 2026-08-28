@@ -46,10 +46,10 @@ path changed.
   OBJECT libraries exactly so a change in `src/` does not touch them. If they are rebuilding, an
   input to codegen changed — `assets/default.xex`, a `config/*.toml`, or a shader. Find out which
   rather than accepting it.
-- **Never assume a local build is possible.** This tree has no `assets/default.xex` and no ReXGlue
-  SDK, so codegen cannot run and a full build will not complete. Say so plainly rather than
-  reporting success. The dependency-free half of `src/xr/` exists partly so it can be reasoned about
-  by reading.
+- **Never report a build that did not happen.** A fresh clone has no `assets/default.xex` and no
+  SDK, so codegen cannot run — but both are a minute away, see Bootstrap below. Once bootstrapped,
+  codegen works and sources can be syntax-checked; a full Windows *link* still needs vcpkg. Say
+  which of those you actually did.
 
 ## Bootstrap: getting a tree that can actually build
 
@@ -151,6 +151,34 @@ writing one, something is wrong.
 
 Input is simulated from keyboard, mouse, or an Xbox pad, so locomotion and bindings are testable
 without touching a Touch controller.
+
+## Building the SDK for Android
+
+No `android-arm64` release slice exists, so it builds from source with the patch in
+`patches/rexglue-sdk-android.patch`. See `patches/README.md` for what the patch contains and
+`research/20260828_1600_android-arm64-bringup.md` for how it was arrived at.
+
+```sh
+git clone https://github.com/rexglue/rexglue-sdk.git out/rexglue-src
+git -C out/rexglue-src submodule update --init --recursive --depth 1 --jobs 8
+git clone --depth 1 https://github.com/kaniini/libucontext.git out/rexglue-src/thirdparty/libucontext
+git -C out/rexglue-src apply ../../patches/rexglue-sdk-android.patch
+
+NDK="$ANDROID_HOME/ndk/30.0.15729638"          # r30 or newer, see below
+cmake -S out/rexglue-src -B out/sdk-android30 -G Ninja   -DCMAKE_TOOLCHAIN_FILE="$NDK/build/cmake/android.toolchain.cmake"   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29   -DCMAKE_BUILD_TYPE=Release -DREXGLUE_BUILD_TESTS=OFF
+cmake --build out/sdk-android30
+```
+
+**Use NDK r30 or newer.** r29's libc++ has no floating-point `std::from_chars`, which
+`rex/string/numeric.h` calls with a `chars_format`; the error is a confusing "requires 3 arguments,
+but 4 were provided" as overload resolution falls back to the integral form.
+
+**On Windows, materialise libmspack's symlinks first** or the build fails with what looks like a
+corrupt source file — see `patches/README.md`.
+
+**Do not trust a wrapper's exit code.** `cmake --build ... | tail` reports the exit status of
+`tail`, not of ninja. Capture ninja's own status (`echo $?` immediately after, or `${PIPESTATUS[0]}`)
+and grep the log for `FAILED:`. A build that "succeeded" in 40 seconds did not.
 
 ## Device, once Phase 6 exists
 
