@@ -220,6 +220,25 @@ foreach(target IN LISTS REBLUE_COMMON_TARGETS REBLUE_TARGETS)
     endif()
 endforeach()
 
+
+# OpenXR is found by path rather than find_package: the loader is built for the
+# target out of the Khronos OpenXR-SDK (there is no android-arm64 package to
+# find), and the headers come from the same tree.
+if(REBLUE_OPENXR)
+    if(NOT REBLUE_OPENXR_INCLUDE OR NOT REBLUE_OPENXR_LOADER)
+        message(FATAL_ERROR
+            "REBLUE_OPENXR needs REBLUE_OPENXR_INCLUDE (the OpenXR-SDK include "
+            "directory) and REBLUE_OPENXR_LOADER (libopenxr_loader for this "
+            "target). See the devloop skill for building the loader.")
+    endif()
+    foreach(target IN LISTS REBLUE_TARGETS)
+        target_compile_definitions(${target} PRIVATE REBLUE_OPENXR)
+        target_include_directories(${target} PRIVATE "${REBLUE_OPENXR_INCLUDE}")
+        target_link_libraries(${target} PRIVATE "${REBLUE_OPENXR_LOADER}")
+    endforeach()
+    message(STATUS "reblue: OpenXR loader at ${REBLUE_OPENXR_LOADER}")
+endif()
+
 foreach(target IN LISTS REBLUE_TARGETS)
     if(ANDROID)
         # The NDK links with --gc-sections by default. The REX_HOOK and REX_FUNC

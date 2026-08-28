@@ -57,6 +57,12 @@ echo "==> staging native libraries"
 # extractNativeLibs is on in the manifest, so these need not be page-aligned or
 # stored uncompressed; the installer unpacks them.
 cp "$NATIVE_DIR/libreblue.so" "$NATIVE_DIR/librexruntime.so" "$OUT/staging/lib/arm64-v8a/"
+# The OpenXR loader, when the build has one. libreblue.so links against it by
+# soname, so it has to be in the APK or the app will not start at all.
+if [ -n "${OPENXR_LOADER:-}" ] && [ -f "$OPENXR_LOADER" ]; then
+  cp "$OPENXR_LOADER" "$OUT/staging/lib/arm64-v8a/"
+  echo "    staged $(basename "$OPENXR_LOADER")"
+fi
 
 echo "==> assembling"
 cp "$OUT/base.apk" "$OUT/unsigned.apk"

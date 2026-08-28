@@ -225,6 +225,29 @@ Two of those flags are load-bearing and non-obvious:
   `find_package` searches only inside the sysroot and will not see the installed SDK no matter what
   `CMAKE_PREFIX_PATH` says. The error just claims the SDK was not found.
 
+## Working on the Quest
+
+```sh
+adb install -r out/apk/reblue.apk        # -r, never uninstall (see below)
+adb shell am force-stop com.reblue
+adb shell am start -n com.reblue/.ReblueActivity
+adb logcat -d -s reblue,rexglue,plume    # everything logs here now
+```
+
+The on-device log is under `/sdcard/Android/data/com.reblue/files/logs/`, and
+`args.txt` beside `game/` appends cvars, one per line, without rebuilding.
+
+**Never `adb uninstall`.** It deletes the app's external data directory, which is
+where the ~3 GB of game data lives. Always `install -r`. If a signature mismatch
+forces an uninstall, expect to push the game data again.
+
+**Make it visible before debugging it.** Two separate multi-hour hunts this
+project came down to output Android was discarding: the SDK logged to stdout,
+and plume reports Vulkan failures through `fprintf(stderr, ...)`. Both now go to
+logcat, and both times the fix took one line once the message was readable. If
+something fails silently on device, ask where its errors are going before
+forming a theory.
+
 ## Device, once Phase 6 exists
 
 Not yet buildable — the ReXGlue SDK has no `android-arm64` slice. When it does:

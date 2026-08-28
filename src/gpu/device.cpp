@@ -34,6 +34,10 @@
 
 #include "gpu/gpu_profiling.h"
 
+#if defined(REBLUE_OPENXR)
+#include "xr/xr_session.h"
+#endif
+
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/shutdown.h"
@@ -308,7 +312,29 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
     // D3D12Core.dll that ends up owning the device.
     const bool dred_armed = EnableDred();
 #else
+#if defined(REBLUE_OPENXR)
+    // The runtime dictates the Vulkan instance extensions, device extensions
+    // and physical device, and can only be asked once an XrInstance exists -
+    // so the session is opened in two halves around device creation. A missing
+    // runtime is normal (no headset on a desktop) and just leaves the options
+    // empty, which is the ordinary flat path.
+    plume::VulkanInterfaceOptions xr_options;
+    const bool xr_available = bd::xr::Session::Get().CreateInstance();
+    if (xr_available) {
+      const auto &session = bd::xr::Session::Get();
+      xr_options.extraInstanceExtensions = session.VulkanInstanceExtensions();
+      xr_options.extraDeviceExtensions = session.VulkanDeviceExtensions();
+      xr_options.minApiVersion = session.VulkanMinApiVersion();
+      BD_INFO("[xr] runtime present, {} instance / {} device extensions "
+              "required, per-eye {}x{}",
+              xr_options.extraInstanceExtensions.size(),
+              xr_options.extraDeviceExtensions.size(),
+              session.RecommendedWidth(), session.RecommendedHeight());
+    }
+    s.render_iface = plume::CreateVulkanInterface(&xr_options);
+#else
     s.render_iface = plume::CreateVulkanInterface();
+#endif
     if (!s.render_iface) {
       BD_ERROR("Plume CreateVulkanInterface failed");
       return false;
@@ -319,6 +345,22 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       BD_ERROR("Plume RenderInterface::createDevice failed");
       return false;
     }
+#if defined(REBLUE_OPENXR)
+    if (xr_available) {
+      // Reaching into plume's Vulkan types is deliberate and contained: the
+      // graphics binding is the one place OpenXR needs the raw handles, and
+      // the cross-backend RenderDevice interface has no business exposing them.
+      auto *vk_iface = static_cast<plume::VulkanInterface *>(s.render_iface.get());
+      auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
+      if (!bd::xr::Session::Get().CreateSession(
+              reinterpret_cast<VkInstance_T *>(vk_iface->instance),
+              reinterpret_cast<VkPhysicalDevice_T *>(vk_device->physicalDevice),
+              reinterpret_cast<VkDevice_T *>(vk_device->vk),
+              vk_device->queueFamilyIndices[0], 0)) {
+        BD_ERROR("[xr] session creation failed; staying on the flat renderer");
+      }
+    }
+#endif
     s.backend_info = DescribeBackend(s.device.get());
     // bd_msaa is clamped to the color/depth intersection. Everything
     // shader-resolves, so no hardware resolve capability is needed.
