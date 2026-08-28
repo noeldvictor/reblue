@@ -49,7 +49,7 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — shaders | **Solved** | 142 cache entries. They live in `pack/!necessity.ipk`, zlib-compressed, which is why raw scans found nothing. `tools/extract_ipk.py` unpacks them. |
 | — APK | **Installs and runs on a Quest 2** | `tools/build_apk.sh`, 62 MB. Six steps, no Gradle. |
 | — game data on device | **Done** | 3.2 GB extracted from disc 1 with `tools/extract_game_data.py`, driven by re:Blue's own install manifest. The VFS mounts 1274 archives / 70008 records. |
-| — runtime start | **Gets most of the way** | XEX loads, 154 kernel imports patch, heap and profile come up, Vulkan 1.1 initialises on the Adreno 650, the swapchain is created. Then it crashes in GPU setup: a jump to guest address 1. |
+| — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
 | **Quest 2 VR** | Not started | What runs today is a **flat 2D panel**, not VR. The OpenXR session and stereo renderer are still unwritten; only the camera maths exists. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |

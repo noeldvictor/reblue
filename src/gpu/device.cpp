@@ -363,8 +363,17 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
     // frames in flight so acquiring N+1 never waits on scanout.
     BD_INFO("[device] creating swap chain (window {})",
             static_cast<const void *>(render_window));
-    plume::RenderSwapChainDesc desc(
-        render_window, plume::RenderFormat::B8G8R8A8_UNORM, kNumFrames + 1);
+    // BGRA is what desktop swapchains offer; Android surfaces are RGBA, and
+    // asking for BGRA there gets "No compatible surface formats were found"
+    // from plume and a swapchain with no images - which presents as a black
+    // window rather than as an error.
+#if defined(__ANDROID__)
+    constexpr auto kSwapChainFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+#else
+    constexpr auto kSwapChainFormat = plume::RenderFormat::B8G8R8A8_UNORM;
+#endif
+    plume::RenderSwapChainDesc desc(render_window, kSwapChainFormat,
+                                    kNumFrames + 1);
     s.swap_chain = s.queue->createSwapChain(desc);
     BD_INFO("[device] swap chain created");
 #if !defined(REBLUE_D3D12)
