@@ -214,6 +214,43 @@ There is no `.clang-format`. Match the surrounding file.
 
 Research current as of 2026-08. Correct this section when reality disagrees with it.
 
+### Where the port actually is
+
+Blue Dragon runs on a Quest 2 and renders in VR. Most of the section below this one was written
+while that was still a plan, and is kept because the reasoning is still worth having — but read this
+table first, because it is the part that gets stale.
+
+| Piece | State |
+| --- | --- |
+| SDK cross-built for android-arm64, APK, install, launch | Works |
+| XEX load, kernel imports, guest heap, VFS over real game data | Works |
+| Vulkan on Adreno 650, swapchain, pipelines | Works |
+| OpenXR session, quad layer, world-locked and correctly placed | Works |
+| Head pose driving the guest's own view matrix | Works |
+| Touch controllers as a guest gamepad | Works |
+| Stereo projection layer, per-eye render | **Not started** |
+| Cel shading, tourist mode | **Not started** |
+| Sun occlusion descriptor set on Adreno | Dropped, not fixed |
+
+What the player sees is still a flat image on a world-locked screen: the game renders once, from one
+eye. The camera modes in `src/xr/xr_camera.cpp` are composed and delivered every frame, so the
+plumbing for 6DOF is live — but genuine stereo needs the guest's scene rendered twice per frame, or
+per-view matrices reaching shaders whose constants XenosRecomp already baked. That is a renderer
+change, not an XR one, and it is the next real piece of work.
+
+Three lessons from getting this far, all of which cost hours and all of which recur:
+
+- **Make it visible before debugging it.** Two multi-hour hunts were output Android discards; both
+  fixes were one line once readable. Recorded in `.claude/skills/devloop`.
+- **A symmetric test case cannot see a sign error.** Both the projection matrix and the quad's
+  facing yaw shipped wrong signs that are zero in the obvious test pose. Test off-axis.
+- **An involution that round-trips looks like a no-op and is not.** The OpenXR/game-space mirror is
+  its own inverse, so mixing the two conventions in one expression compiles cleanly and is wrong.
+
+See `research/20260828_1900_vr-camera-and-input.md` for the detail, including the hook seams
+(`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
+controllers are invisible to SDL.
+
 ### What already works
 
 ARM64 is not a new frontier here. Upstream ships a `linux-arm64` AppImage from CI and a `mac-arm64`

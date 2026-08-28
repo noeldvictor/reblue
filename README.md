@@ -33,7 +33,8 @@ can wander around and look at it instead of fighting things.
 
 ## What this fork is trying to do
 
-Roughly in priority order. **Nothing here is playable yet.** A clone needs two things before it can
+Roughly in priority order. **It boots into VR on a Quest 2 with working controllers**; whether it
+plays through is untested. A clone needs two things before it can
 build — the ReXGlue SDK (a public release) and `default.xex` from your own disc, which
 `tools/extract_xex.py` lifts out of an ISO in under a second without copying it.
 
@@ -44,21 +45,23 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — third-person, head-anchored orbit | Composition done | Default mode. The game's own follow camera still needs suppressing. |
 | — first person | Composition done | Animations are authored third-person, so expect a novelty. |
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
-| — OpenXR session, stereo rendering | Not started | Blocked on the plume patch landing on a real toolchain. |
+| — OpenXR session | **Working on a Quest 2** | Instance, session, reference space, swapchain, frame loop. The plume patch compiles and runs. |
+| — head pose driving the game camera | **Working** | Composed onto the game's own view matrix at `bdBuildViewMatrix`, the same seam frame interpolation uses. One frame of latency, by construction. |
+| — stereo rendering | Not started | Needs the guest scene rendered twice per frame, or per-view matrices in shaders whose constants XenosRecomp already baked. A renderer change, not an XR one. |
 | **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 140 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. |
 | — shaders | **Solved** | 142 cache entries. They live in `pack/!necessity.ipk`, zlib-compressed, which is why raw scans found nothing. `tools/extract_ipk.py` unpacks them. |
 | — APK | **Installs and runs on a Quest 2** | `tools/build_apk.sh`, 62 MB. Six steps, no Gradle. |
 | — game data on device | **Done** | 3.2 GB extracted from disc 1 with `tools/extract_game_data.py`, driven by re:Blue's own install manifest. The VFS mounts 1274 archives / 70008 records. |
 | — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
-| **Quest 2 VR** | Not started | What runs today is a **flat 2D panel**, not VR. The OpenXR session and stereo renderer are still unwritten; only the camera maths exists. |
+| **Quest 2 VR** | **Renders in VR** | Blue Dragon hangs in space in front of you as a world-locked screen, in stereo, at a readable size. Not yet *stereo 3D*: the game renders once, from one eye, so it is a cinema screen rather than a world you are inside. |
+| — controllers | **Working** | Touch controllers are not Android gamepads — they exist only as OpenXR actions, which is why SDL reported no pad and `adb input keyevent` did nothing. 13 actions, Touch bindings, presented to the guest as a 360 pad. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
 | Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |
 
-`patches/plume-openxr-seam.patch` unblocks the largest risk: OpenXR insists on naming the Vulkan
+`patches/plume-openxr-seam.patch` unblocked the largest risk: OpenXR insists on naming the Vulkan
 instance extensions, device extensions and physical device, and plume picked its own. 69 insertions,
-backward compatible, applies cleanly — but written against a tree with no Vulkan SDK, so it has
-never been compiled.
+backward compatible — and it now compiles and runs on a headset, which is what it was written for.
 
 **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md)** is the actual plan, with the guest camera addresses,
 the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version
