@@ -180,6 +180,51 @@ corrupt source file — see `patches/README.md`.
 `tail`, not of ninja. Capture ninja's own status (`echo $?` immediately after, or `${PIPESTATUS[0]}`)
 and grep the log for `FAILED:`. A build that "succeeded" in 40 seconds did not.
 
+## Building reblue for Android
+
+Three host tools must exist first, because they *run* during the build and a cross-compiled one
+cannot execute:
+
+| Tool | Where from |
+| --- | --- |
+| `rexglue` (codegen) | the host SDK slice, `out/sdk/win-amd64/bin/rexglue.exe` |
+| `XenosRecomp` | build `thirdparty/XenosRecomp` for the host, see below |
+| `dxc` | vendored: `thirdparty/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe` |
+
+Host XenosRecomp, with VS Build Tools' clang:
+
+```sh
+CLANGDIR="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"
+cmake -S thirdparty/XenosRecomp -B out/host-xenosrecomp -G Ninja -DCMAKE_BUILD_TYPE=Release   -DCMAKE_C_COMPILER="$CLANGDIR/clang.exe" -DCMAKE_CXX_COMPILER="$CLANGDIR/clang++.exe"   -DCMAKE_RC_COMPILER="$CLANGDIR/llvm-rc.exe"
+cmake --build out/host-xenosrecomp --target XenosRecomp
+```
+
+`CMAKE_RC_COMPILER` is not optional: clang in GNU mode on Windows has no resource compiler and the
+configure dies pointing at `Windows-Clang.cmake` rather than saying so.
+
+**Install the Android SDK; a build tree is not enough.** `rexglueConfig.cmake` expects
+`rexglue_helpers.cmake` beside it, which only the install step produces:
+
+```sh
+cmake --install out/sdk-android30 --prefix "$PWD/out/sdk-android-install"
+```
+
+Then configure:
+
+```sh
+export ANDROID_NDK="$ANDROID_HOME/ndk/30.0.15729638"
+cmake --preset android-arm64-release   -DREXSDK_DIR=   -DCMAKE_PREFIX_PATH="$PWD/out/sdk-android-install"   -DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH   -DREBLUE_XENOSRECOMP="$PWD/out/host-xenosrecomp/XenosRecomp/XenosRecomp.exe"   -DREBLUE_DXC="$PWD/thirdparty/XenosRecomp/thirdparty/dxc-bin/bin/x64/dxc.exe"
+```
+
+Two of those flags are load-bearing and non-obvious:
+
+- **`-DREXSDK_DIR=`** (empty) overrides the preset. Pointing it at the SDK *source* makes CMake
+  `add_subdirectory` the SDK, which cross-compiles `rexglue` and leaves codegen with a binary that
+  cannot run on the build machine.
+- **`-DCMAKE_FIND_ROOT_PATH_MODE_PACKAGE=BOTH`.** The NDK toolchain sets this to `ONLY`, so
+  `find_package` searches only inside the sysroot and will not see the installed SDK no matter what
+  `CMAKE_PREFIX_PATH` says. The error just claims the SDK was not found.
+
 ## Device, once Phase 6 exists
 
 Not yet buildable — the ReXGlue SDK has no `android-arm64` slice. When it does:
