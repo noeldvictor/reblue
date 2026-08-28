@@ -22,6 +22,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "core/logging.h"
+#include "xr/xr_pad.h"
 
 namespace bd::xr {
 
@@ -57,6 +58,71 @@ Pose FromXrPose(const XrPosef &p) {
 
 constexpr XrViewConfigurationType kViewConfig =
     XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+
+// Action handles. File-static rather than Session members because Session is a
+// singleton, and this keeps every XR type out of xr_session.h - which is what
+// lets the rest of the port include that header freely.
+XrActionSet g_actionSet = XR_NULL_HANDLE;
+
+struct Actions {
+  XrAction a = XR_NULL_HANDLE;
+  XrAction b = XR_NULL_HANDLE;
+  XrAction x = XR_NULL_HANDLE;
+  XrAction y = XR_NULL_HANDLE;
+  XrAction menu = XR_NULL_HANDLE;
+  XrAction leftClick = XR_NULL_HANDLE;
+  XrAction rightClick = XR_NULL_HANDLE;
+  XrAction leftStick = XR_NULL_HANDLE;
+  XrAction rightStick = XR_NULL_HANDLE;
+  XrAction leftTrigger = XR_NULL_HANDLE;
+  XrAction rightTrigger = XR_NULL_HANDLE;
+  XrAction leftGrip = XR_NULL_HANDLE;
+  XrAction rightGrip = XR_NULL_HANDLE;
+};
+
+Actions g_act;
+
+// The localized name is what a runtime shows in its own rebinding UI, and
+// xrCreateAction rejects an empty one, so both names are always supplied.
+bool MakeAction(XrActionSet set, XrActionType type, const char *name,
+                const char *label, XrAction &out) {
+  XrActionCreateInfo info{XR_TYPE_ACTION_CREATE_INFO};
+  info.actionType = type;
+  std::snprintf(info.actionName, sizeof(info.actionName), "%s", name);
+  std::snprintf(info.localizedActionName, sizeof(info.localizedActionName),
+                "%s", label);
+  return !Failed(xrCreateAction(set, &info, &out), name);
+}
+
+bool ReadBool(XrSession session, XrAction action) {
+  XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
+  get.action = action;
+  XrActionStateBoolean state{XR_TYPE_ACTION_STATE_BOOLEAN};
+  if (XR_FAILED(xrGetActionStateBoolean(session, &get, &state)))
+    return false;
+  return state.isActive == XR_TRUE && state.currentState == XR_TRUE;
+}
+
+f32 ReadFloat(XrSession session, XrAction action) {
+  XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
+  get.action = action;
+  XrActionStateFloat state{XR_TYPE_ACTION_STATE_FLOAT};
+  if (XR_FAILED(xrGetActionStateFloat(session, &get, &state)))
+    return 0.0f;
+  return state.isActive == XR_TRUE ? state.currentState : 0.0f;
+}
+
+void ReadStick(XrSession session, XrAction action, f32 &outX, f32 &outY) {
+  outX = outY = 0.0f;
+  XrActionStateGetInfo get{XR_TYPE_ACTION_STATE_GET_INFO};
+  get.action = action;
+  XrActionStateVector2f state{XR_TYPE_ACTION_STATE_VECTOR2F};
+  if (XR_FAILED(xrGetActionStateVector2f(session, &get, &state)) ||
+      state.isActive != XR_TRUE)
+    return;
+  outX = state.currentState.x;
+  outY = state.currentState.y;
+}
 
 } // namespace
 
@@ -265,6 +331,11 @@ bool Session::CreateSession(VkInstance_T *instance,
   }
   appSpace_ = space;
 
+  // Not fatal: without input the game still renders, and saying so
+  // beats failing the whole session over a controller.
+  if (!CreateActions())
+    BD_ERROR("OpenXR: input actions unavailable; guest has no pad");
+
   BD_INFO("OpenXR: session created");
   return true;
 }
@@ -331,6 +402,11 @@ bool Session::BeginFrame(FrameState &out) {
     return false;
   frameBegun_ = true;
   frameDisplayTime_ = frameState.predictedDisplayTime;
+
+  // Every frame, including ones the runtime says not to render: the
+  // guest still polls its pad on those, and a stick frozen at its
+  // last value is worse than a still image.
+  SyncActions();
 
   out.predictedDisplayTime = frameState.predictedDisplayTime;
   out.shouldRender = frameState.shouldRender == XR_TRUE;
@@ -549,6 +625,133 @@ void Session::AnchorQuad(const FrameState &state) {
   quadAnchored_ = true;
   BD_INFO("OpenXR: quad anchored at ({:.2f}, {:.2f}, {:.2f})",
           quadAnchorPosition_.x, quadAnchorPosition_.y, quadAnchorPosition_.z);
+}
+
+// Touch controllers reach an application only as OpenXR actions - there is no
+// Android gamepad behind them - so without this the guest sees no pad at all
+// and sits on its title screen forever.
+//
+// No subaction paths: A and B live on the right controller and X and Y on the
+// left, so they are genuinely separate actions rather than one action with two
+// hands, and binding the symmetric ones separately reads the same way.
+bool Session::CreateActions() {
+  if (!instance_ || !session_)
+    return false;
+
+  XrActionSetCreateInfo setInfo{XR_TYPE_ACTION_SET_CREATE_INFO};
+  std::snprintf(setInfo.actionSetName, sizeof(setInfo.actionSetName),
+                "gameplay");
+  std::snprintf(setInfo.localizedActionSetName,
+                sizeof(setInfo.localizedActionSetName), "Gameplay");
+  if (Failed(xrCreateActionSet(AsInstance(instance_), &setInfo, &g_actionSet),
+             "xrCreateActionSet"))
+    return false;
+
+  const XrActionType kBool = XR_ACTION_TYPE_BOOLEAN_INPUT;
+  const XrActionType kFloat = XR_ACTION_TYPE_FLOAT_INPUT;
+  const XrActionType kVec2 = XR_ACTION_TYPE_VECTOR2F_INPUT;
+  if (!MakeAction(g_actionSet, kBool, "a_click", "A", g_act.a) ||
+      !MakeAction(g_actionSet, kBool, "b_click", "B", g_act.b) ||
+      !MakeAction(g_actionSet, kBool, "x_click", "X", g_act.x) ||
+      !MakeAction(g_actionSet, kBool, "y_click", "Y", g_act.y) ||
+      !MakeAction(g_actionSet, kBool, "menu_click", "Menu", g_act.menu) ||
+      !MakeAction(g_actionSet, kBool, "left_stick_click", "Left Stick Click",
+                  g_act.leftClick) ||
+      !MakeAction(g_actionSet, kBool, "right_stick_click", "Right Stick Click",
+                  g_act.rightClick) ||
+      !MakeAction(g_actionSet, kVec2, "left_stick", "Left Stick",
+                  g_act.leftStick) ||
+      !MakeAction(g_actionSet, kVec2, "right_stick", "Right Stick",
+                  g_act.rightStick) ||
+      !MakeAction(g_actionSet, kFloat, "left_trigger", "Left Trigger",
+                  g_act.leftTrigger) ||
+      !MakeAction(g_actionSet, kFloat, "right_trigger", "Right Trigger",
+                  g_act.rightTrigger) ||
+      !MakeAction(g_actionSet, kFloat, "left_grip", "Left Grip",
+                  g_act.leftGrip) ||
+      !MakeAction(g_actionSet, kFloat, "right_grip", "Right Grip",
+                  g_act.rightGrip))
+    return false;
+
+  auto path = [&](const char *text) {
+    XrPath out = XR_NULL_PATH;
+    xrStringToPath(AsInstance(instance_), text, &out);
+    return out;
+  };
+
+  const XrActionSuggestedBinding bindings[] = {
+      {g_act.a, path("/user/hand/right/input/a/click")},
+      {g_act.b, path("/user/hand/right/input/b/click")},
+      {g_act.x, path("/user/hand/left/input/x/click")},
+      {g_act.y, path("/user/hand/left/input/y/click")},
+      {g_act.menu, path("/user/hand/left/input/menu/click")},
+      {g_act.leftClick, path("/user/hand/left/input/thumbstick/click")},
+      {g_act.rightClick, path("/user/hand/right/input/thumbstick/click")},
+      {g_act.leftStick, path("/user/hand/left/input/thumbstick")},
+      {g_act.rightStick, path("/user/hand/right/input/thumbstick")},
+      {g_act.leftTrigger, path("/user/hand/left/input/trigger/value")},
+      {g_act.rightTrigger, path("/user/hand/right/input/trigger/value")},
+      {g_act.leftGrip, path("/user/hand/left/input/squeeze/value")},
+      {g_act.rightGrip, path("/user/hand/right/input/squeeze/value")},
+  };
+
+  XrInteractionProfileSuggestedBinding suggest{
+      XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING};
+  suggest.interactionProfile =
+      path("/interaction_profiles/oculus/touch_controller");
+  suggest.suggestedBindings = bindings;
+  suggest.countSuggestedBindings = static_cast<u32>(std::size(bindings));
+  if (Failed(
+          xrSuggestInteractionProfileBindings(AsInstance(instance_), &suggest),
+          "xrSuggestInteractionProfileBindings"))
+    return false;
+
+  XrSessionActionSetsAttachInfo attach{
+      XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO};
+  attach.countActionSets = 1;
+  attach.actionSets = &g_actionSet;
+  if (Failed(xrAttachSessionActionSets(AsSession(session_), &attach),
+             "xrAttachSessionActionSets"))
+    return false;
+
+  BD_INFO("OpenXR: {} input actions attached", std::size(bindings));
+  return true;
+}
+
+// Once per frame. Before the session reaches FOCUSED, xrSyncActions returns
+// XR_SESSION_NOT_FOCUSED and every action reads inactive - which is correct,
+// and not worth logging sixty times a second.
+void Session::SyncActions() {
+  if (!session_ || g_actionSet == XR_NULL_HANDLE)
+    return;
+
+  XrActiveActionSet active{g_actionSet, XR_NULL_PATH};
+  XrActionsSyncInfo sync{XR_TYPE_ACTIONS_SYNC_INFO};
+  sync.countActiveActionSets = 1;
+  sync.activeActionSets = &active;
+  if (XR_FAILED(xrSyncActions(AsSession(session_), &sync)))
+    return;
+
+  const XrSession session = AsSession(session_);
+  PadState pad;
+  pad.a = ReadBool(session, g_act.a);
+  pad.b = ReadBool(session, g_act.b);
+  pad.x = ReadBool(session, g_act.x);
+  pad.y = ReadBool(session, g_act.y);
+  pad.menu = ReadBool(session, g_act.menu);
+  pad.leftThumbClick = ReadBool(session, g_act.leftClick);
+  pad.rightThumbClick = ReadBool(session, g_act.rightClick);
+  ReadStick(session, g_act.leftStick, pad.leftStickX, pad.leftStickY);
+  ReadStick(session, g_act.rightStick, pad.rightStickX, pad.rightStickY);
+  pad.leftTrigger = ReadFloat(session, g_act.leftTrigger);
+  pad.rightTrigger = ReadFloat(session, g_act.rightTrigger);
+  pad.leftGrip = ReadFloat(session, g_act.leftGrip);
+  pad.rightGrip = ReadFloat(session, g_act.rightGrip);
+  // Connected even while the runtime has focus on its own menu: the pad is
+  // there, nobody is pressing it. Reporting it absent would make the guest
+  // think the controller had been unplugged every time you check the time.
+  pad.connected = true;
+  SubmitPad(pad);
 }
 
 void Session::Destroy() {

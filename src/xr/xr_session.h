@@ -130,6 +130,16 @@ public:
   // frame, once. Call after BeginFrame; does nothing thereafter.
   void AnchorQuad(const FrameState &state);
 
+  // --- input ---
+
+  // Creates the gameplay action set, suggests Touch bindings and
+  // attaches it. Called from CreateSession; failure is not fatal.
+  bool CreateActions();
+
+  // xrSyncActions, then publishes the result through xr_pad.h for
+  // the input driver. Called once per frame from BeginFrame.
+  void SyncActions();
+
   void Destroy();
 
   // Recommended per-eye render target size, from the view configuration.

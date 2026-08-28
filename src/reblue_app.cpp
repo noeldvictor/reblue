@@ -49,6 +49,7 @@
 #include "platform/platform.h"
 #include "vfs/vfs.h"
 #include "xr/xr.h"
+#include "xr/xr_pad_driver.h"
 
 #ifdef REBLUE_BUILD_INSTALLER
 REXCVAR_DEFINE_BOOL(
@@ -381,6 +382,14 @@ void ReblueApp::OnPreSetup(rex::RuntimeConfig &config) {
     if (input) {
       input->SetDeviceAssignment(
           std::make_unique<rex::input::SharedAssignment>());
+      // Quest controllers are not Android gamepads - they exist only as
+      // OpenXR actions, so SDL never sees them and a headset with two
+      // controllers in your hands reports no pad at all. This driver reports
+      // a device only while a runtime is actually delivering state, so it is
+      // inert everywhere else. Order does not matter: InputSystem::GetState
+      // merges across every device assigned to the user rather than picking
+      // one, so arriving after the NOP stand-in costs nothing.
+      input->AddDriver(std::make_unique<bd::xr::PadDriver>(nullptr, 0));
     }
     return input;
   };
