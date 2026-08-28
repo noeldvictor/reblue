@@ -131,6 +131,79 @@ Diagnostics that exist now and should be used before guessing: the SDK logs to l
 (spdlog android_sink), `crash_handler.cpp` unwinds with `_Unwind_Backtrace` and reports the faulting
 PC from the signal context, and the on-device log lives under the app's external files directory.
 
+## Git Bash mangles device paths. This has cost hours, three times.
+
+Under MSYS (the Bash tool here), **any argument that looks like a Unix path is rewritten to a
+Windows one** before the program sees it. `/storage/emulated/0/...` becomes
+`C:/Program Files/Git/storage/emulated/0/...`. `MSYS_NO_PATHCONV=1` disables that - and then
+disables it for *every* argument in the command, including the local ones, which is the trap.
+
+Three ways this has already gone wrong, all of which looked like something else:
+
+| Symptom | Actually |
+| --- | --- |
+| `adb push` reports success, file never changes on device | Local path stayed `/c/Users/...`, adb could not stat it. The `&&` did fire, because the *echo* was unconditional. |
+| Three consecutive perf experiments all measure "no change" | Every `args.txt` push had silently failed; the app was reading a stale file |
+| `extract_game_data.py --adb-serial` dies with `short read: wanted 2048, got 0` | The device-side ISO path was rewritten to `C:/Program Files/Git/storage/...` |
+
+**The rule: `MSYS_NO_PATHCONV=1` for the command, Windows-style paths for anything local.**
+
+```sh
+MSYS_NO_PATHCONV=1 adb push "C:/Users/.../args.txt" /storage/emulated/0/Android/data/com.reblue/files/args.txt
+```
+
+And verify, every time, because all three failures above reported success:
+
+- Print the `adb push` result instead of discarding it. It says `1 file pushed` or it says `cannot stat`.
+- After a launch, check `adb logcat -s reblue | grep 'args.txt added'` - the count must match the
+  file. A stale `args.txt` is indistinguishable from a setting that does nothing.
+- `adb shell cat` the file back when it matters.
+
+Two more silent no-ops in the same family, worth knowing before trusting a measurement:
+
+- **`bd_msaa` only accepts 0/2/4/8.** `--bd_msaa 1` is rejected by the validator and leaves it at 4.
+  A run that "proves MSAA does not matter" may be a run with MSAA still on.
+- **Cvars with `kRequiresRestart` need a `force-stop`**, not just a relaunch of the activity.
+
+## Game data: all three discs are required
+
+`tools/extract_game_data.py` is driven by `res/embed/installer/manifest.txt`, which lists
+`bd_disc_1.xml` through `bd_disc_3.xml`. **Extracting only disc 1 produces a build that boots, shows
+its title screen, accepts input - and then dies the moment a new game starts:**
+
+```
+[disc] file-load fatal, failed file: 'D:\database\camp\ene_dic_us.u16'
+Fatal: File Load Error - Failed to load a required game file
+```
+
+Those files are on discs 2 and 3. Nothing before that point needs them, so a disc-1-only install
+looks completely healthy until it isn't. `--skip-media` is fine for iterating (it drops `movie/` and
+`snd_stream*`, most of the bytes) but it does mean no intro movie.
+
+The discs never have to be copied to the PC. The reader walks XDVDFS and pulls only the sectors it
+needs, straight off an adb-connected device:
+
+```sh
+MSYS_NO_PATHCONV=1 python tools/extract_game_data.py   "/path/on/device/Blue Dragon ... (Disc 2).iso"   "/path/on/device/Blue Dragon ... (Disc 3).iso"   --adb-serial <serial> -o out/game --skip-media
+```
+
+## Forked dependencies
+
+The owner has forked the three upstreams this port has to modify, so changes can live in their own
+history instead of accumulating in `patches/`:
+
+- `github.com/noeldvictor/rexglue-sdk` - the Android cross-build (`patches/rexglue-sdk-android.patch`,
+  ~15 files). There is no `android-arm64` release slice, so this is built from source regardless.
+- `github.com/noeldvictor/plume` - the OpenXR device-creation seam
+  (`patches/plume-openxr-seam.patch`). Stereo will need more here: per-eye targets and probably
+  `VK_KHR_multiview`, which is well past what a patch file should carry.
+- `github.com/noeldvictor/XenonRecomp` - note this repo vendors **XenosRecomp** (the Xenos *shader*
+  recompiler) in `thirdparty/`, which is a different project from XenonRecomp (the PowerPC CPU
+  recompiler). Check which one a change actually needs before pushing to either.
+
+`patches/README.md` already says a patch is the cheap option rather than the right one, and that
+forking is correct once one grows past "small and obviously correct". Both have.
+
 ## Dev loop
 
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
