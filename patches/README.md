@@ -87,12 +87,45 @@ So far the entire patch is one guard: `src/ui/CMakeLists.txt` unconditionally de
 `ANativeWindow` and the surface comes from `VK_KHR_android_surface` — so the Android case takes an
 empty branch ahead of the desktop Linux one.
 
+### What the rest of it is
+
+Beyond the X11/Wayland guard, three things bionic and its libc++ do not provide:
+
+1. **`clock_time_conversion`.** `include/rex/chrono/chrono.h` specialises it, and libc++ has never
+   shipped the C++20 clock-conversion machinery. The SDK already carries a fallback for exactly
+   this, guarded on `__APPLE__` because AppleClang's libc++ has the same hole; the patch widens that
+   guard to Android. The real condition is "libc++", not "this OS".
+2. **The ucontext family.** Android removed `getcontext`, `setcontext`, `makecontext` and
+   `swapcontext` from libc, so `src/core/fiber_posix.cpp` has nothing to call and there is no third
+   fiber backend to fall back on. [libucontext](https://github.com/kaniini/libucontext) supplies
+   them in aarch64 assembly, and its `.S` files already `ALIAS` the plain names onto their
+   `libucontext_`-prefixed ones — so the fiber backend links **unmodified**. The patch adds a
+   `ucontext` static library and links it into `rexcore`.
+3. **`librt`.** There is no such library on Android; those functions live in libc. The patch gives
+   Android its own link branch rather than letting it fall into the desktop Linux one.
+
+Also worth knowing, though not part of the patch: **use NDK r30 or newer.** r29's libc++ has no
+floating-point `std::from_chars`, which `rex/string/numeric.h` calls with a `chars_format`, and the
+error is the unhelpful "requires 3 arguments, but 4 were provided" as overload resolution falls
+back to the integral form. r30 ships Clang 21, whose libc++ has it. Trying a newer toolchain is far
+cheaper than writing that portability shim.
+
 ### Applying
+
+libucontext is vendored by hand rather than as a submodule, since this patch is applied to a clone
+of a repository we do not own:
 
 ```sh
 git clone https://github.com/rexglue/rexglue-sdk.git out/rexglue-src
 git -C out/rexglue-src submodule update --init --recursive --depth 1 --jobs 8
+git clone --depth 1 https://github.com/kaniini/libucontext.git out/rexglue-src/thirdparty/libucontext
 git -C out/rexglue-src apply ../../patches/rexglue-sdk-android.patch
+```
+
+Then configure with the NDK toolchain:
+
+```sh
+cmake -S out/rexglue-src -B out/sdk-android30 -G Ninja   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake"   -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29   -DCMAKE_BUILD_TYPE=Release -DREXGLUE_BUILD_TESTS=OFF
 ```
 
 ### One thing the patch cannot fix: symlinks on Windows

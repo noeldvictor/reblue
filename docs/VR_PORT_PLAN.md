@@ -403,11 +403,21 @@ C++. `src/core/threading.cpp` holds the only x86 intrinsic and already has a por
 **The Thor problem is Android, not ARM.** It runs Android 13 on a Snapdragon 8 Gen 2 (Adreno 740;
 the Lite is SD865/Adreno 650). Work, in dependency order:
 
-1. **Cross-build the ReXGlue SDK for `android-arm64`.** No release slice exists —
-   `.github/scripts/fetch-deps.sh` knows only `win-amd64`, `linux-amd64`, `linux-arm64`,
-   `mac-arm64`, `mac-amd64`. Source is public and already builds for aarch64 Linux, so the delta is
-   bionic vs glibc, no GTK, Android signal and threading rules, and its SDL3/ImGui/Tracy
-   dependencies. Point `REXSDK_DIR` at a source tree. **Everything is blocked on this.**
+1. **Cross-build the ReXGlue SDK for `android-arm64`.** No release slice exists, so it builds from
+   source. **In progress and much smaller than feared** — see
+   `research/20260828_1600_android-arm64-bringup.md` and `patches/rexglue-sdk-android.patch`. The
+   SDK's own platform detection already classifies Android as `linux-arm64`, the NDK clears its
+   Clang floor, and SDL3 configures itself natively with aaudio, opensles, android hidapi and both
+   the Vulkan and OpenXR backends. What actually needed patching: the X11/Wayland pkg-config
+   requirement, `clock_time_conversion` (libc++ gap the SDK already handles for Apple), the missing
+   ucontext family (bionic removed it; `libucontext` supplies it in aarch64 assembly and the fiber
+   backend links unmodified), and `librt`. Use **NDK r30 or newer** — r29's libc++ has no
+   floating-point `from_chars`.
+
+   **Watch the host-tools split.** `rexglue`, `XenosRecomp`, `dxc` and `reblue_prelink` must build
+   for and run on the *host*. Pointing `REXSDK_DIR` at the source tree makes CMake build the SDK as
+   a subdirectory, which would cross-compile `rexglue` and leave codegen with an unrunnable
+   binary. Codegen has to come from a host SDK; only the runtime cross-compiles.
 2. **Guest address space.** The recompiler reserves a large fixed virtual region so guest pointers
    are base + offset. Verify the reservation succeeds under bionic. Check page-size assumptions:
    Android 15+ mandates 16 KB page support; Horizon OS on Quest 2 is Android 12 era at 4 KB.

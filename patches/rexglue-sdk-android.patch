@@ -1,8 +1,179 @@
+diff --git a/include/rex/chrono/chrono.h b/include/rex/chrono/chrono.h
+index d876846..2cfb037 100644
+--- a/include/rex/chrono/chrono.h
++++ b/include/rex/chrono/chrono.h
+@@ -116,8 +116,11 @@ using XSystemClock = detail::NtSystemClock<detail::Domain::Guest>;
+ 
+ namespace std::chrono {
+ 
+-#ifdef __APPLE__
+-// Apple libc++ does not expose clock_time_conversion or clock_cast.
++#if defined(__APPLE__) || defined(__ANDROID__)
++// Neither Apple's nor Android's libc++ exposes clock_time_conversion or
++// clock_cast - the C++20 clock-conversion machinery is one of the parts libc++
++// has not shipped. The condition is really "libc++", not "this OS", but
++// naming the two platforms that actually hit it keeps the intent readable.
+ template <class, class>
+ struct clock_time_conversion {};
+ 
+diff --git a/include/rex/main_android.h b/include/rex/main_android.h
+new file mode 100644
+index 0000000..ee0f220
+--- /dev/null
++++ b/include/rex/main_android.h
+@@ -0,0 +1,28 @@
++#pragma once
++/**
++ * @file    rex/main_android.h
++ * @brief   The sliver of Xenia's Android app module ReXGlue actually uses.
++ *
++ * threading_posix.cpp and memory_posix.cpp both call rex::GetAndroidApiLevel()
++ * to decide whether API 26+ symbols are worth dlsym-ing, and both include this
++ * header, but it never made it across from Xenia. Xenia's version carried a
++ * whole Activity lifecycle; the API level is the only part anything here wants.
++ *
++ * @modified re:Blue fork, 2026
++ */
++
++#include <rex/platform.h>
++
++#if REX_PLATFORM_ANDROID
++
++#include <android/api-level.h>
++
++namespace rex {
++
++// bionic has provided this since API 29, which is already our minimum, so
++// there is no need for Xenia's cached-at-startup value.
++inline int GetAndroidApiLevel() { return android_get_device_api_level(); }
++
++}  // namespace rex
++
++#endif  // REX_PLATFORM_ANDROID
+diff --git a/include/rex/thread/fiber.h b/include/rex/thread/fiber.h
+index 352af67..2941590 100644
+--- a/include/rex/thread/fiber.h
++++ b/include/rex/thread/fiber.h
+@@ -23,6 +23,30 @@
+ #include <ucontext.h>
+ #include <cstdint>
+ #include <vector>
++
++#if defined(__ANDROID__)
++// Bionic still ships <ucontext.h> and ucontext_t for signal handlers, but
++// Android removed the ucontext family itself from libc. thirdparty/libucontext
++// supplies them in aarch64 assembly and its .S files alias the plain names, so
++// only the declarations are missing here.
++#include <cstddef>
++extern "C" {
++int getcontext(ucontext_t *);
++int setcontext(const ucontext_t *);
++void makecontext(ucontext_t *, void (*)(), int, ...);
++int swapcontext(ucontext_t *, const ucontext_t *);
++}
++// libucontext's aarch64 assembly hardcodes these offsets into ucontext_t. If
++// bionic ever lays the struct out differently, the assembly would quietly read
++// and write the wrong registers - a corrupted fiber switch, which is about the
++// worst thing to debug at runtime. Fail the build instead.
++static_assert(offsetof(ucontext_t, uc_mcontext.regs) == 184,
++              "libucontext aarch64 MCONTEXT_GREGS offset disagrees with bionic");
++static_assert(offsetof(ucontext_t, uc_mcontext.sp) == 432,
++              "libucontext aarch64 SP_OFFSET disagrees with bionic");
++static_assert(offsetof(ucontext_t, uc_mcontext.pc) == 440,
++              "libucontext aarch64 PC_OFFSET disagrees with bionic");
++#endif
+ #endif
+ 
+ namespace rex::thread {
+diff --git a/include/rex/ui/surface_android.h b/include/rex/ui/surface_android.h
+new file mode 100644
+index 0000000..dd5f974
+--- /dev/null
++++ b/include/rex/ui/surface_android.h
+@@ -0,0 +1,45 @@
++#pragma once
++/**
++ ******************************************************************************
++ * Xenia : Xbox 360 Emulator Research Project                                 *
++ ******************************************************************************
++ * Copyright 2021 Ben Vanik. All rights reserved.                             *
++ * Released under the BSD license - see LICENSE in the root for more details. *
++ ******************************************************************************
++ *
++ * @modified    re:Blue fork, 2026 - Android surface for the SDL window backend
++ *
++ * The rest of the Android path was already here: surface.h declares
++ * kTypeIndex_AndroidNativeWindow, and vulkan_presenter.cpp already builds a
++ * VkSurfaceKHR from one through vkCreateAndroidSurfaceKHR. Only this class and
++ * its branch in window_sdl.cpp were missing.
++ */
++
++#include <cstdint>
++
++#include <rex/ui/surface.h>
++
++#include <android/native_window.h>
++
++namespace rex {
++namespace ui {
++
++class AndroidNativeWindowSurface final : public Surface {
++ public:
++  explicit AndroidNativeWindowSurface(ANativeWindow* window) : window_(window) {}
++
++  TypeIndex GetType() const override { return kTypeIndex_AndroidNativeWindow; }
++  ANativeWindow* window() const { return window_; }
++
++ protected:
++  bool GetSizeImpl(uint32_t& width_out, uint32_t& height_out) const override;
++
++ private:
++  // Owned by SDL, which owns the Activity's window. Not retained here: the
++  // surface does not outlive the SDL window it came from, and taking a
++  // reference we never release would leak it across a surfaceDestroyed.
++  ANativeWindow* window_;
++};
++
++}  // namespace ui
++}  // namespace rex
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 1ddafd0..7fe7f40 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -100,9 +100,17 @@ target_include_directories(rexcore PRIVATE
+ 
+ if(APPLE)
+     target_link_libraries(rexcore PRIVATE pthread)
++elseif(ANDROID)
++    # bionic has no librt and no separate libpthread: both are inside libc.
++    target_link_libraries(rexcore PRIVATE dl)
+ elseif(UNIX)
+     target_link_libraries(rexcore PRIVATE pthread rt dl)
+ endif()
++if(ANDROID)
++    # Supplies the ucontext family bionic lacks; see thirdparty/CMakeLists.txt.
++    # PUBLIC so anything linking rexcore statically also resolves them.
++    target_link_libraries(rexcore PUBLIC ucontext)
++endif()
+ 
+ target_link_libraries(rexcore
+     PUBLIC
 diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
-index 5bd3dc5..c553576 100644
+index 5bd3dc5..da6a2b7 100644
 --- a/src/ui/CMakeLists.txt
 +++ b/src/ui/CMakeLists.txt
-@@ -146,7 +146,12 @@ if(REXGLUE_USE_VULKAN)
+@@ -72,6 +72,10 @@ elseif(APPLE)
+     set(REXUI_PLATFORM_SOURCES
+         surface_mac.cpp
+     )
++elseif(ANDROID)
++    set(REXUI_PLATFORM_SOURCES
++        surface_android.cpp
++    )
+ else()
+     set(REXUI_PLATFORM_SOURCES
+         surface_gnulinux.cpp
+@@ -146,7 +150,12 @@ if(REXGLUE_USE_VULKAN)
  endif()
  
  # Platform-specific dependencies
@@ -16,3 +187,106 @@ index 5bd3dc5..c553576 100644
      find_package(PkgConfig REQUIRED)
      pkg_check_modules(X11_XCB REQUIRED x11-xcb)
      # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
+diff --git a/src/ui/surface_android.cpp b/src/ui/surface_android.cpp
+new file mode 100644
+index 0000000..4c623a0
+--- /dev/null
++++ b/src/ui/surface_android.cpp
+@@ -0,0 +1,32 @@
++/**
++ * @file    src/ui/surface_android.cpp
++ * @brief   Android native-window surface for the SDL window backend.
++ *
++ * @modified re:Blue fork, 2026
++ */
++#include <rex/ui/surface_android.h>
++
++namespace rex {
++namespace ui {
++
++bool AndroidNativeWindowSurface::GetSizeImpl(uint32_t& width_out,
++                                             uint32_t& height_out) const {
++  if (!window_) {
++    return false;
++  }
++  // Negative is the documented error return, and a zero dimension happens
++  // legitimately while the Activity is between surfaceDestroyed and
++  // surfaceCreated. Both mean "no usable size yet" rather than a hard failure,
++  // so the caller retries next frame instead of tearing the swapchain down.
++  const int32_t width = ANativeWindow_getWidth(window_);
++  const int32_t height = ANativeWindow_getHeight(window_);
++  if (width <= 0 || height <= 0) {
++    return false;
++  }
++  width_out = static_cast<uint32_t>(width);
++  height_out = static_cast<uint32_t>(height);
++  return true;
++}
++
++}  // namespace ui
++}  // namespace rex
+diff --git a/src/ui/window_sdl.cpp b/src/ui/window_sdl.cpp
+index 2251429..8ad8768 100644
+--- a/src/ui/window_sdl.cpp
++++ b/src/ui/window_sdl.cpp
+@@ -35,6 +35,8 @@
+ #include <SDL3/SDL_metal.h>
+ 
+ #include <rex/ui/surface_mac.h>
++#elif REX_PLATFORM_ANDROID
++#include <rex/ui/surface_android.h>
+ #else
+ #include <X11/Xlib-xcb.h>
+ #include <rex/ui/surface_gnulinux.h>
+@@ -398,6 +400,15 @@ std::unique_ptr<Surface> WindowSDL::CreateSurfaceImpl(Surface::TypeFlags allowed
+       SDL_Metal_DestroyView(metal_view);
+     }
+   }
++#elif REX_PLATFORM_ANDROID
++  if (allowed_types & Surface::kTypeFlag_AndroidNativeWindow) {
++    SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
++    auto* native_window = static_cast<ANativeWindow*>(
++        SDL_GetPointerProperty(props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
++    if (native_window) {
++      return std::make_unique<AndroidNativeWindowSurface>(native_window);
++    }
++  }
+ #else
+   SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
+   if (allowed_types & Surface::kTypeFlag_WaylandSurface) {
+diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
+index f102b56..50718b4 100644
+--- a/thirdparty/CMakeLists.txt
++++ b/thirdparty/CMakeLists.txt
+@@ -702,3 +702,31 @@ set_target_properties(libavutil libavcodec PROPERTIES
+     C_VISIBILITY_PRESET hidden
+     VISIBILITY_INLINES_HIDDEN ON
+     FOLDER "FFmpeg")
++
++# Bionic does not provide the ucontext family - Android removed getcontext,
++# setcontext, makecontext and swapcontext from libc - so src/core/fiber_posix.cpp
++# has nothing to call. libucontext supplies them in aarch64 assembly, and its
++# .S files already ALIAS the plain names onto their libucontext_ prefixed ones,
++# so the fiber backend links unmodified.
++if(ANDROID)
++    enable_language(ASM)
++    if(NOT CMAKE_ANDROID_ARCH_ABI STREQUAL "arm64-v8a")
++        message(FATAL_ERROR
++            "libucontext is wired up for arm64-v8a only; add the matching "
++            "thirdparty/libucontext/arch/<arch> sources for ${CMAKE_ANDROID_ARCH_ABI}.")
++    endif()
++    add_library(ucontext STATIC
++        libucontext/arch/aarch64/getcontext.S
++        libucontext/arch/aarch64/setcontext.S
++        libucontext/arch/aarch64/swapcontext.S
++        libucontext/arch/aarch64/makecontext.c
++        libucontext/arch/aarch64/trampoline.c)
++    target_include_directories(ucontext PUBLIC
++        libucontext/include
++        libucontext/arch/aarch64/include)
++    target_include_directories(ucontext PRIVATE
++        libucontext/arch/aarch64
++        libucontext/arch/common)
++    target_compile_options(ucontext PRIVATE -w)
++    set_target_properties(ucontext PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER "thirdparty")
++endif()
