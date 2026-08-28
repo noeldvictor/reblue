@@ -101,8 +101,11 @@ def main():
     ap.add_argument("-o", "--output", default="assets/default.xex")
     ap.add_argument("--adb-serial", help="read through this adb device instead of locally")
     ap.add_argument("--adb", default="adb", help="path to the adb executable")
-    ap.add_argument("--name", default="default.xex", help="file to extract from the disc root")
-    ap.add_argument("--list", action="store_true", help="list the disc root and exit")
+    ap.add_argument("--name", default="default.xex",
+                    help="file to extract, slash-separated for subdirectories "
+                         "(e.g. pack/shaders.bin)")
+    ap.add_argument("--list", action="store_true",
+                    help="list the directory --name points at (default: the root) and exit")
     args = ap.parse_args()
 
     reader = Reader(args.image, args.adb_serial, args.adb)
@@ -112,8 +115,23 @@ def main():
         print("%s image, filesystem base sector %d, root table at %d (%d bytes)"
               % (fmt.upper(), base, root_sector, root_size))
 
-        table = reader.read(base + root_sector, max(1, (root_size + SECTOR - 1) // SECTOR))
-        entries = walk(table)
+        def read_dir(sector, size):
+            return walk(reader.read(base + sector, max(1, (size + SECTOR - 1) // SECTOR)))
+
+        entries = read_dir(root_sector, root_size)
+
+        # Walk any leading path components so subdirectories are reachable.
+        # Blue Dragon keeps its shaders in the game data rather than the xex, so
+        # this is how you get at them.
+        parts = [p for p in args.name.replace("\\", "/").split("/") if p]
+        # With --list the whole path names a directory; otherwise its last
+        # component is the file to pull.
+        leaf = "" if args.list else (parts.pop() if parts else "")
+        for part in parts:
+            match = [e for e in entries if e[0].lower() == part.lower() and e[3] & 0x10]
+            if not match:
+                sys.exit("no directory %r along %s" % (part, args.name))
+            entries = read_dir(match[0][1], match[0][2])
 
         if args.list:
             for name, sector, size, attr in sorted(entries):
@@ -121,21 +139,21 @@ def main():
                       % ("DIR" if attr & 0x10 else "FILE", name, sector, size))
             return 0
 
-        match = [e for e in entries if e[0].lower() == args.name.lower()]
+        match = [e for e in entries if e[0].lower() == leaf.lower()]
         if not match:
-            sys.exit("%s is not in the disc root; --list to see what is"
+            sys.exit("%s not found; --list on its parent to see what is there"
                      % args.name)
         name, sector, size, attr = match[0]
         if attr & 0x10:
-            sys.exit("%s is a directory" % name)
+            sys.exit("%s is a directory; pass --list to enumerate it" % name)
 
         os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
         data = reader.read(base + sector, (size + SECTOR - 1) // SECTOR)[:size]
-        if data[:4] != b"XEX2":
+        if name.lower().endswith(".xex") and data[:4] != b"XEX2":
             sys.exit("extracted %s but it does not start with XEX2; wrong disc?" % name)
         with open(args.output, "wb") as fh:
             fh.write(data)
-        print("wrote %s (%d bytes, XEX2)" % (args.output, size))
+        print("wrote %s (%d bytes)" % (args.output, size))
     finally:
         reader.close()
     return 0

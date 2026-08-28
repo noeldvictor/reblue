@@ -45,7 +45,9 @@ which lives in a repo.
 | — first person | Composition done | Animations are authored third-person, so expect a novelty. |
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
 | — OpenXR session, stereo rendering | Not started | Blocked on the plume patch landing on a real toolchain. |
-| **ARM64 Android (AYN Thor, etc.)** | Not started | Native APK. Blocked on cross-building the ReXGlue SDK with the NDK. |
+| **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 139 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. Not yet packaged or run. |
+| — shaders | **Blocked, but understood** | The generated shader cache is empty, so a build would draw nothing. They are inside the compressed XEX basefile; see [the research note](research/20260828_1620_where-the-shaders-are.md). |
+| — APK harness | Not started | Java Activity, manifest, Gradle. The library and its app registration already exist. |
 | **Quest 2, native** | Not started | Downstream of the Android port. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
