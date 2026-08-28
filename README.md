@@ -45,10 +45,11 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — first person | Composition done | Animations are authored third-person, so expect a novelty. |
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
 | — OpenXR session, stereo rendering | Not started | Blocked on the plume patch landing on a real toolchain. |
-| **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 139 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. Not yet packaged or run. |
-| — shaders | **Blocked, but understood** | The generated shader cache is empty, so a build would draw nothing. They are inside the compressed XEX basefile; see [the research note](research/20260828_1620_where-the-shaders-are.md). |
-| — APK harness | Not started | Java Activity, manifest, Gradle. The library and its app registration already exist. |
-| **Quest 2, native** | Not started | Downstream of the Android port. |
+| **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 140 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. |
+| — shaders | **Solved** | 142 cache entries. They live in `pack/!necessity.ipk`, zlib-compressed, which is why raw scans found nothing. `tools/extract_ipk.py` unpacks them. |
+| — APK | **Installs and runs on a Quest 2** | `tools/build_apk.sh`, 62 MB. Launches, reaches `SDL_main`, holds ~107 MB across 19 threads as a titled Horizon OS panel. |
+| — game data on device | Not started | ~15 GB from the three discs. Until then the panel is black: it runs, it just has nothing to draw. |
+| **Quest 2 VR** | Not started | What runs today is a **flat 2D panel**, not VR. The OpenXR session and stereo renderer are still unwritten; only the camera maths exists. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
 | Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |

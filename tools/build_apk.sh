@@ -68,7 +68,9 @@ echo "==> aligning"
 echo "==> signing"
 # A throwaway debug key. Regenerated if absent so a fresh clone just works;
 # never use this for anything that leaves the machine.
-KEYSTORE="$OUT/debug.keystore"
+# Outside $OUT, which is wiped each run - otherwise every build is signed with
+# a fresh key and adb refuses the upgrade with INSTALL_FAILED_UPDATE_INCOMPATIBLE.
+KEYSTORE="${KEYSTORE:-out/reblue-debug.keystore}"
 if [ ! -f "$KEYSTORE" ]; then
   keytool -genkeypair -keystore "$KEYSTORE" -alias reblue -storepass android \
     -keypass android -keyalg RSA -keysize 2048 -validity 10000 \
