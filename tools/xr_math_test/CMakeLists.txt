@@ -15,7 +15,12 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-add_executable(xr_math_test xr_math_test.cpp)
+# xr_camera.cpp is here too: it deliberately depends on nothing but xr_math.h,
+# with its settings pushed in as a CameraTuning rather than pulled from the
+# cvar singleton. That is what makes the camera modes checkable without the SDK.
+add_executable(xr_math_test
+    xr_math_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/xr/xr_camera.cpp")
 
 # stub/ first so <rex/types.h> resolves here rather than to a real SDK if one
 # happens to be installed: the test is about xr_math.h, not about the SDK.

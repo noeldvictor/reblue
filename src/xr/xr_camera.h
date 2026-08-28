@@ -62,11 +62,34 @@ struct EyeMatrices {
   Mat4 projection;
 };
 
+// The settings the composition actually reads, passed in rather than pulled
+// from the cvar singleton. Keeping it that way is what lets xr_camera.cpp
+// depend on nothing but xr_math.h, and therefore what lets tools/xr_math_test
+// exercise the camera modes without the SDK present. Do not reintroduce a
+// reach into bd::xr::Settings from here.
+struct CameraTuning {
+  // Game units per real-world metre. A property of Blue Dragon we have to
+  // measure, not a preference.
+  f32 unitsPerMetre = 1.0f;
+  // How large the world feels. 1.0 is life size; small values read as a
+  // tabletop.
+  f32 worldScale = 1.0f;
+  // Third-person anchor offset, in the character's own frame.
+  Vec3 thirdOffset{0.0f, 1.5f, -3.0f};
+  // How far above the scene the diorama anchor floats.
+  f32 dioramaHeight = 8.0f;
+};
+
 // Stateless per frame apart from the recentre offset and the smoothed anchor,
 // both of which have to persist across frames by definition.
 class Camera {
 public:
   static Camera &Get();
+
+  // Pushed from bd::xr::Settings whenever a cvar changes, so the composition
+  // never reaches for a global.
+  void SetTuning(const CameraTuning &tuning) { tuning_ = tuning; }
+  const CameraTuning &Tuning() const { return tuning_; }
 
   // Latches what the game asked for. Called from the bdCameraViewSetMatrices
   // hook before the override is composed.
@@ -99,6 +122,12 @@ public:
   // Snap turn, in radians, applied to the recentre yaw.
   void ApplyTurn(f32 radians);
 
+  // Drops the smoothed anchor so the next frame snaps rather than travelling.
+  // Wanted whenever the anchor is about to move somewhere unrelated: a session
+  // restart, an area load, a mode change. Sliding smoothly across a level
+  // transition is worse than cutting.
+  void ResetSmoothing() { smoothedValid_ = false; }
+
   CameraMode Mode() const { return mode_; }
   void SetMode(CameraMode mode);
 
@@ -116,6 +145,7 @@ private:
   f32 HeadOffsetScale() const;
 
   CameraMode mode_ = CameraMode::ThirdPerson;
+  CameraTuning tuning_;
 
   GameCamera gameCamera_;
   CharacterAnchor character_;

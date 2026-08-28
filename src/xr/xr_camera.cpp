@@ -6,8 +6,6 @@
 
 #include <cmath>
 
-#include "xr/xr_settings.h"
-
 namespace bd::xr {
 
 namespace {
@@ -56,16 +54,14 @@ void Camera::SetMode(CameraMode mode) {
 }
 
 f32 Camera::HeadOffsetScale() const {
-  const Settings &s = Settings::Get();
   // Game units per metre of real head movement. Dividing by world scale is
   // what makes a small world feel large: at 0.1 the world reads as a tabletop,
   // so a 10 cm lean has to cover ten times the game distance to match.
-  const f32 scale = s.WorldScale();
-  return scale > 0.0f ? s.UnitsPerMetre() / scale : s.UnitsPerMetre();
+  const f32 scale = tuning_.worldScale;
+  return scale > 0.0f ? tuning_.unitsPerMetre / scale : tuning_.unitsPerMetre;
 }
 
 Pose Camera::ComposeAnchor() const {
-  const Settings &s = Settings::Get();
   Vec3 target;
   f32 yaw = 0.0f;
 
@@ -86,7 +82,7 @@ Pose Camera::ComposeAnchor() const {
       // The offset is authored in the character's frame, so it stays behind
       // them as they turn rather than swinging around the world axes.
       const Quat facing = QuatFromYaw(yaw);
-      target = character_.position + Rotate(facing, s.ThirdPersonOffset());
+      target = character_.position + Rotate(facing, tuning_.thirdOffset);
     } else {
       // No character this frame: fall back to the game's own camera rather
       // than snapping to the origin. Happens during menus and event scenes.
@@ -99,7 +95,7 @@ Pose Camera::ComposeAnchor() const {
     // action, raised so the player looks down into the scene rather than
     // standing in it.
     target = gameCamera_.position;
-    target.y += s.DioramaHeight();
+    target.y += tuning_.dioramaHeight;
     break;
 
   case CameraMode::Cinema:

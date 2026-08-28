@@ -124,28 +124,46 @@ f32 Settings::TurnRadians() const {
   return turnDegrees_ * static_cast<f32>(std::numbers::pi) / 180.0f;
 }
 
+CameraTuning Settings::Tuning() const {
+  return {unitsPerMetre_, worldScale_, thirdOffset_, dioramaHeight_};
+}
+
+namespace {
+// Every adopt that feeds the camera ends here, so a cvar write reaches the
+// composition without the camera ever looking anything up.
+void PushTuning() { Camera::Get().SetTuning(Settings::Get().Tuning()); }
+} // namespace
+
 void Settings::AdoptEnabled() { enabled_ = REXCVAR_GET(bd_vr_enabled); }
 
 void Settings::AdoptMode() {
   mode_ = static_cast<CameraMode>(REXCVAR_GET(bd_vr_camera_mode));
+  // SetMode recentres, so this must not fire before the first head pose has
+  // arrived. Init runs long before a session exists, which is fine: recentring
+  // against an identity pose is a no-op.
+  Camera::Get().SetMode(mode_);
 }
 
 void Settings::AdoptUnitsPerMetre() {
   unitsPerMetre_ = static_cast<f32>(REXCVAR_GET(bd_vr_units_per_metre));
+  PushTuning();
 }
 
 void Settings::AdoptWorldScale() {
   worldScale_ = static_cast<f32>(REXCVAR_GET(bd_vr_world_scale));
+  PushTuning();
 }
 
 void Settings::AdoptThirdOffset() {
   thirdOffset_ = {static_cast<f32>(REXCVAR_GET(bd_vr_third_offset_x)),
                   static_cast<f32>(REXCVAR_GET(bd_vr_third_offset_y)),
                   static_cast<f32>(REXCVAR_GET(bd_vr_third_offset_z))};
+  PushTuning();
 }
 
 void Settings::AdoptDioramaHeight() {
   dioramaHeight_ = static_cast<f32>(REXCVAR_GET(bd_vr_diorama_height));
+  PushTuning();
 }
 
 void Settings::AdoptSnapTurn() { snapTurn_ = REXCVAR_GET(bd_vr_snap_turn); }
@@ -194,6 +212,7 @@ void Settings::Init() {
   AdoptHudScale();
   AdoptCutscenePolicy();
   AdoptCullExpand();
+  PushTuning();
 
   auto reg = [](const char *name, void (Settings::*adopt)()) {
     rex::cvar::RegisterChangeCallback(

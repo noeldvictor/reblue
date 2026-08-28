@@ -62,6 +62,11 @@ public:
   Vec3 ThirdPersonOffset() const { return thirdOffset_; }
   f32 DioramaHeight() const { return dioramaHeight_; }
 
+  // Bundled for Camera::SetTuning. Pushed to the camera whenever one of these
+  // cvars changes; the camera never reads this object, which is what keeps it
+  // free of any dependency beyond xr_math.h and therefore testable.
+  CameraTuning Tuning() const;
+
   bool SnapTurn() const { return snapTurn_; }
   f32 TurnRadians() const;
   bool ComfortVignette() const { return comfortVignette_; }

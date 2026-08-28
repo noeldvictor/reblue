@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <numbers>
 
+#include "xr/xr_camera.h"
 #include "xr/xr_math.h"
 
 using namespace bd::xr;
@@ -217,6 +218,170 @@ void TestQuatBasics() {
   Check(Near(Length(Rotate(a, v)), Length(v)), "rotation preserves length");
 }
 
+// --- camera composition ---
+//
+// Reachable only because xr_camera.cpp takes its settings as a pushed
+// CameraTuning instead of reading the cvar singleton. Keep it that way.
+
+// Where the composed camera ended up, recovered by asking which world point
+// lands at the view-space origin. Cheaper than inverting the matrix and it
+// checks the matrix rather than trusting it.
+bool CameraSitsAt(const EyeMatrices &eye, Vec3 expected) {
+  const Vec4 v = Mul(Vec4{expected.x, expected.y, expected.z, 1.0f}, eye.view);
+  return Near(v.x, 0.0f) && Near(v.y, 0.0f) && Near(v.z, 0.0f);
+}
+
+// Neutral inputs: identity head, identity eye, game camera looking down +Z
+// from the origin. Recenter against these is a no-op, which keeps each case
+// independent of the ones before it.
+void ResetCamera(Camera &c, CameraMode mode, const CameraTuning &tuning) {
+  c.SetTuning(tuning);
+  c.SubmitGameCamera(GameCamera{});
+  c.SubmitCharacter(CharacterAnchor{});
+  c.SubmitHeadPose(Pose{});
+  c.SetMode(mode);
+  c.Recenter();
+  c.ResetSmoothing();
+}
+
+const Fov kFov{-0.7f, 0.7f, 0.7f, -0.7f};
+
+void TestCameraModes() {
+  std::printf("camera modes\n");
+
+  Camera &c = Camera::Get();
+  CameraTuning t;
+
+  // Third person: the anchor sits at the offset, expressed in the character's
+  // own frame, so it stays behind them as they turn.
+  ResetCamera(c, CameraMode::ThirdPerson, t);
+  CharacterAnchor ch;
+  ch.valid = true;
+  ch.position = {0.0f, 0.0f, 0.0f};
+  ch.eyeHeight = 1.6f;
+  ch.facingYaw = 0.0f;
+  c.SubmitCharacter(ch);
+  Check(CameraSitsAt(c.ComposeEye(Pose{}, kFov), Vec3{0.0f, 1.5f, -3.0f}),
+        "third person: anchor sits at the offset behind the character");
+
+  // Facing +90 degrees about Y takes the character's forward from +Z to +X,
+  // so the camera behind them must swing to -X.
+  ResetCamera(c, CameraMode::Diorama, t); // force a real mode change back
+  ResetCamera(c, CameraMode::ThirdPerson, t);
+  ch.facingYaw = kPi * 0.5f;
+  c.SubmitCharacter(ch);
+  Check(CameraSitsAt(c.ComposeEye(Pose{}, kFov), Vec3{-3.0f, 1.5f, 0.0f}),
+        "third person: the offset rotates with the character's facing");
+
+  // First person: anchor at the character's eyes.
+  ResetCamera(c, CameraMode::FirstPerson, t);
+  ch.facingYaw = 0.0f;
+  c.SubmitCharacter(ch);
+  Check(CameraSitsAt(c.ComposeEye(Pose{}, kFov), Vec3{0.0f, 1.6f, 0.0f}),
+        "first person: anchor sits at the character's eye height");
+
+  // Diorama detaches from the character entirely and floats above the game's
+  // own camera.
+  ResetCamera(c, CameraMode::Diorama, t);
+  GameCamera gc;
+  gc.position = {10.0f, 0.0f, 20.0f};
+  c.SubmitGameCamera(gc);
+  c.ResetSmoothing();
+  Check(CameraSitsAt(c.ComposeEye(Pose{}, kFov), Vec3{10.0f, 8.0f, 20.0f}),
+        "diorama: anchor floats above the game camera, ignoring the character");
+
+  // No character: the attached modes fall back to the game camera rather than
+  // snapping to the origin. This happens during menus and event scenes.
+  ResetCamera(c, CameraMode::ThirdPerson, t);
+  c.SubmitGameCamera(gc);
+  c.SubmitCharacter(CharacterAnchor{}); // valid = false
+  c.ResetSmoothing();
+  Check(CameraSitsAt(c.ComposeEye(Pose{}, kFov), gc.position),
+        "no character: third person falls back to the game camera");
+}
+
+void TestWorldScale() {
+  std::printf("world scale\n");
+
+  Camera &c = Camera::Get();
+  CameraTuning t;
+  t.unitsPerMetre = 1.0f;
+  t.worldScale = 1.0f;
+
+  // A head one metre to the right, life size, moves the camera one game unit.
+  ResetCamera(c, CameraMode::Diorama, t);
+  Pose eye;
+  eye.position = {1.0f, 0.0f, 0.0f};
+  Check(CameraSitsAt(c.ComposeEye(eye, kFov), Vec3{1.0f, 8.0f, 0.0f}),
+        "life size: one metre of head movement is one game unit");
+
+  // Shrink the world tenfold and the same metre has to cover ten times the
+  // game distance, or the world stops reading as small.
+  t.worldScale = 0.1f;
+  ResetCamera(c, CameraMode::Diorama, t);
+  Check(CameraSitsAt(c.ComposeEye(eye, kFov), Vec3{10.0f, 8.0f, 0.0f}),
+        "world scale 0.1: the same metre covers ten game units");
+
+  // Units-per-metre is the other factor and multiplies rather than divides.
+  t.worldScale = 1.0f;
+  t.unitsPerMetre = 4.0f;
+  ResetCamera(c, CameraMode::Diorama, t);
+  Check(CameraSitsAt(c.ComposeEye(eye, kFov), Vec3{4.0f, 8.0f, 0.0f}),
+        "units per metre scales head movement independently");
+
+  // A zero world scale must not divide by zero and blow the camera to NaN.
+  t.worldScale = 0.0f;
+  t.unitsPerMetre = 1.0f;
+  ResetCamera(c, CameraMode::Diorama, t);
+  const EyeMatrices m = c.ComposeEye(eye, kFov);
+  Check(std::isfinite(m.view.m[3][0]) && std::isfinite(m.view.m[3][2]),
+        "zero world scale degrades to life size rather than NaN");
+}
+
+void TestRecentreAndTurn() {
+  std::printf("recentre and turn");
+  std::printf("\n");
+
+  Camera &c = Camera::Get();
+  CameraTuning t;
+  ResetCamera(c, CameraMode::Diorama, t);
+
+  // Facing 90 degrees away physically, recentring should line the player back
+  // up with the game's forward.
+  c.SubmitHeadPose(Pose{{0, 0, 0}, RotAboutY(kPi * 0.5f)});
+  c.Recenter();
+  Check(Near(c.LocomotionYaw(), 0.0f),
+        "recentre lines locomotion up with the game camera");
+
+  // A snap turn moves locomotion forward with it.
+  c.ApplyTurn(kPi * 0.5f);
+  Check(Near(c.LocomotionYaw(), kPi * 0.5f), "snap turn offsets locomotion yaw");
+
+  // Recentring cancels where the player has wandered to in the play space,
+  // but must not cancel the vertical - standing up should still raise the
+  // view, and zeroing it is what makes a recentre feel like the floor moved.
+  //
+  // Composing with the eye at the same place the head was recentred from is
+  // the meaningful case: the horizontal drift should vanish completely and the
+  // height should survive untouched.
+  ResetCamera(c, CameraMode::Diorama, t);
+  const Pose stood{{0.5f, 1.7f, 0.25f}, Quat{}};
+  c.SubmitHeadPose(stood);
+  c.Recenter();
+  const EyeMatrices m = c.ComposeEye(stood, kFov);
+  Check(CameraSitsAt(m, Vec3{0.0f, 8.0f + 1.7f, 0.0f}),
+        "recentre zeroes horizontal drift and keeps height");
+
+  // And a step away from the recentre point still moves the camera, by the
+  // step. Expressed in game space, so the Z is mirrored from the OpenXR input:
+  // half a metre further back in OpenXR (+Z) is half a metre back in game
+  // space (-Z).
+  const EyeMatrices stepped =
+      c.ComposeEye(Pose{{1.0f, 1.7f, 0.75f}, Quat{}}, kFov);
+  Check(CameraSitsAt(stepped, Vec3{0.5f, 8.0f + 1.7f, -0.5f}),
+        "moving off the recentre point moves the camera by that much");
+}
+
 } // namespace
 
 int main() {
@@ -226,6 +391,9 @@ int main() {
   TestProjection();
   TestYaw();
   TestQuatBasics();
+  TestCameraModes();
+  TestWorldScale();
+  TestRecentreAndTurn();
 
   std::printf("\n%s\n", g_failures == 0 ? "all checks passed"
                                         : "FAILURES PRESENT");
