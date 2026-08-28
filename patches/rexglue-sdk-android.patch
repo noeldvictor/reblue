@@ -137,10 +137,18 @@ index 0000000..dd5f974
 +}  // namespace ui
 +}  // namespace rex
 diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
-index 1ddafd0..7fe7f40 100644
+index 1ddafd0..0385c2a 100644
 --- a/src/core/CMakeLists.txt
 +++ b/src/core/CMakeLists.txt
-@@ -100,9 +100,17 @@ target_include_directories(rexcore PRIVATE
+@@ -63,6 +63,7 @@ elseif(UNIX)
+         dynlib_posix.cpp
+         exception_handler_posix.cpp
+         filesystem_posix.cpp
++        $<$<BOOL:${ANDROID}>:filesystem_android.cpp>
+         fiber_posix.cpp
+         mapped_memory_posix.cpp
+         math_gcc.cpp
+@@ -100,9 +101,17 @@ target_include_directories(rexcore PRIVATE
  
  if(APPLE)
      target_link_libraries(rexcore PRIVATE pthread)
@@ -158,6 +166,95 @@ index 1ddafd0..7fe7f40 100644
  
  target_link_libraries(rexcore
      PUBLIC
+diff --git a/src/core/filesystem_android.cpp b/src/core/filesystem_android.cpp
+new file mode 100644
+index 0000000..5d2c2ea
+--- /dev/null
++++ b/src/core/filesystem_android.cpp
+@@ -0,0 +1,38 @@
++/**
++ * @file    src/core/filesystem_android.cpp
++ * @brief   The Android-only pieces of rex::filesystem.
++ *
++ * @modified re:Blue fork, 2026
++ */
++#include <rex/platform.h>
++
++#if REX_PLATFORM_ANDROID
++
++#include <string_view>
++
++#include <rex/filesystem.h>
++
++namespace rex::filesystem {
++
++// Declared in rex/filesystem.h and called by mapped_memory_posix.cpp, but never
++// defined - another piece that did not survive the crossing from Xenia, whose
++// version JNI-called into Java to resolve a content:// URI to a file
++// descriptor.
++//
++// Nothing in this fork needs it: game data is side-loaded to an ordinary path
++// under the app's external files directory rather than picked through the
++// Storage Access Framework. The one caller already treats a negative return as
++// "could not open" and falls back, so a stub is a correct implementation of
++// "content URIs are not supported here" rather than a hole.
++//
++// If a SAF-based import flow is ever added, this is where it goes, and it will
++// need a JNIEnv and a reference to the Activity.
++int OpenAndroidContentFileDescriptor(const std::string_view uri, const char* mode) {
++  (void)uri;
++  (void)mode;
++  return -1;
++}
++
++}  // namespace rex::filesystem
++
++#endif  // REX_PLATFORM_ANDROID
+diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
+index b52bf39..2cdcd55 100644
+--- a/src/core/memory_posix.cpp
++++ b/src/core/memory_posix.cpp
+@@ -53,8 +53,7 @@
+ 
+ #include <linux/ashmem.h>
+ 
+-// TODO(tomc): Android or maybe na. idk
+-// #include "xenia/base/main_android.h"
++#include <rex/main_android.h>
+ #endif
+ 
+ namespace rex {
+diff --git a/src/core/threading_posix.cpp b/src/core/threading_posix.cpp
+index 9ac8d15..5fe628a 100644
+--- a/src/core/threading_posix.cpp
++++ b/src/core/threading_posix.cpp
+@@ -270,7 +270,7 @@ static sem_t* RexCreateAnonymousSemaphore() {
+ class PosixConditionBase {
+  public:
+   PosixConditionBase() {
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_GNU_LINUX  // robust mutexes: bionic has neither PTHREAD_MUTEX_ROBUST nor pthread_mutex_consistent
+     // Use robust mutexes so waits can recover if owner thread terminates.
+     pthread_mutexattr_t attr;
+     if (pthread_mutexattr_init(&attr) == 0) {
+@@ -290,7 +290,7 @@ class PosixConditionBase {
+   WaitResult Wait(std::chrono::milliseconds timeout) {
+     bool executed;
+     auto predicate = [this] { return this->signaled(); };
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_GNU_LINUX  // robust mutexes: bionic has neither PTHREAD_MUTEX_ROBUST nor pthread_mutex_consistent
+     auto native_mutex = static_cast<pthread_mutex_t*>(mutex_.native_handle());
+     int lock_result = pthread_mutex_lock(native_mutex);
+     if (lock_result == EOWNERDEAD) {
+@@ -344,7 +344,7 @@ class PosixConditionBase {
+       locks.reserve(handles.size());
+ 
+       for (size_t i = 0; i < handles.size(); ++i) {
+-#if REX_PLATFORM_LINUX
++#if REX_PLATFORM_GNU_LINUX  // robust mutexes: bionic has neither PTHREAD_MUTEX_ROBUST nor pthread_mutex_consistent
+         auto native_mutex = static_cast<pthread_mutex_t*>(handles[i]->mutex_.native_handle());
+         int result = pthread_mutex_trylock(native_mutex);
+         if (result == 0 || result == EOWNERDEAD) {
 diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
 index 5bd3dc5..da6a2b7 100644
 --- a/src/ui/CMakeLists.txt
@@ -255,10 +352,10 @@ index 2251429..8ad8768 100644
    SDL_PropertiesID props = SDL_GetWindowProperties(sdl_window_);
    if (allowed_types & Surface::kTypeFlag_WaylandSurface) {
 diff --git a/thirdparty/CMakeLists.txt b/thirdparty/CMakeLists.txt
-index f102b56..50718b4 100644
+index f102b56..1cdbbcd 100644
 --- a/thirdparty/CMakeLists.txt
 +++ b/thirdparty/CMakeLists.txt
-@@ -702,3 +702,31 @@ set_target_properties(libavutil libavcodec PROPERTIES
+@@ -702,3 +702,36 @@ set_target_properties(libavutil libavcodec PROPERTIES
      C_VISIBILITY_PRESET hidden
      VISIBILITY_INLINES_HIDDEN ON
      FOLDER "FFmpeg")
@@ -287,6 +384,11 @@ index f102b56..50718b4 100644
 +    target_include_directories(ucontext PRIVATE
 +        libucontext/arch/aarch64
 +        libucontext/arch/common)
++    # Without this the .S files only define the libucontext_ prefixed names;
++    # the ALIAS macro that also emits plain getcontext/setcontext/makecontext/
++    # swapcontext is compiled out. Those plain names are the whole point here,
++    # since fiber_posix.cpp calls them unmodified.
++    target_compile_definitions(ucontext PRIVATE EXPORT_UNPREFIXED)
 +    target_compile_options(ucontext PRIVATE -w)
 +    set_target_properties(ucontext PROPERTIES POSITION_INDEPENDENT_CODE ON FOLDER "thirdparty")
 +endif()

@@ -87,9 +87,19 @@ So far the entire patch is one guard: `src/ui/CMakeLists.txt` unconditionally de
 `ANativeWindow` and the surface comes from `VK_KHR_android_surface` — so the Android case takes an
 empty branch ahead of the desktop Linux one.
 
+**Status: builds.** `librexruntime.so` comes out as an 86 MB ELF64 AArch64 shared object with the
+ucontext symbols resolved internally. Not yet *run* on a device.
+
 ### What the rest of it is
 
-Beyond the X11/Wayland guard, three things bionic and its libc++ do not provide:
+The bulk of the Android support was already in the SDK and simply unreachable. ReXGlue derives from
+Xenia, which supports Android, and the code came across with it: `platform.h` derives
+`REX_PLATFORM_ANDROID` from `__ANDROID__`, `threading_posix.cpp` and `memory_posix.cpp` carry
+`REX_PLATFORM_ANDROID` branches that dlsym the API-26+ symbols, `surface.h` declares
+`kTypeIndex_AndroidNativeWindow`, and `vulkan_presenter.cpp` already builds a `VkSurfaceKHR` through
+`vkCreateAndroidSurfaceKHR`. Several links in that chain were just missing.
+
+Beyond the X11/Wayland guard, then:
 
 1. **`clock_time_conversion`.** `include/rex/chrono/chrono.h` specialises it, and libc++ has never
    shipped the C++20 clock-conversion machinery. The SDK already carries a fallback for exactly
@@ -103,6 +113,23 @@ Beyond the X11/Wayland guard, three things bionic and its libc++ do not provide:
    `ucontext` static library and links it into `rexcore`.
 3. **`librt`.** There is no such library on Android; those functions live in libc. The patch gives
    Android its own link branch rather than letting it fall into the desktop Linux one.
+4. **Robust mutexes.** `threading_posix.cpp` guards them on `REX_PLATFORM_LINUX`, which Android also
+   defines, so it reached for `PTHREAD_MUTEX_ROBUST` and `pthread_mutex_consistent` — neither of
+   which bionic has. Retargeted to `REX_PLATFORM_GNU_LINUX`, the macro `platform.h` already provides
+   for exactly this distinction. Using the existing seam, not adding one.
+5. **`rex/main_android.h`.** Both posix files include it and call `rex::GetAndroidApiLevel()`;
+   `memory_posix.cpp` still had the Xenia include commented out with "TODO(tomc): Android or maybe
+   na. idk". Xenia's version carried a whole Activity lifecycle — the API level is all anything here
+   wants, and bionic has `android_get_device_api_level`.
+6. **`AndroidNativeWindowSurface`** plus its `window_sdl.cpp` branch, taking the `ANativeWindow` from
+   `SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER`. The last link in the otherwise-complete surface chain.
+7. **`OpenAndroidContentFileDescriptor`**, declared in `rex/filesystem.h` and never defined. Xenia's
+   JNI-called into Java to resolve a `content://` URI. Stubbed to fail: game data is side-loaded to
+   an ordinary path rather than picked through the Storage Access Framework, and the single caller
+   already handles a negative return. If a SAF import flow is ever added, that is where it goes.
+
+`libucontext` needs `EXPORT_UNPREFIXED` defined, or its `ALIAS` macro compiles out and only the
+`libucontext_`-prefixed names exist — which is exactly the point of using it here.
 
 Also worth knowing, though not part of the patch: **use NDK r30 or newer.** r29's libc++ has no
 floating-point `std::from_chars`, which `rex/string/numeric.h` calls with a `chars_format`, and the
