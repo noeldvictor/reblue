@@ -6,10 +6,17 @@
 
 #include <cstdio>
 #include <cstring>
+#include <iterator>
 #include <sstream>
 
 #define XR_USE_GRAPHICS_API_VULKAN
 #include <vulkan/vulkan.h>
+
+#if defined(__ANDROID__)
+#define XR_USE_PLATFORM_ANDROID
+#include <SDL3/SDL_system.h>
+#include <jni.h>
+#endif
 
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -59,14 +66,61 @@ Session &Session::Get() {
 }
 
 bool Session::CreateInstance() {
+#if defined(__ANDROID__)
+  // On Android the loader has to be handed the JavaVM and the Activity before
+  // anything else - it reaches the runtime through a content provider and
+  // cannot do that without a JNI context. Skipping this is not a soft failure:
+  // xrCreateInstance returns XR_ERROR_INITIALIZATION_FAILED (-6) and there is
+  // nothing in the message to suggest why.
+  PFN_xrInitializeLoaderKHR xrInitializeLoaderKHR = nullptr;
+  xrGetInstanceProcAddr(XR_NULL_HANDLE, "xrInitializeLoaderKHR",
+                        reinterpret_cast<PFN_xrVoidFunction *>(&xrInitializeLoaderKHR));
+  if (!xrInitializeLoaderKHR) {
+    BD_INFO("OpenXR: loader has no xrInitializeLoaderKHR; no runtime here");
+    return false;
+  }
+
+  JNIEnv *env = static_cast<JNIEnv *>(SDL_GetAndroidJNIEnv());
+  void *activity = SDL_GetAndroidActivity();
+  JavaVM *vm = nullptr;
+  if (env)
+    env->GetJavaVM(&vm);
+  if (!vm || !activity) {
+    BD_INFO("OpenXR: no JNI context from SDL; staying on the flat renderer");
+    return false;
+  }
+
+  XrLoaderInitInfoAndroidKHR loader_init{XR_TYPE_LOADER_INIT_INFO_ANDROID_KHR};
+  loader_init.applicationVM = vm;
+  loader_init.applicationContext = activity;
+  if (Failed(xrInitializeLoaderKHR(
+                 reinterpret_cast<const XrLoaderInitInfoBaseHeaderKHR *>(&loader_init)),
+             "xrInitializeLoaderKHR"))
+    return false;
+#endif
+
   // XR_KHR_vulkan_enable rather than enable2: the older extension lets the
   // application create its own VkInstance and VkDevice, which is what plume
   // does. enable2 wants to create them for us, and plume has no seam for that.
-  const char *extensions[] = {XR_KHR_VULKAN_ENABLE_EXTENSION_NAME};
+  const char *extensions[] = {
+      XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,
+#if defined(__ANDROID__)
+      XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
+#endif
+  };
 
   XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
-  create.enabledExtensionCount = 1;
+  create.enabledExtensionCount = static_cast<uint32_t>(std::size(extensions));
   create.enabledExtensionNames = extensions;
+
+#if defined(__ANDROID__)
+  // The runtime wants the same pair again on the instance itself.
+  XrInstanceCreateInfoAndroidKHR android_create{
+      XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR};
+  android_create.applicationVM = vm;
+  android_create.applicationActivity = activity;
+  create.next = &android_create;
+#endif
   // snprintf rather than strncpy: these are fixed-size char arrays and MSVC
   // deprecates strncpy, so this keeps the build warning-free on every target.
   std::snprintf(create.applicationInfo.applicationName,

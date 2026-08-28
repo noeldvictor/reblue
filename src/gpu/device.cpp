@@ -340,6 +340,25 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       return false;
     }
 #endif
+#if defined(REBLUE_OPENXR)
+    // The runtime names the one adapter it can present from, and it can only
+    // be asked once a VkInstance exists - which is why this sits between
+    // creating the interface and creating the device rather than with the rest
+    // of the options. Using any other adapter is what makes xrCreateSession
+    // fail with XR_ERROR_INITIALIZATION_FAILED.
+    if (xr_available) {
+      auto *vk_iface = static_cast<plume::VulkanInterface *>(s.render_iface.get());
+      auto *forced = bd::xr::Session::Get().VulkanPhysicalDevice(
+          reinterpret_cast<VkInstance_T *>(vk_iface->instance));
+      if (forced) {
+        vk_iface->options.forcedPhysicalDevice =
+            reinterpret_cast<VkPhysicalDevice>(forced);
+        BD_INFO("[xr] runtime selected the physical device");
+      } else {
+        BD_WARN("[xr] runtime named no physical device; session will likely fail");
+      }
+    }
+#endif
     s.device = s.render_iface->createDevice();
     if (!s.device) {
       BD_ERROR("Plume RenderInterface::createDevice failed");
