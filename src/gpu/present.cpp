@@ -410,9 +410,12 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
 
   session.ReleaseSwapchainImage();
   // 2 m wide at 2 m distance is roughly a 60-inch screen - big enough to read
-  // the HUD, close enough not to need head turning.
+  // the HUD, close enough not to need head turning. Submit before anchoring:
+  // the anchor is placed at quadDistance_ along the view, and this is what
+  // sets it.
   session.SubmitQuadLayer(2.0f, 2.0f * float(session.SwapchainHeight()) /
                                     float(session.SwapchainWidth()), 2.0f);
+  session.AnchorQuad(g_xr_frame);
 }
 
 } // namespace

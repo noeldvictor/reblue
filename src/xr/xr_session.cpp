@@ -389,10 +389,18 @@ void Session::EndFrame(const FrameState &state) {
     quad.subImage.imageRect.extent = {static_cast<int32_t>(swapchainWidth_),
                                       static_cast<int32_t>(swapchainHeight_)};
     quad.subImage.imageArrayIndex = 0;
-    // Straight ahead in the reference space, at eye height. -Z is forward in
-    // OpenXR, which is why the distance is negative.
-    quad.pose.orientation.w = 1.0f;
-    quad.pose.position = {0.0f, 0.0f, -quadDistance_};
+    // Anchored where the player was looking when the first frame arrived,
+    // rather than at the origin of LOCAL space - that origin is wherever the
+    // headset happened to be when the session opened, which usually leaves the
+    // screen off to one side. Yaw only: a screen that inherits the head's pitch
+    // and roll is disorienting.
+    quad.pose.orientation.x = quadAnchorOrientation_.x;
+    quad.pose.orientation.y = quadAnchorOrientation_.y;
+    quad.pose.orientation.z = quadAnchorOrientation_.z;
+    quad.pose.orientation.w = quadAnchorOrientation_.w;
+    quad.pose.position.x = quadAnchorPosition_.x;
+    quad.pose.position.y = quadAnchorPosition_.y;
+    quad.pose.position.z = quadAnchorPosition_.z;
     quad.size = {quadWidth_, quadHeight_};
     layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader *>(&quad);
     layerCount = 1;
@@ -509,6 +517,38 @@ void Session::SubmitQuadLayer(f32 widthMetres, f32 heightMetres,
   quadWidth_ = widthMetres;
   quadHeight_ = heightMetres;
   quadDistance_ = distanceMetres;
+}
+
+void Session::AnchorQuad(const FrameState &state) {
+  if (quadAnchored_ || !state.shouldRender || state.viewCount == 0)
+    return;
+
+  // Done entirely in OpenXR space. The stored pose is in game space, so it goes
+  // back through the mirror first - which is its own inverse - and everything
+  // after that uses OpenXR's convention, where forward is -Z. Mixing the two
+  // here is what put the screen 20 cm from the player's face.
+  const Pose head = FromOpenXRPose(state.views[0].pose);
+
+  Vec3 forward = Rotate(head.orientation, Vec3{0.0f, 0.0f, -1.0f});
+  forward.y = 0.0f; // a screen should not tilt with the player's pitch
+  forward = Normalize(forward);
+  if (Length(forward) < 0.5f)
+    forward = {0.0f, 0.0f, -1.0f}; // looking straight up or down
+
+  const Vec3 anchor = head.position + forward * quadDistance_;
+  quadAnchorPosition_ = {anchor.x, anchor.y, anchor.z};
+
+  // Face the player. A quad's normal is +Z, and a yaw of t sends +Z to
+  // (sin t, 0, cos t); that has to equal -forward, the direction back towards
+  // the head. Note this is NOT the head's own yaw - getting that wrong leaves
+  // the screen edge-on, and a player looking straight down -Z cannot tell the
+  // two apart, because both are zero there.
+  const f32 yaw = std::atan2(-forward.x, -forward.z);
+  const f32 half = yaw * 0.5f;
+  quadAnchorOrientation_ = {0.0f, std::sin(half), 0.0f, std::cos(half)};
+  quadAnchored_ = true;
+  BD_INFO("OpenXR: quad anchored at ({:.2f}, {:.2f}, {:.2f})",
+          quadAnchorPosition_.x, quadAnchorPosition_.y, quadAnchorPosition_.z);
 }
 
 void Session::Destroy() {

@@ -126,6 +126,10 @@ public:
   // Queues the quad for this frame's EndFrame. Size is in metres.
   void SubmitQuadLayer(f32 widthMetres, f32 heightMetres, f32 distanceMetres);
 
+  // Places the screen in front of wherever the player was looking on the first
+  // frame, once. Call after BeginFrame; does nothing thereafter.
+  void AnchorQuad(const FrameState &state);
+
   void Destroy();
 
   // Recommended per-eye render target size, from the view configuration.
@@ -154,6 +158,9 @@ private:
   u32 swapchainHeight_ = 0;
   i64 swapchainFormat_ = 0;
   bool quadQueued_ = false;
+  bool quadAnchored_ = false;
+  struct { f32 x, y, z; } quadAnchorPosition_{0.0f, 0.0f, -2.0f};
+  struct { f32 x, y, z, w; } quadAnchorOrientation_{0.0f, 0.0f, 0.0f, 1.0f};
   f32 quadWidth_ = 0.0f;
   f32 quadHeight_ = 0.0f;
   f32 quadDistance_ = 0.0f;
