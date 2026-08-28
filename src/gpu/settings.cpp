@@ -63,6 +63,34 @@ REXCVAR_DEFINE_INT32(bd_supersampling, 1, kCvarGroup,
     })
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
+// Measured on a Quest 2 (Adreno 650), title screen, everything else stock:
+//
+//   3664x1920  6.9 fps, 119ms on the GPU fence
+//   1280x720  26.2 fps,   1.5ms
+//
+// The headset panel is 3664x1920 across both eyes, and the renderer sizes the
+// scene to it, so a Quest was drawing a 720p game at seven megapixels and
+// spending 119ms a frame doing it. Blue Dragon is natively 1280x720/30fps, so
+// capping at 720 is the game's own resolution rather than a compromise - and
+// the image is resampled onto a quad the compositor draws at arm's length
+// anyway.
+//
+// 0 disables the cap. Desktops keep it off: there the whole point is running
+// the game at a resolution it never saw.
+REXCVAR_DEFINE_INT32(bd_max_render_height,
+#if defined(__ANDROID__)
+                     720,
+#else
+                     0,
+#endif
+                     kCvarGroup,
+                     "Cap the scene render height in pixels, preserving aspect. "
+                     "0 disables. Defaults to 720 on Android, where drawing at "
+                     "the full headset panel resolution costs about 20x what "
+                     "the game needs.")
+    .range(0, 16384)
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_INT32(bd_msaa, 4, kCvarGroup,
                      "MSAA sample count for the 3D scene: 0 = off, 2, 4, 8. "
                      "Clamped to device support, ignored while "
@@ -105,7 +133,15 @@ REXCVAR_DEFINE_DOUBLE(bd_reflection_upscale, 2.0, kCvarGroup,
       return rex::cvar::ParseDouble(v, d) && std::isfinite(d);
     });
 
-REXCVAR_DEFINE_INT32(bd_shadow_dimension, 4096, kCvarGroup,
+// 4096 costs roughly 5fps of the 31 a Quest 2 has to give, for a shadow map
+// resampled onto a quad. 1024 is the better trade there; desktops keep 4096.
+REXCVAR_DEFINE_INT32(bd_shadow_dimension,
+#if defined(__ANDROID__)
+                     1024,
+#else
+                     4096,
+#endif
+                     kCvarGroup,
                      "Sun shadow-map resolution in pixels. Only "
                      "512/1024/2048/4096/8192, requires restart.")
     .range(512, 8192)

@@ -19,6 +19,8 @@
 #include "gpu/device.h"
 #include "gpu/settings.h"
 
+REXCVAR_DECLARE(i32, bd_max_render_height);
+
 namespace bd::gpu {
 
 bool Output::LatchedFit(u32 &w, u32 &h) {
@@ -45,6 +47,16 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
     ComputeFit(sw, sh, ConfiguredAspect(), fit_w, fit_h, off_x, off_y);
     if (!fit_w || !fit_h)
       return false;
+    // Applied after the aspect fit so the cap is on what is actually drawn,
+    // and by height so an ultrawide window narrows rather than growing.
+    const i32 cap = REXCVAR_GET(bd_max_render_height);
+    if (cap > 0 && fit_h > static_cast<u32>(cap)) {
+      const double scale = static_cast<double>(cap) / fit_h;
+      // Round the width rather than truncating: a 1279-wide target for a 16:9
+      // cap changes the aspect by enough to shift the letterbox a pixel.
+      fit_w = std::max<u32>(1u, static_cast<u32>(std::lround(fit_w * scale)));
+      fit_h = static_cast<u32>(cap);
+    }
     latched_w = fit_w;
     latched_h = fit_h;
   }
