@@ -13,6 +13,17 @@ pushed to the device.
 none of the boot path. Useful for getting to a first frame without moving 15 GB
 onto a headset; the game will want them back before it plays through.
 
+--all ignores the manifest and takes every file on the disc instead. Prefer it.
+The manifest is the desktop installer's list, and it is missing 1107 files that
+disc 1 alone carries - every locale-specific pack and sound bank among them,
+including pack/packmem_us.ipk. Without that one the game boots, renders, takes
+input, and then dies the moment a new game starts:
+
+    [disc] file-load fatal, failed file: 'D:\database\camp\ene_dic_us.u16'
+
+Nothing before that point needs those records, so a manifest-only install looks
+completely healthy right up until it isn't.
+
 Reuses the XDVDFS reader from extract_xex.py, so this works on a local image or
 straight off an adb-connected device.
 """
@@ -36,7 +47,12 @@ def load_manifest(path):
 
 
 def index_disc(reader, base, sector, size, prefix, out):
-    """Walk one directory table, recursing into subdirectories."""
+    """Walk one directory table, recursing into subdirectories.
+
+    Keyed by lowercased path because the manifest's casing does not always match
+    the disc's, but the original casing is carried along - --all writes files the
+    manifest never names, so it has nothing else to take a destination name from.
+    """
     table = reader.read(base + sector, max(1, (size + SECTOR - 1) // SECTOR))
     for name, entry_sector, entry_size, attr in walk(table):
         if not name:
@@ -47,7 +63,7 @@ def index_disc(reader, base, sector, size, prefix, out):
             if entry_size:
                 index_disc(reader, base, entry_sector, entry_size, path + "/", out)
         else:
-            out.setdefault(path.lower(), (entry_sector, entry_size))
+            out.setdefault(path.lower(), (entry_sector, entry_size, path))
 
 
 def main():
@@ -58,12 +74,16 @@ def main():
     ap.add_argument("--manifest", default=MANIFEST)
     ap.add_argument("--skip-media", action="store_true",
                     help="omit movie/ and snd_stream*, most of the bytes")
+    ap.add_argument("--all", action="store_true",
+                    help="take every file on the disc instead of the manifest's "
+                         "list. The manifest misses every locale-specific pack, "
+                         "which the game needs the moment a new game starts.")
     ap.add_argument("--adb-serial")
     ap.add_argument("--adb", default="adb")
     args = ap.parse_args()
 
-    wanted = load_manifest(args.manifest)
-    if args.skip_media:
+    wanted = [] if args.all else load_manifest(args.manifest)
+    if args.skip_media and not args.all:
         before = len(wanted)
         wanted = [p for p in wanted if not p.lower().startswith(MEDIA_PREFIXES)]
         print("manifest: %d files, %d after --skip-media" % (before, len(wanted)))
@@ -87,6 +107,18 @@ def main():
         for key, value in found.items():
             catalogue.setdefault(key, (reader, base) + value)
 
+    if args.all:
+        # Disc order still decides which copy wins, because catalogue was built
+        # with setdefault above.
+        wanted = sorted(entry[4] for entry in catalogue.values())
+        if args.skip_media:
+            before = len(wanted)
+            wanted = [p for p in wanted
+                      if not p.lower().startswith(MEDIA_PREFIXES)]
+            print("disc: %d files, %d after --skip-media" % (before, len(wanted)))
+        else:
+            print("disc: %d files" % len(wanted))
+
     written = missing = 0
     total_bytes = 0
     for path in wanted:
@@ -94,7 +126,7 @@ def main():
         if not hit:
             missing += 1
             continue
-        reader, base, sector, size = hit
+        reader, base, sector, size, _disc_path = hit
         dest = os.path.join(args.output, path.replace("/", os.sep))
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         if os.path.exists(dest) and os.path.getsize(dest) == size:
