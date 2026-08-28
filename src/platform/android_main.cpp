@@ -32,7 +32,10 @@
 #include <SDL3/SDL_system.h>
 
 #include <rex/cvar.h>
+#include <rex/filesystem.h>
 #include <rex/logging.h>
+#include <rex/memory/utils.h>
+#include <rex/thread.h>
 #include <rex/ui/windowed_app.h>
 #include <rex/ui/windowed_app_context_sdl.h>
 
@@ -72,6 +75,22 @@ int main(int argc, char **argv) {
   }
   for (int i = 1; i < argc; ++i)
     Say("argv[%d]: %s", i, argv[i]);
+
+  // Xenia called these from its own Android app module; ReXGlue inherited the
+  // implementations but not the calls, so nothing ever resolved them. They are
+  // not optional:
+  //
+  //   memory::AndroidInitialize dlsyms ASharedMemory_create, which is the only
+  //   way to get a shareable memory object on Android - bionic has no
+  //   shm_open. Without it the guest's 4 GB address space reservation fails
+  //   outright and the runtime never starts.
+  //
+  //   thread:: resolves pthread_getname_np, filesystem:: its own API-gated
+  //   pieces. Both are API 26+ symbols the SDK loads lazily.
+  rex::memory::AndroidInitialize();
+  rex::thread::AndroidInitialize();
+  rex::filesystem::AndroidInitialize();
+  Say("android subsystems initialised");
 
   auto remaining = rex::cvar::Init(argc, argv);
   rex::cvar::ApplyEnvironment();
@@ -114,6 +133,10 @@ int main(int argc, char **argv) {
     Say("message loop returned %d", result);
     app->InvokeOnDestroy();
   }
+
+  rex::filesystem::AndroidShutdown();
+  rex::thread::AndroidShutdown();
+  rex::memory::AndroidShutdown();
   return result;
 }
 

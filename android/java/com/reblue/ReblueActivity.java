@@ -45,6 +45,14 @@ public class ReblueActivity extends SDLActivity {
             android.util.Log.w("reblue", "no game data at " + game.getAbsolutePath());
             return new String[0];
         }
-        return new String[] { "--game_data_root", game.getAbsolutePath() };
+        // user_data_root and cache_root are supplied too. Left unset, the
+        // runtime calls GetUserFolder(), which on POSIX consults XDG_DATA_HOME,
+        // then HOME, then getpwuid_r - none of which mean anything for an
+        // Android app, whose only writable home is this directory.
+        return new String[] {
+            "--game_data_root", game.getAbsolutePath(),
+            "--user_data_root", external.getAbsolutePath(),
+            "--cache_root", new File(external, "cache").getAbsolutePath(),
+        };
     }
 }

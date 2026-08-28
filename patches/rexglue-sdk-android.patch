@@ -196,10 +196,10 @@ index 1ddafd0..0385c2a 100644
      PUBLIC
 diff --git a/src/core/filesystem_android.cpp b/src/core/filesystem_android.cpp
 new file mode 100644
-index 0000000..5d2c2ea
+index 0000000..929ced6
 --- /dev/null
 +++ b/src/core/filesystem_android.cpp
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,47 @@
 +/**
 + * @file    src/core/filesystem_android.cpp
 + * @brief   The Android-only pieces of rex::filesystem.
@@ -234,6 +234,15 @@ index 0000000..5d2c2ea
 +  (void)mode;
 +  return -1;
 +}
++
++// Declared in rex/filesystem.h and, like the function above, never defined.
++// Xenia's versions cached a JNI reference to the content resolver so that
++// content:// URIs could be opened later. Nothing here uses content URIs, so
++// there is nothing to set up or tear down - but the symbols have to exist,
++// because the Android startup path calls all three subsystems' initialisers
++// together.
++void AndroidInitialize() {}
++void AndroidShutdown() {}
 +
 +}  // namespace rex::filesystem
 +

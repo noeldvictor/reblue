@@ -36,6 +36,12 @@ std::filesystem::path g_app_root_override;
 } // namespace
 
 bool IsPackagedApplication() {
+#if defined(__ANDROID__)
+  // An APK is a package in exactly the sense this asks about: the executable
+  // lives in a read-only directory, so nothing may be written beside it. That
+  // is what the AppImage and macOS bundle cases are guarding against too.
+  return true;
+#endif
 #if !defined(_WIN32)
   if (rex::platform::env::get("APPIMAGE"))
     return true;
