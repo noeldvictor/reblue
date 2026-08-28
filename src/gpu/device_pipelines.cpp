@@ -88,18 +88,22 @@ bool BuildNullTextureDescriptors(VideoState &s) {
     }
     desc.committed = true; // avoid placed-resource uninit GBV debug fill
 
+    BD_INFO("[device] null tex {}: CreateHostTexture", i);
     auto texture = CreateHostTexture(s.device.get(), desc, "null-descriptor");
     if (!texture) {
       BD_ERROR("Create null texture descriptor {} failed", i);
       return false;
     }
+    BD_INFO("[device] null tex {}: createTextureView", i);
     auto view = texture->createTextureView(view_desc);
     if (!view) {
       BD_ERROR("Create null texture view descriptor {} failed", i);
       return false;
     }
+    BD_INFO("[device] null tex {}: setTexture", i);
     s.texture_descriptor_set->setTexture(
         i, texture.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
+    BD_INFO("[device] null tex {}: done", i);
     s.null_textures[i] = std::move(texture);
     s.null_texture_views[i] = std::move(view);
   }
@@ -151,6 +155,7 @@ bool BuildPipelineLayout(VideoState &s) {
 
   // space 0 (Texture2D[]), space 1 (Texture3D[]), space 2 (TextureCube[]).
   // All three runtime-bind to the same physical s.texture_descriptor_set.
+  BD_INFO("[device] addDescriptorSet x3 (texture spaces)");
   layout_builder.addDescriptorSet(tex_set_builder);
   layout_builder.addDescriptorSet(tex_set_builder);
   layout_builder.addDescriptorSet(tex_set_builder);
@@ -160,7 +165,9 @@ bool BuildPipelineLayout(VideoState &s) {
   sampler_set_builder.addSampler(0, kBindlessSamplerCount);
   sampler_set_builder.end(true, kBindlessSamplerCount);
 
+  BD_INFO("[device] sampler_set_builder.create");
   s.sampler_descriptor_set = sampler_set_builder.create(s.device.get());
+  BD_INFO("[device] sampler descriptor set created");
   if (!s.sampler_descriptor_set) {
     BD_ERROR("Plume createDescriptorSet for bindless samplers failed");
     return false;
@@ -176,7 +183,9 @@ bool BuildPipelineLayout(VideoState &s) {
   default_desc.addressU = plume::RenderTextureAddressMode::CLAMP;
   default_desc.addressV = plume::RenderTextureAddressMode::CLAMP;
   default_desc.addressW = plume::RenderTextureAddressMode::CLAMP;
+  BD_INFO("[device] createSampler (default)");
   s.default_sampler = s.device->createSampler(default_desc);
+  BD_INFO("[device] default sampler created");
   if (!s.default_sampler) {
     BD_ERROR("Plume createSampler for default sampler failed");
     return false;
@@ -242,11 +251,15 @@ bool BuildPipelineLayout(VideoState &s) {
       return false;
     }
   }
+  BD_INFO("[device] addDescriptorSet (occlusion, set 4)");
   layout_builder.addDescriptorSet(occlusion_set_builder);
 #endif
 
+  BD_INFO("[device] layout_builder.end");
   layout_builder.end();
+  BD_INFO("[device] layout_builder.create (pipeline layout)");
   s.pipeline_layout = layout_builder.create(s.device.get());
+  BD_INFO("[device] pipeline layout created");
   if (!s.pipeline_layout) {
     BD_ERROR("Plume createPipelineLayout for main pipeline failed");
     return false;

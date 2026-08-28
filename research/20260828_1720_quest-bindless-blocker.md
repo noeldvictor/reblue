@@ -7,7 +7,7 @@
 > `descriptorIndexing=true`, and with the heap cut to 4096 the descriptor set
 > is created successfully. The crash is one call further on. The reasoning
 > below is kept because the elimination is worth having; the conclusion in
-> §3 is superseded by §6.
+> §3 is superseded by §6, and the actual root cause is §8.
 
 Date: 2026-08-28 17:20
 Topic: why the runtime crashes on a Quest 2 after Vulkan comes up, and what it means for the port.
@@ -137,3 +137,49 @@ Recorded because it is easy to lose track of, and because none of it was true th
 | Vulkan device + swapchain on Adreno 650 | Works |
 | Bindless pipeline layout | **Crashes — this note** |
 | Stereo rendering / OpenXR session wired up | Not started |
+
+
+## 8. Root cause: five descriptor sets on a four-set device
+
+Probing every statement in `BuildPipelineLayout` puts the crash on one line:
+
+```
+[device] addDescriptorSet (occlusion, set 4)
+[device] layout_builder.end
+[device] layout_builder.create (pipeline layout)      <-- crashes here
+================ reblue host crash ================
+```
+
+Everything before it succeeds: the bindless texture set, all three null texture descriptors, the
+sampler set, both samplers. What fails is assembling them into a `VkPipelineLayout`.
+
+Count the sets the Vulkan path binds:
+
+| Set | Contents |
+| --- | --- |
+| 0, 1, 2 | `Texture2D[]`, `Texture3D[]`, `TextureCube[]` |
+| 3 | bindless samplers |
+| 4 | sun occlusion counter UAV, one per frame slot |
+
+**Five.** Qualcomm's Adreno exposes `maxBoundDescriptorSets = 4`. Desktop GPUs report 8 or 32, which
+is why this has never mattered. Asking for five on Adreno does not fail politely - it takes the
+driver somewhere that jumps through a pointer holding a small integer, which is the SIGBUS at
+`membase+1` this note started with.
+
+### The fix is smaller than it looks
+
+`device_pipelines.cpp` already says so, in a comment sitting right above the three `addDescriptorSet`
+calls:
+
+```cpp
+// space 0 (Texture2D[]), space 1 (Texture3D[]), space 2 (TextureCube[]).
+// All three runtime-bind to the same physical s.texture_descriptor_set.
+```
+
+The three texture sets are **one physical descriptor set bound three times**. They exist to satisfy
+three HLSL register spaces, not because there are three resources. Collapsing them into one set on
+Vulkan takes the layout from five sets to three, comfortably under the limit.
+
+That is not free - the register spaces are baked into the SPIR-V that XenosRecomp emits, so the
+translated shaders have to agree - but it is a contained change to a known place, and it is the one
+thing standing between this port and a rendered frame.
