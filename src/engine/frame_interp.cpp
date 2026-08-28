@@ -31,6 +31,7 @@
 #include "engine/mouse_cursor.h"
 #include "engine/virtual_buttons.h"
 #include "gpu/gpu.h"
+#include "xr/xr_game_camera.h"
 
 namespace {
 
@@ -530,13 +531,15 @@ REX_HOOK_RAW(bdCameraRenderSetup) {
 // params, which only the caller's own frame carries.
 REX_EXTERN(__imp__bdBuildViewMatrix);
 REX_HOOK_RAW(bdBuildViewMatrix) {
+  float view[16];
+  bool replaced = false;
+
   if (g_inCameraRender) {
     const u32 viewVa = ctx.r4.u32;
     if (viewVa > kCamViewOffset) {
       auto it = g_cams.find(viewVa - kCamViewOffset);
       if (it != g_cams.end() && it->second.valid) {
         const CamEntry &e = it->second;
-        float view[16];
         bool cut = EyeDistSq(e.prevEye, e.currEye) > kCutDistSq;
         if (!cut) {
           float rotDot = 0.0f;
@@ -550,15 +553,34 @@ REX_HOOK_RAW(bdBuildViewMatrix) {
         } else {
           LerpMatrix(e.prevView, e.currView, bd::engine::Alpha(), view);
         }
-        if (g_viewScratch == 0) {
-          g_viewScratch = bd::gpu::HostHeap::Get().AllocGuest(64, 16);
-        }
-        if (g_viewScratch != 0) {
-          auto *dst = bd::mem::at<be_f32>(g_viewScratch);
-          WriteFloats(dst, view, 16);
-          ctx.r4.u32 = g_viewScratch;
-        }
+        replaced = true;
       }
+    }
+  }
+
+  // The head pose composes on top of whatever the camera turned out to be,
+  // interpolated or not - it is an offset from the shot the game framed, not a
+  // replacement for it. Which is also why this runs even when interpolation is
+  // off: VR does not want to depend on the frame rate setting.
+  if (bd::xr::ViewOverrideActive() && ctx.r4.u32 != 0) {
+    if (!replaced)
+      ReadFloats(bd::mem::at<be_f32>(ctx.r4.u32), view, 16);
+    float composed[16];
+    if (bd::xr::ComposeView(view, composed)) {
+      for (int i = 0; i < 16; ++i)
+        view[i] = composed[i];
+      replaced = true;
+    }
+  }
+
+  if (replaced) {
+    if (g_viewScratch == 0) {
+      g_viewScratch = bd::gpu::HostHeap::Get().AllocGuest(64, 16);
+    }
+    if (g_viewScratch != 0) {
+      auto *dst = bd::mem::at<be_f32>(g_viewScratch);
+      WriteFloats(dst, view, 16);
+      ctx.r4.u32 = g_viewScratch;
     }
   }
   __imp__bdBuildViewMatrix(ctx, base);

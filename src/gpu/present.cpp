@@ -21,6 +21,7 @@
 #include <plume_vulkan.h>
 
 #include "xr/xr_session.h"
+#include "xr/xr_game_camera.h"
 #endif
 
 #include "gpu/gpu_profiling.h"
@@ -337,6 +338,22 @@ void BeginXrFrame() {
   // or it never transitions to READY and no frame ever arrives.
   session.PollEvents();
   g_xr_frame_open = session.BeginFrame(g_xr_frame);
+  if (!g_xr_frame_open || !g_xr_frame.shouldRender || g_xr_frame.viewCount == 0) {
+    bd::xr::ClearEye();
+    return;
+  }
+
+  // Latch the eye the guest will render from. This is one frame of latency by
+  // construction: BeginXrFrame runs inside Present, which is the end of the
+  // guest's frame, so the pose taken here drives the frame after this one. The
+  // fix is to move the xrWaitFrame/xrBeginFrame pair to the top of the guest
+  // frame instead, which is a frame-pacing change and wants doing on its own.
+  //
+  // FrameState carries poses already converted to game space, and ComposeEye's
+  // contract is that it is handed OpenXR ones. The mirror is its own inverse,
+  // so this converts back - it is not a no-op that happens to compile.
+  const bd::xr::EyeView &eye = g_xr_frame.views[0];
+  bd::xr::SubmitEye(bd::xr::FromOpenXRPose(eye.pose), eye.fov);
 }
 
 void EndXrFrame() {
