@@ -69,3 +69,49 @@ plume has no `.gitattributes`, so its sources are checked out CRLF on Windows an
 patch, left as normal text, gets the same treatment and stays consistent with them on both. Pinning
 the patch to fixed bytes would make it CRLF on a Linux checkout where plume's files are LF, and it
 would stop applying there.
+
+## `rexglue-sdk-android.patch`
+
+**What it does.** Lets the ReXGlue SDK configure and build for `android-arm64`, which no published
+release slice covers. This is the gate on the whole Android and Quest target.
+
+The encouraging discovery is how little it takes. Android is `UNIX AND NOT APPLE`, so the SDK's own
+platform detection already classifies it as `linux-arm64` and defines `REX_PLATFORM_LINUX=1`; the
+NDK ships Clang 20, which clears the SDK's Clang-18 floor; and `-mcmodel=small` plus
+position-independent code — what the SDK already selects for non-x86_64 — are exactly right for
+Android. SDL3 configures itself for Android natively, picking up the `android` video driver, aaudio
+and opensles, android hidapi joysticks, and both the Vulkan and OpenXR GPU backends.
+
+So far the entire patch is one guard: `src/ui/CMakeLists.txt` unconditionally demands `x11-xcb` and
+`wayland-client` through pkg-config on any non-Apple UNIX. Android has neither — SDL3 hands over an
+`ANativeWindow` and the surface comes from `VK_KHR_android_surface` — so the Android case takes an
+empty branch ahead of the desktop Linux one.
+
+### Applying
+
+```sh
+git clone https://github.com/rexglue/rexglue-sdk.git out/rexglue-src
+git -C out/rexglue-src submodule update --init --recursive --depth 1 --jobs 8
+git -C out/rexglue-src apply ../../patches/rexglue-sdk-android.patch
+```
+
+### One thing the patch cannot fix: symlinks on Windows
+
+`thirdparty/libmspack` keeps 15 symlinks under `cabextract/mspack/` pointing at the real sources.
+Git on Windows without Developer Mode has `core.symlinks=false` and writes each one out as a text
+file whose entire content is the relative path of its target. The build then fails with a baffling
+
+```
+lzxd.c:1:1: error: expected identifier or '('
+    1 | ../../libmspack/mspack/lzxd.c
+```
+
+That is a checkout problem, not an Android one, and it would bite a Windows build for any target.
+Either enable Developer Mode and re-clone with `core.symlinks=true`, or materialise them as copies:
+
+```sh
+cd out/rexglue-src/thirdparty/libmspack
+git ls-files -s | awk '$1=="120000"{print $4}' | while read -r f; do
+  cp "$(dirname "$f")/$(cat "$f")" "$f"
+done
+```

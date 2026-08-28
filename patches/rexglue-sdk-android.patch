@@ -1,0 +1,18 @@
+diff --git a/src/ui/CMakeLists.txt b/src/ui/CMakeLists.txt
+index 5bd3dc5..c553576 100644
+--- a/src/ui/CMakeLists.txt
++++ b/src/ui/CMakeLists.txt
+@@ -146,7 +146,12 @@ if(REXGLUE_USE_VULKAN)
+ endif()
+ 
+ # Platform-specific dependencies
+-if(UNIX AND NOT APPLE)
++if(ANDROID)
++    # Android is UNIX and not APPLE, so it would otherwise take the desktop
++    # Linux branch below and demand X11 and Wayland. It has neither: SDL3
++    # hands us an ANativeWindow and the Vulkan surface comes from
++    # VK_KHR_android_surface.
++elseif(UNIX AND NOT APPLE)
+     find_package(PkgConfig REQUIRED)
+     pkg_check_modules(X11_XCB REQUIRED x11-xcb)
+     # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
