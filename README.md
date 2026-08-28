@@ -33,9 +33,9 @@ can wander around and look at it instead of fighting things.
 
 ## What this fork is trying to do
 
-Roughly in priority order. **Nothing here is playable yet**, and a full build is not even possible
-in this tree — it needs the ReXGlue SDK and the game executable from your own discs, neither of
-which lives in a repo.
+Roughly in priority order. **Nothing here is playable yet.** A clone needs two things before it can
+build — the ReXGlue SDK (a public release) and `default.xex` from your own disc, which
+`tools/extract_xex.py` lifts out of an ISO in under a second without copying it.
 
 | Goal | State | Notes |
 | --- | --- | --- |
