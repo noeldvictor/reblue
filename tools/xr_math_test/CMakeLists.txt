@@ -20,7 +20,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # cvar singleton. That is what makes the camera modes checkable without the SDK.
 add_executable(xr_math_test
     xr_math_test.cpp
-    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/xr/xr_camera.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/xr/xr_camera.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/xr/xr_cull.cpp")
 
 # stub/ first so <rex/types.h> resolves here rather than to a real SDK if one
 # happens to be installed: the test is about xr_math.h, not about the SDK.

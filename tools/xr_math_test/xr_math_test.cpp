@@ -20,6 +20,7 @@
 #include <numbers>
 
 #include "xr/xr_camera.h"
+#include "xr/xr_cull.h"
 #include "xr/xr_math.h"
 
 using namespace bd::xr;
@@ -382,6 +383,106 @@ void TestRecentreAndTurn() {
         "moving off the recentre point moves the camera by that much");
 }
 
+// --- culling volume ---
+
+void TestCullVolume() {
+  std::printf("cull volume\n");
+
+  // A plausible headset: 64 mm IPD, both eyes level and parallel, asymmetric
+  // per-eye frustums because no real headset has centred optics.
+  Pose left, right;
+  left.position = {-0.032f, 0.0f, 0.0f};
+  right.position = {0.032f, 0.0f, 0.0f};
+  const Fov lf{-0.9f, 0.8f, 0.8f, -0.85f};
+  const Fov rf{-0.8f, 0.9f, 0.8f, -0.85f}; // mirrored, as they usually are
+
+  const CullVolume v = CullVolume::FromEyes(left, lf, right, rf, 1.0f);
+
+  // The property the whole construction exists for: every point either eye can
+  // see must be inside the shared volume. If this fails, geometry disappears
+  // from one side of the stereo image and reads as flicker, not as a culling
+  // bug, which is a horrible thing to chase.
+  bool contained = true;
+  const Pose eyes[] = {left, right};
+  const Fov fovs[] = {lf, rf};
+  const f32 depths[] = {0.05f, 0.5f, 1.0f, 25.0f, 1000.0f};
+  for (int e = 0; e < 2; ++e) {
+    const f32 tx[] = {std::tan(fovs[e].angleLeft), std::tan(fovs[e].angleRight)};
+    const f32 ty[] = {std::tan(fovs[e].angleDown), std::tan(fovs[e].angleUp)};
+    for (f32 z : depths) {
+      for (f32 x : tx) {
+        for (f32 y : ty) {
+          const Vec3 corner{eyes[e].position.x + x * z,
+                            eyes[e].position.y + y * z, z};
+          if (!v.TestPoint(corner))
+            contained = false;
+        }
+      }
+    }
+  }
+  Check(contained, "combined volume contains both eye frustums, 40 corners");
+
+  Check(v.TestPoint(Vec3{0.0f, 0.0f, 10.0f}), "accepts geometry straight ahead");
+  Check(!v.TestPoint(Vec3{0.0f, 0.0f, -100.0f}),
+        "rejects geometry behind the viewer");
+  Check(!v.TestPoint(Vec3{1000.0f, 0.0f, 1.0f}),
+        "rejects geometry far off to the side");
+  Check(!v.TestPoint(Vec3{0.0f, 1000.0f, 1.0f}),
+        "rejects geometry far overhead");
+
+  // Conservative on purpose: the guest hands over bounding volumes, and a
+  // false positive costs a draw call where a false negative costs a hole in
+  // the world.
+  Check(v.TestSphere(Vec3{1000.0f, 0.0f, 1.0f}, 1200.0f),
+        "a large enough sphere straddling the edge counts as visible");
+
+  // The margin is what stops geometry popping the instant the head turns.
+  const Vec3 justOutside{-3.0f, 0.0f, 1.0f};
+  Check(!v.TestPoint(justOutside), "point outside the tight volume is rejected");
+  const CullVolume wide = CullVolume::FromEyes(left, lf, right, rf, 3.0f);
+  Check(wide.TestPoint(justOutside), "the same point is inside a widened one");
+
+  // A margin below 1 would cull inside what is actually visible, so it clamps.
+  const CullVolume clamped = CullVolume::FromEyes(left, lf, right, rf, 0.1f);
+  Check(clamped.TestPoint(Vec3{0.0f, 0.0f, 10.0f}),
+        "a margin below 1 clamps rather than culling the view away");
+
+  // Turning the head must carry the volume with it: what was ahead is now off
+  // to the side, and what was to the side is now ahead.
+  Pose tl = left, tr = right;
+  tl.orientation = tr.orientation = RotAboutY(kPi * 0.5f);
+  tl.position = Rotate(tl.orientation, left.position);
+  tr.position = Rotate(tr.orientation, right.position);
+  const CullVolume turned = CullVolume::FromEyes(tl, lf, tr, rf, 1.0f);
+  Check(turned.TestPoint(Vec3{10.0f, 0.0f, 0.0f}),
+        "turned volume accepts what is now ahead");
+  Check(!turned.TestPoint(Vec3{0.0f, 0.0f, -10.0f}),
+        "turned volume rejects what is now behind");
+
+  // Eyes offset vertically as well, to exercise the other pull-back axis.
+  Pose vl = left, vr = right;
+  vl.position = {-0.032f, 0.01f, 0.0f};
+  vr.position = {0.032f, -0.01f, 0.0f};
+  const CullVolume tilted = CullVolume::FromEyes(vl, lf, vr, rf, 1.0f);
+  bool tiltedContained = true;
+  const Pose tiltedEyes[] = {vl, vr};
+  for (int e = 0; e < 2; ++e) {
+    const f32 tx[] = {std::tan(fovs[e].angleLeft), std::tan(fovs[e].angleRight)};
+    const f32 ty[] = {std::tan(fovs[e].angleDown), std::tan(fovs[e].angleUp)};
+    for (f32 z : depths) {
+      for (f32 x : tx) {
+        for (f32 y : ty) {
+          const Vec3 corner{tiltedEyes[e].position.x + x * z,
+                            tiltedEyes[e].position.y + y * z, z};
+          if (!tilted.TestPoint(corner))
+            tiltedContained = false;
+        }
+      }
+    }
+  }
+  Check(tiltedContained, "containment holds with vertically offset eyes");
+}
+
 } // namespace
 
 int main() {
@@ -394,6 +495,7 @@ int main() {
   TestCameraModes();
   TestWorldScale();
   TestRecentreAndTurn();
+  TestCullVolume();
 
   std::printf("\n%s\n", g_failures == 0 ? "all checks passed"
                                         : "FAILURES PRESENT");

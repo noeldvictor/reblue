@@ -63,3 +63,9 @@ git -C thirdparty/plume apply ../../patches/plume-openxr-seam.patch
 Check it still applies after a submodule bump with `git -C thirdparty/plume apply --check`. If it
 stops applying, that is the signal to fork plume properly rather than to rebase the patch a third
 time.
+
+**Do not add `*.patch -text` to `.gitattributes`.** It looks like the right hardening and it is not.
+plume has no `.gitattributes`, so its sources are checked out CRLF on Windows and LF on Linux; the
+patch, left as normal text, gets the same treatment and stays consistent with them on both. Pinning
+the patch to fixed bytes would make it CRLF on a Linux checkout where plume's files are LF, and it
+would stop applying there.
