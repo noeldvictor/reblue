@@ -2,13 +2,54 @@
 
 
 
+> [!CAUTION]
+> **This is a personal, vibe-coded fork. It is AI-driven experimentation for my own amusement.**
+>
+> I am not looking for users, testers, bug reports, feature requests, support questions, or
+> Discord pings about it. Nothing here is supported, nothing here is promised, and most of it
+> is written by an AI under loose supervision and pushed without ceremony. It will break. It
+> will stay broken for a while. That is fine, because it is a toy.
+>
+> **Please do not bother me about it.** If you want something out of this: fork it and do the
+> work yourself. That is genuinely the intended workflow, and the license permits it.
+>
+> If you want a real, working, supported build of re:Blue, go upstream:
+> **[zolaware/reblue](https://github.com/zolaware/reblue)**. All the credit for this project
+> belongs there. Issues and pull requests on *this* repo may be closed unread.
+
 > [!IMPORTANT]
-> re:Blue is an unofficial project
+> re:Blue is an unofficial project, not affiliated with or endorsed by Microsoft, Xbox, Mistwalker,
+> Artoon, or Sega. It ships no game data. You supply that from your own discs.
 
 
-# re:Blue
+# re:Blue (personal fork)
 
 re:Blue rebuilds Blue Dragon as a native application through static recompilation, translating the original code into something your machine runs directly rather than emulating a console around it. That opens the door to things an emulator cannot reach: higher frame rates, modern resolutions, and real mod support.
+
+This fork exists to poke at one question: **how far down does it go?** Upstream already runs on 64-bit
+ARM under Linux and macOS. I want Blue Dragon in VR with a real 6DOF camera, on an ARM64 Android
+handheld (an AYN Thor and friends), and on a Meta Quest 2. Also cel shading. Also a cheat mode so I
+can wander around and look at it instead of fighting things.
+
+## What this fork is trying to do
+
+Roughly in priority order. **Nothing below is built. All of it is aspirational.**
+
+| Goal | State | Notes |
+| --- | --- | --- |
+| **VR with 6DOF head tracking** | Not started | The critical one. Head drives the camera, controller drives the character. |
+| — third-person, head-anchored orbit | Not started | Default mode. The game's own follow camera gets suppressed. |
+| — first person | Not started | Animations are authored third-person, so expect this to be a novelty. |
+| — diorama + world scale | Not started | Tabletop view. Probably the mode that actually works best. |
+| **ARM64 Android (AYN Thor, etc.)** | Not started | Native APK. Blocked on cross-building the ReXGlue SDK with the NDK. |
+| **Quest 2, native** | Not started | Downstream of the Android port. |
+| **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
+| **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
+| Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |
+
+**[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md)** is the actual plan, with the guest camera addresses,
+the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version
+plus the codebase notes.
 
 ## Table of Contents
 
@@ -22,7 +63,7 @@ re:Blue rebuilds Blue Dragon as a native application through static recompilatio
 
 ## Hardware Requirements
 
-Requires all three retail Blue Dragon discs or their disc images. Steam Deck is supported. 64-bit ARM processors are supported on Linux and macOS. Windows is x86-64 only. 
+Requires all three retail Blue Dragon discs or their disc images. Steam Deck is supported. 64-bit ARM processors are supported on Linux and macOS. Windows is x86-64 only. Android and Quest are not supported and are the whole point of this fork.
 
 ### Minimum
 
@@ -42,7 +83,7 @@ Requires all three retail Blue Dragon discs or their disc images. Steam Deck is 
 
 ## How to Install
 
-[Download latest release for your platform](https://github.com/zolaware/reblue/releases/latest) or [build yourself](#building)
+This fork publishes no releases. [Download the latest upstream release for your platform](https://github.com/zolaware/reblue/releases/latest) or [build yourself](#building).
 
 1. Blue Dragon shipped on three DVDs, and you will need a disc image of each one from your own copy of the game.
 
@@ -132,9 +173,18 @@ cmake --build --preset win-amd64-release
 
 Presets cover `win-amd64`, `win-vk`, `linux-amd64`, `linux-arm64`, `mac-amd64`, and `mac-arm64`, each in Debug, Release, and RelWithDebInfo. A `win-amd64` preset builds both the DX12 executable (`reblue.exe`) and the Vulkan one (`reblue_vk.exe`), and a `win-vk` one builds the Vulkan executable alone. As with running the game, building requires the files from your own copy of Blue Dragon.
 
+There is no `android-arm64` preset yet, and adding one is the open work in this fork. It needs the
+ReXGlue SDK cross-built with the Android NDK, which upstream does not publish. [CLAUDE.md](CLAUDE.md)
+has the notes.
+
 ## Credits
 
 Huge thanks to everyone who has put time into this. re:Blue would not be where it is without you.
+
+**None of these people work on this fork, and none of them should be contacted about it.** The
+credits below are upstream's, kept because they earned them and because the license says to keep
+them. Everything re:Blue actually is came from [zolaware/reblue](https://github.com/zolaware/reblue);
+everything broken in this repo came from me and a language model.
 
 ### re:Blue Development Team
 
