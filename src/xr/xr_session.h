@@ -102,6 +102,30 @@ public:
   // when nothing was drawn, or the runtime's frame pacing stalls.
   void EndFrame(const FrameState &state);
 
+  // --- swapchain and layer submission ---
+
+  // One colour swapchain the size of the game's own output. The first layer
+  // this port submits is a quad - a world-locked screen - rather than a stereo
+  // projection: it is genuinely immersive, it needs no per-eye rendering, and
+  // it is the mode most likely to be comfortable for a fixed-camera JRPG. The
+  // projection path comes later and reuses all of this.
+  bool CreateSwapchain(u32 width, u32 height);
+
+  // The runtime's images, as raw VkImage handles for the GPU layer to wrap.
+  u32 SwapchainImageCount() const { return static_cast<u32>(swapchainImages_.size()); }
+  void *SwapchainImage(u32 index) const;
+  u32 SwapchainWidth() const { return swapchainWidth_; }
+  u32 SwapchainHeight() const { return swapchainHeight_; }
+  // Colour format the runtime chose, as a VkFormat.
+  i64 SwapchainFormat() const { return swapchainFormat_; }
+
+  // Acquire/wait the next image. Returns its index, or -1 if unavailable.
+  i32 AcquireSwapchainImage();
+  void ReleaseSwapchainImage();
+
+  // Queues the quad for this frame's EndFrame. Size is in metres.
+  void SubmitQuadLayer(f32 widthMetres, f32 heightMetres, f32 distanceMetres);
+
   void Destroy();
 
   // Recommended per-eye render target size, from the view configuration.
@@ -123,6 +147,16 @@ private:
 
   u32 recommendedWidth_ = 0;
   u32 recommendedHeight_ = 0;
+
+  void *swapchain_ = nullptr;
+  std::vector<void *> swapchainImages_;
+  u32 swapchainWidth_ = 0;
+  u32 swapchainHeight_ = 0;
+  i64 swapchainFormat_ = 0;
+  bool quadQueued_ = false;
+  f32 quadWidth_ = 0.0f;
+  f32 quadHeight_ = 0.0f;
+  f32 quadDistance_ = 0.0f;
 
   bool running_ = false;
   bool exitRequested_ = false;

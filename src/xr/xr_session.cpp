@@ -373,19 +373,148 @@ void Session::EndFrame(const FrameState &state) {
     return;
   frameBegun_ = false;
 
-  // No layers yet: the stereo swapchain lands in Phase 1 of the port plan.
-  // Submitting zero layers is legal and keeps the runtime's frame pacing alive,
-  // which is what stops the session from being torn down as unresponsive.
+  // A quad layer when one was queued this frame, otherwise none. Submitting
+  // zero layers is legal and keeps the runtime's frame pacing alive, which is
+  // what stops the session from being torn down as unresponsive.
+  XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+  const XrCompositionLayerBaseHeader *layers[1] = {nullptr};
+  uint32_t layerCount = 0;
+
+  if (quadQueued_ && swapchain_) {
+    quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+    quad.space = AsSpace(appSpace_);
+    quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+    quad.subImage.swapchain = static_cast<XrSwapchain>(swapchain_);
+    quad.subImage.imageRect.offset = {0, 0};
+    quad.subImage.imageRect.extent = {static_cast<int32_t>(swapchainWidth_),
+                                      static_cast<int32_t>(swapchainHeight_)};
+    quad.subImage.imageArrayIndex = 0;
+    // Straight ahead in the reference space, at eye height. -Z is forward in
+    // OpenXR, which is why the distance is negative.
+    quad.pose.orientation.w = 1.0f;
+    quad.pose.position = {0.0f, 0.0f, -quadDistance_};
+    quad.size = {quadWidth_, quadHeight_};
+    layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader *>(&quad);
+    layerCount = 1;
+  }
+  quadQueued_ = false;
+
   XrFrameEndInfo end{XR_TYPE_FRAME_END_INFO};
   end.displayTime = state.predictedDisplayTime ? state.predictedDisplayTime
                                                : frameDisplayTime_;
   end.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-  end.layerCount = 0;
-  end.layers = nullptr;
+  end.layerCount = layerCount;
+  end.layers = layerCount ? layers : nullptr;
   xrEndFrame(AsSession(session_), &end);
 }
 
+bool Session::CreateSwapchain(u32 width, u32 height) {
+  if (!session_ || swapchain_)
+    return swapchain_ != nullptr;
+
+  // Take the first format the runtime offers that we know how to present.
+  // Quest offers sRGB first, which is what it wants us to use.
+  uint32_t formatCount = 0;
+  xrEnumerateSwapchainFormats(AsSession(session_), 0, &formatCount, nullptr);
+  std::vector<int64_t> formats(formatCount);
+  if (formatCount)
+    xrEnumerateSwapchainFormats(AsSession(session_), formatCount, &formatCount,
+                                formats.data());
+
+  int64_t chosen = 0;
+  for (int64_t format : formats) {
+    if (format == VK_FORMAT_R8G8B8A8_SRGB || format == VK_FORMAT_R8G8B8A8_UNORM) {
+      chosen = format;
+      break;
+    }
+  }
+  if (!chosen && !formats.empty())
+    chosen = formats[0];
+  if (!chosen) {
+    BD_ERROR("OpenXR: runtime offered no swapchain formats");
+    return false;
+  }
+
+  XrSwapchainCreateInfo info{XR_TYPE_SWAPCHAIN_CREATE_INFO};
+  info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
+                    XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+  info.format = chosen;
+  info.sampleCount = 1;
+  info.width = width;
+  info.height = height;
+  info.faceCount = 1;
+  info.arraySize = 1;
+  info.mipCount = 1;
+
+  XrSwapchain swapchain = XR_NULL_HANDLE;
+  if (Failed(xrCreateSwapchain(AsSession(session_), &info, &swapchain),
+             "xrCreateSwapchain"))
+    return false;
+  swapchain_ = swapchain;
+  swapchainWidth_ = width;
+  swapchainHeight_ = height;
+  swapchainFormat_ = chosen;
+
+  uint32_t imageCount = 0;
+  xrEnumerateSwapchainImages(swapchain, 0, &imageCount, nullptr);
+  std::vector<XrSwapchainImageVulkanKHR> images(
+      imageCount, {XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR});
+  if (Failed(xrEnumerateSwapchainImages(
+                 swapchain, imageCount, &imageCount,
+                 reinterpret_cast<XrSwapchainImageBaseHeader *>(images.data())),
+             "xrEnumerateSwapchainImages"))
+    return false;
+
+  swapchainImages_.clear();
+  for (const auto &image : images)
+    swapchainImages_.push_back(reinterpret_cast<void *>(image.image));
+
+  BD_INFO("OpenXR: swapchain {}x{} format {} with {} images", width, height,
+          chosen, swapchainImages_.size());
+  return true;
+}
+
+void *Session::SwapchainImage(u32 index) const {
+  return index < swapchainImages_.size() ? swapchainImages_[index] : nullptr;
+}
+
+i32 Session::AcquireSwapchainImage() {
+  if (!swapchain_)
+    return -1;
+  uint32_t index = 0;
+  XrSwapchainImageAcquireInfo acquire{XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO};
+  if (XR_FAILED(xrAcquireSwapchainImage(static_cast<XrSwapchain>(swapchain_),
+                                        &acquire, &index)))
+    return -1;
+
+  XrSwapchainImageWaitInfo wait{XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO};
+  wait.timeout = XR_INFINITE_DURATION;
+  if (XR_FAILED(xrWaitSwapchainImage(static_cast<XrSwapchain>(swapchain_), &wait)))
+    return -1;
+  return static_cast<i32>(index);
+}
+
+void Session::ReleaseSwapchainImage() {
+  if (!swapchain_)
+    return;
+  XrSwapchainImageReleaseInfo release{XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO};
+  xrReleaseSwapchainImage(static_cast<XrSwapchain>(swapchain_), &release);
+}
+
+void Session::SubmitQuadLayer(f32 widthMetres, f32 heightMetres,
+                              f32 distanceMetres) {
+  quadQueued_ = true;
+  quadWidth_ = widthMetres;
+  quadHeight_ = heightMetres;
+  quadDistance_ = distanceMetres;
+}
+
 void Session::Destroy() {
+  if (swapchain_) {
+    xrDestroySwapchain(static_cast<XrSwapchain>(swapchain_));
+    swapchain_ = nullptr;
+    swapchainImages_.clear();
+  }
   if (appSpace_) {
     xrDestroySpace(AsSpace(appSpace_));
     appSpace_ = nullptr;

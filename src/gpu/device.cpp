@@ -36,6 +36,7 @@
 
 #if defined(REBLUE_OPENXR)
 #include "xr/xr_session.h"
+REXCVAR_DECLARE(bool, bd_vr_enabled);
 #endif
 
 #include "core/logging.h"
@@ -319,7 +320,15 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
     // runtime is normal (no headset on a desktop) and just leaves the options
     // empty, which is the ordinary flat path.
     plume::VulkanInterfaceOptions xr_options;
-    const bool xr_available = bd::xr::Session::Get().CreateInstance();
+    // Opt-in. Opening a session makes Horizon OS treat this as an immersive
+    // app, which replaces the working flat panel with whatever the layer
+    // submission manages - so until that is right, the default has to stay the
+    // mode that shows the game. Set bd_vr_enabled in args.txt to try it.
+    const bool xr_requested = REXCVAR_GET(bd_vr_enabled);
+    const bool xr_available =
+        xr_requested && bd::xr::Session::Get().CreateInstance();
+    if (!xr_requested)
+      BD_INFO("[xr] bd_vr_enabled is off; flat renderer");
     if (xr_available) {
       const auto &session = bd::xr::Session::Get();
       xr_options.extraInstanceExtensions = session.VulkanInstanceExtensions();

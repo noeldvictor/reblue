@@ -17,6 +17,11 @@
 #include <thread>
 
 #include <plume_render_interface.h>
+#if defined(REBLUE_OPENXR)
+#include <plume_vulkan.h>
+
+#include "xr/xr_session.h"
+#endif
 
 #include "gpu/gpu_profiling.h"
 
@@ -308,6 +313,90 @@ void Video::RequestResize() {
   state().resize_requested.store(true, std::memory_order_release);
 }
 
+
+#if defined(REBLUE_OPENXR)
+namespace {
+
+// The game's finished frame, copied into the runtime's swapchain image and
+// submitted as a world-locked quad - a screen floating in front of the player.
+// Stereo projection comes later; this is the mode most likely to be comfortable
+// for a fixed-camera JRPG, and it needs no per-eye rendering at all.
+//
+// The runtime's images are plain VkImages, and plume can wrap one, so the copy
+// goes into the command list the present is already recording rather than
+// needing a submission of its own.
+// The frame this present is inside, kept between BeginFrame and EndFrame.
+bd::xr::FrameState g_xr_frame;
+bool g_xr_frame_open = false;
+
+void BeginXrFrame() {
+  auto &session = bd::xr::Session::Get();
+  if (!session.SessionCreated())
+    return;
+  // Events have to be pumped every frame even before the session is running,
+  // or it never transitions to READY and no frame ever arrives.
+  session.PollEvents();
+  g_xr_frame_open = session.BeginFrame(g_xr_frame);
+}
+
+void EndXrFrame() {
+  if (!g_xr_frame_open)
+    return;
+  bd::xr::Session::Get().EndFrame(g_xr_frame);
+  g_xr_frame_open = false;
+}
+
+void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
+  auto &session = bd::xr::Session::Get();
+  if (!session.Running() || !g_xr_frame_open || !g_xr_frame.shouldRender)
+    return;
+
+  // Created once, at the size the game is already presenting at.
+  static bool swapchain_ready = false;
+  static std::vector<std::unique_ptr<plume::VulkanTexture>> xr_textures;
+  if (!swapchain_ready) {
+    // The swapchain's own dimensions, which is what the present blits into.
+    if (!session.CreateSwapchain(s.swap_chain->getWidth(),
+                                 s.swap_chain->getHeight()))
+      return;
+    auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
+    for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
+      auto image = reinterpret_cast<VkImage>(session.SwapchainImage(i));
+      xr_textures.push_back(std::make_unique<plume::VulkanTexture>(vk_device, image));
+    }
+    swapchain_ready = true;
+    BD_INFO("[xr] quad swapchain ready, {} images wrapped", xr_textures.size());
+  }
+
+  const i32 index = session.AcquireSwapchainImage();
+  if (index < 0 || static_cast<size_t>(index) >= xr_textures.size())
+    return;
+
+  plume::RenderTexture *dst = xr_textures[index].get();
+  const plume::RenderTextureBarrier to_copy[] = {
+      plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COPY_DEST),
+      plume::RenderTextureBarrier(back, plume::RenderTextureLayout::COPY_SOURCE),
+  };
+  s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0, to_copy, 2);
+  s.command_list->copyTexture(dst, back);
+
+  // Back to what the flat present expects to hand to the swapchain.
+  const plume::RenderTextureBarrier to_present[] = {
+      plume::RenderTextureBarrier(back, plume::RenderTextureLayout::PRESENT),
+  };
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
+                           to_present, 1);
+
+  session.ReleaseSwapchainImage();
+  // 2 m wide at 2 m distance is roughly a 60-inch screen - big enough to read
+  // the HUD, close enough not to need head turning.
+  session.SubmitQuadLayer(2.0f, 2.0f * float(session.SwapchainHeight()) /
+                                    float(session.SwapchainWidth()), 2.0f);
+}
+
+} // namespace
+#endif
+
 void Video::Present(GuestTexture *frontBuffer) {
   auto &s = state();
   // Before the lock: shutdown runs on the UI thread, so a Present that reached
@@ -382,6 +471,10 @@ void Video::Present(GuestTexture *frontBuffer) {
   // Reopens a closed list, so end() below always has one.
   BeginCommandList(s);
   RecordPresentPass(s, rt, chosen, back, back_fb);
+#if defined(REBLUE_OPENXR)
+  BeginXrFrame();
+  RecordXrQuad(s, back);
+#endif
 
   const u32 cur = s.frame.load(std::memory_order_relaxed);
   FrameEnd(s.command_list);
@@ -416,6 +509,11 @@ void Video::Present(GuestTexture *frontBuffer) {
     }
     pb.present_ms = ms_since(t0);
   }
+#if defined(REBLUE_OPENXR)
+  // After the flat present: the copy into the runtime's image was recorded in
+  // the same command list, so by here it has been submitted.
+  EndXrFrame();
+#endif
   const auto wait_t0 = Clock::now();
   {
     BD_CPU_ZONE("WaitFence");

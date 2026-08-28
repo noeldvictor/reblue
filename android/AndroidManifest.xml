@@ -45,9 +45,14 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-                <!-- What makes Horizon OS launch this immersively instead of as
-                     a flat panel in the desktop shell. Harmless elsewhere. -->
-                <category android:name="com.oculus.intent.category.VR" />
+                <!-- com.oculus.intent.category.VR goes here to make Horizon OS
+                     launch this immersively rather than as a flat panel. It is
+                     commented out on purpose: the category alone switches the
+                     mode, whether or not a working XR layer is being submitted,
+                     and an immersive app with no layers is a black headset. The
+                     flat panel shows the game today, so that stays the default.
+                     Uncomment it as step one of finishing the quad layer.
+                <category android:name="com.oculus.intent.category.VR" /> -->
             </intent-filter>
         </activity>
     </application>
