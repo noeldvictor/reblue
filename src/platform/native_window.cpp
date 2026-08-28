@@ -8,6 +8,10 @@
 #include "platform/native_window.h"
 
 #include <SDL3/SDL_video.h>
+#if defined(__ANDROID__)
+#include <SDL3/SDL_properties.h>
+#include <android/native_window.h>
+#endif
 #if defined(__APPLE__)
 #include <SDL3/SDL_metal.h>
 
@@ -139,6 +143,34 @@ bool GetNativeRenderWindow(rex::ui::Window *window, plume::RenderWindow &out) {
   if (!out.window || !out.view) {
     BD_ERROR(
         "SDL window exposed no NSWindow/CAMetalLayer for the Metal surface");
+    return false;
+  }
+  return true;
+}
+
+#elif defined(__ANDROID__)
+
+bool GetNativeRenderWindow(rex::ui::Window *window, plume::RenderWindow &out) {
+  // plume types RenderWindow per platform, and on Android it is an
+  // ANativeWindow* rather than the SDL_Window* every other non-Windows target
+  // passes whole. SDL hands the underlying native window over as a window
+  // property; the surface itself is then built with VK_KHR_android_surface.
+  (void)window;
+  int count = 0;
+  SDL_Window **windows = SDL_GetWindows(&count);
+  SDL_Window *sdl_window = (windows && count > 0) ? windows[0] : nullptr;
+  SDL_free(windows);
+  if (!sdl_window) {
+    BD_ERROR("No SDL window available for the Vulkan surface");
+    return false;
+  }
+  out = static_cast<ANativeWindow *>(SDL_GetPointerProperty(
+      SDL_GetWindowProperties(sdl_window),
+      SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, nullptr));
+  if (!out) {
+    // Legitimately null between surfaceDestroyed and surfaceCreated, so the
+    // caller should retry rather than treat this as fatal.
+    BD_ERROR("SDL window exposed no ANativeWindow for the Vulkan surface");
     return false;
   }
   return true;

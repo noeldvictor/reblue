@@ -41,7 +41,13 @@ extern "C"
 #else
 #include <cxxabi.h>
 #include <dlfcn.h>
+#if !defined(__ANDROID__)
+// bionic ships no <execinfo.h>: backtrace() and backtrace_symbols() are glibc
+// extensions Android never adopted. Its own debuggerd writes a tombstone with
+// a proper unwound stack on a fatal signal, which is strictly better than what
+// this would have produced anyway.
 #include <execinfo.h>
+#endif
 #include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
@@ -149,6 +155,12 @@ void LogBacktrace(u64 base) {
       BD_CRITICAL("    [{:>2}] {:#018x}", i, a);
     }
   }
+#elif defined(__ANDROID__)
+  (void)base;
+  // See the include guard above: no backtrace() here. The signal is left to
+  // reach debuggerd, whose tombstone carries the unwound stack, and logcat
+  // already has everything BD_CRITICAL wrote on the way down.
+  BD_CRITICAL("backtrace unavailable on Android; see the tombstone in logcat");
 #else
   (void)base;
   void *frames[32] = {};

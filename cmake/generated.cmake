@@ -53,6 +53,11 @@ function(reblue_generated_object_library name)
     target_include_directories(${name} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src"
+        # XenosRecomp emits a bare #include "shader_cache.h" at the top of the
+        # cache it generates, and the header lives beside the shader sources
+        # rather than in src/ root, so a quote-include from the build directory
+        # cannot reach it.
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders"
         "${REBLUE_GEN_DIR}"
         "${REXGLUE_ENTRYPOINT_INCLUDE_DIR}")
     target_compile_definitions(${name} PRIVATE
