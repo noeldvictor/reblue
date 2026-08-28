@@ -165,27 +165,45 @@ Two more silent no-ops in the same family, worth knowing before trusting a measu
   A run that "proves MSAA does not matter" may be a run with MSAA still on.
 - **Cvars with `kRequiresRestart` need a `force-stop`**, not just a relaunch of the activity.
 
-## Game data: all three discs are required
+## Game data: use `--all`, not the manifest
 
-`tools/extract_game_data.py` is driven by `res/embed/installer/manifest.txt`, which lists
-`bd_disc_1.xml` through `bd_disc_3.xml`. **Extracting only disc 1 produces a build that boots, shows
-its title screen, accepts input - and then dies the moment a new game starts:**
+`tools/extract_game_data.py` was driven by `res/embed/installer/manifest.txt`, the desktop
+installer's copy list. **That list does not name a single locale-specific file** - grep it for `_us`
+and you get nothing - so a manifest-only extraction produces a build that boots, shows its title
+screen, accepts input, and then dies the moment a new game starts:
 
 ```
 [disc] file-load fatal, failed file: 'D:\database\camp\ene_dic_us.u16'
 Fatal: File Load Error - Failed to load a required game file
 ```
 
-Those files are on discs 2 and 3. Nothing before that point needs them, so a disc-1-only install
-looks completely healthy until it isn't. `--skip-media` is fine for iterating (it drops `movie/` and
-`snd_stream*`, most of the bytes) but it does mean no intro movie.
+All four of those records live in `pack/packmem_us.ipk`, a 2 MB archive **on disc 1** that the
+manifest never mentions - and 1107 files on disc 1 alone are in the same position, mostly locale
+packs and locale sound banks. So this is not a "you only extracted one disc" problem, which is what
+it looks like at first; extracting all three discs through the manifest still misses it.
+
+**Use `--all`.** It ignores the manifest and takes every file on the disc, still honouring
+`--skip-media`. The manifest path only remains for reproducing what the installer does.
+
+Nothing before "new game" touches any of those records, so the install looks completely healthy
+until it isn't - which is why this got chased through the renderer first. If a fatal file load
+appears, check the VFS counts in the log before suspecting code: a full three-disc `--all` install
+mounts **1673 archives / 119346 record names**, where a manifest-only one mounts 1274 / 70008.
+
+`--skip-media` is fine for iterating (it drops `movie/` and `snd_stream*`, most of the bytes) but it
+does mean no intro movie.
 
 The discs never have to be copied to the PC. The reader walks XDVDFS and pulls only the sectors it
 needs, straight off an adb-connected device:
 
 ```sh
-MSYS_NO_PATHCONV=1 python tools/extract_game_data.py   "/path/on/device/Blue Dragon ... (Disc 2).iso"   "/path/on/device/Blue Dragon ... (Disc 3).iso"   --adb-serial <serial> -o out/game --skip-media
+MSYS_NO_PATHCONV=1 python tools/extract_game_data.py   "/path/on/device/Blue Dragon ... (Disc 2).iso"   "/path/on/device/Blue Dragon ... (Disc 3).iso"   --adb-serial <serial> -o out/game --all --skip-media
 ```
+
+**Push directories, never files in a loop.** One `adb push` per file, with a `mkdir -p` round trip
+each, managed 3 files in 90 seconds. Pushing the changed subtrees instead moved 5 GB in under a
+minute, at 120 MB/s - four orders of magnitude apart, and the only difference is where the loop
+lives.
 
 ## Forked dependencies
 
