@@ -34,7 +34,9 @@ set(reblue_d3d12_only
 # loader is present. xr_camera and xr_settings are deliberately not here: the
 # camera composition is plain maths and the settings are plain cvars, so both
 # build in every configuration and stay testable without a headset attached.
-set(reblue_openxr_only)
+set(reblue_openxr_only
+    xr/xr_session.cpp
+    xr/xr_session.h)
 
 set(reblue_installer_only
     installer/disc_install.cpp
