@@ -166,6 +166,14 @@ bool AcquireInstanceLock() {
   g_instance_lock = h;
   return true;
 #else
+#if defined(__ANDROID__)
+  // Android has no /tmp and no XDG_RUNTIME_DIR, and there is nothing here to
+  // guard against: the framework runs one process per app and the activity is
+  // launchMode="singleTask". Pointing the lock at the app's own storage is
+  // worse than useless - that is emulated FUSE storage, where flock does not
+  // behave and the call does not return.
+  return true;
+#else
   std::string dir = "/tmp";
   if (auto runtime = rex::platform::env::get("XDG_RUNTIME_DIR");
       runtime && !runtime->empty())
@@ -183,6 +191,7 @@ bool AcquireInstanceLock() {
   }
   g_instance_lock = fd;
   return true;
+#endif // __ANDROID__
 #endif
 }
 

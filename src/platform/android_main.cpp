@@ -19,19 +19,24 @@
 #if defined(__ANDROID__)
 
 #include <algorithm>
+#include <cstdarg>
 #include <cstdlib>
 #include <map>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <android/log.h>
+
 #include <SDL3/SDL_main.h>
+#include <SDL3/SDL_system.h>
 
 #include <rex/cvar.h>
 #include <rex/logging.h>
 #include <rex/ui/windowed_app.h>
 #include <rex/ui/windowed_app_context_sdl.h>
 
+#include "core/app_root.h"
 #include "core/logging.h"
 
 namespace {
@@ -41,10 +46,37 @@ constexpr const char kAppIdentifier[] = "reblue";
 
 } // namespace
 
+namespace {
+// Android throws away stdout and stderr, and log.redirect-stdio is blocked on
+// Horizon OS, so anything written before the file logger is up is invisible.
+// These few lines are the difference between a diagnosable startup and a black
+// window, which is exactly what happened without them.
+void Say(const char *fmt, ...) {
+  va_list args;
+  va_start(args, fmt);
+  __android_log_vprint(ANDROID_LOG_INFO, "reblue", fmt, args);
+  va_end(args);
+}
+} // namespace
+
 int main(int argc, char **argv) {
+  // Before anything else: the default app root is the APK's native library
+  // directory, which is read-only, so logs and profiles silently fail to be
+  // written there. SDL knows the writable external files directory.
+  if (const char *external = SDL_GetAndroidExternalStoragePath()) {
+    bd::SetAppRoot(external);
+    Say("app root: %s", external);
+  } else {
+    Say("SDL_GetAndroidExternalStoragePath() returned null; "
+        "logs and profiles will not be writable");
+  }
+  for (int i = 1; i < argc; ++i)
+    Say("argv[%d]: %s", i, argv[i]);
+
   auto remaining = rex::cvar::Init(argc, argv);
   rex::cvar::ApplyEnvironment();
   rex::InitLoggingEarly();
+  Say("cvars initialised, logging up");
 
   rex::ui::WindowedApp::Creator creator =
       rex::ui::WindowedApp::GetCreator(kAppIdentifier);
@@ -75,7 +107,11 @@ int main(int argc, char **argv) {
     }
     app->SetParsedArguments(std::move(parsed));
 
-    result = app->OnInitialize() ? app_context.RunMainMessageLoop() : EXIT_FAILURE;
+    Say("app created, calling OnInitialize");
+    const bool initialised = app->OnInitialize();
+    Say("OnInitialize -> %s", initialised ? "true" : "false");
+    result = initialised ? app_context.RunMainMessageLoop() : EXIT_FAILURE;
+    Say("message loop returned %d", result);
     app->InvokeOnDestroy();
   }
   return result;

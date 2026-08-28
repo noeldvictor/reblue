@@ -7,6 +7,10 @@
  */
 #include "core/app_root.h"
 
+#if defined(__ANDROID__)
+#include <SDL3/SDL_system.h>
+#endif
+
 #include <rex/filesystem.h>
 #include <rex/platform/env.h>
 
@@ -80,6 +84,14 @@ std::filesystem::path AppRootFolder() {
       return std::filesystem::path(*home) / "Library" / "Application Support" /
              "reblue";
   }
+#endif
+#if defined(__ANDROID__)
+  // GetExecutableFolder() is the APK's native library directory here, which is
+  // read-only - logs, profiles and saves all fail silently if anything is
+  // rooted there. SDL knows the app's external files directory, which is the
+  // one writable place an Android app owns without asking for permissions.
+  if (const char *external = SDL_GetAndroidExternalStoragePath())
+    return std::filesystem::path(external);
 #endif
 #endif
   return rex::filesystem::GetExecutableFolder();

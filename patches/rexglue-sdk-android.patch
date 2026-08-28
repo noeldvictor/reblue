@@ -238,6 +238,32 @@ index 0000000..5d2c2ea
 +}  // namespace rex::filesystem
 +
 +#endif  // REX_PLATFORM_ANDROID
+diff --git a/src/core/logging.cpp b/src/core/logging.cpp
+index 1645848..25d960e 100644
+--- a/src/core/logging.cpp
++++ b/src/core/logging.cpp
+@@ -32,6 +32,9 @@
+ #else
+ #include <spdlog/sinks/stdout_sinks.h>
+ #endif
++#if REX_PLATFORM_ANDROID
++#include <spdlog/sinks/android_sink.h>
++#endif
+ 
+ REXCVAR_DEFINE_STRING(log_level, "info", "Log",
+                       "Global log level: trace, debug, info, warn, error, critical, off")
+@@ -150,6 +153,11 @@ void InitLoggingEarly() {
+ 
+ #if REX_PLATFORM_WIN32
+   auto sink = std::make_shared<spdlog::sinks::msvc_sink_mt>();
++#elif REX_PLATFORM_ANDROID
++  // Android discards stdout and stderr, and log.redirect-stdio is blocked on
++  // Horizon OS, so a stdout sink here means every line before the file logger
++  // exists is lost - including whatever explains a failure to reach it.
++  auto sink = std::make_shared<spdlog::sinks::android_sink_mt>("rexglue");
+ #else
+   auto sink = std::make_shared<spdlog::sinks::stdout_sink_mt>();
+ #endif
 diff --git a/src/core/memory_posix.cpp b/src/core/memory_posix.cpp
 index b52bf39..2cdcd55 100644
 --- a/src/core/memory_posix.cpp
@@ -312,6 +338,40 @@ index 5bd3dc5..da6a2b7 100644
      find_package(PkgConfig REQUIRED)
      pkg_check_modules(X11_XCB REQUIRED x11-xcb)
      # Required, not optional: vulkan/api.h pulls in <wayland-client.h> on every
+diff --git a/src/ui/rex_app.cpp b/src/ui/rex_app.cpp
+index b94fe9e..7a118b5 100644
+--- a/src/ui/rex_app.cpp
++++ b/src/ui/rex_app.cpp
+@@ -84,11 +84,16 @@ system::AchievementManager& ReXApp::achievements() const {
+ }
+ 
+ bool ReXApp::OnInitialize() {
++  // Each phase can block or fail on a platform it was never run on, and
++  // without these the only symptom is a window that never appears.
++  REXLOG_INFO("ReXApp::OnInitialize: SetupEnvironment");
+   if (!SetupEnvironment())
+     return false;
++  REXLOG_INFO("ReXApp::OnInitialize: SetupPresentation");
+   if (!SetupPresentation())
+     return false;
+ 
++  REXLOG_INFO("ReXApp::OnInitialize: OnFinalizePaths");
+   auto paths = OnFinalizePaths(resolved_defaults_, MakeResumeCallback());
+   if (!paths) {
+     // Async: consumer will invoke resume when ready. OnInitialize returns
+@@ -96,9 +101,12 @@ bool ReXApp::OnInitialize() {
+     return true;
+   }
+ 
++  REXLOG_INFO("ReXApp::OnInitialize: ConstructRuntime");
+   if (!ConstructRuntime(*paths))
+     return false;
++  REXLOG_INFO("ReXApp::OnInitialize: LaunchModule");
+   LaunchModule();
++  REXLOG_INFO("ReXApp::OnInitialize: done");
+   return true;
+ }
+ 
 diff --git a/src/ui/surface_android.cpp b/src/ui/surface_android.cpp
 new file mode 100644
 index 0000000..4c623a0
