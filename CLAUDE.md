@@ -19,8 +19,10 @@ services or reaches into the recompiled guest through hooks.
 3. **Cel shading on characters**, optional and toggled from the in-game options menu.
 4. **Tourist mode** — infinite HP, 999 stats, encounter suppression, for sightseeing in VR.
 
-None of it is built yet. **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md) is the working plan** and
-the place to look before starting anything; the section below is the condensed version.
+None of it is playable yet. The VR maths, camera modes and stereo culling are written and tested;
+the OpenXR session, the stereo renderer and the Android target are not.
+**[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md) is the working plan** and the place to look before
+starting anything; the section below is the condensed version.
 
 The fork is explicitly low-stakes and AI-driven. Prefer working, understandable changes over
 polish. Do not add support infrastructure (issue templates, contribution guides, changelogs) unless
@@ -37,11 +39,19 @@ Prerequisites: CMake 3.25+, Ninja, Clang 20+ (the presets hardcode `clang`/`clan
 Windows, and the ReXGlue SDK. CI downloads a prebuilt SDK slice per platform; locally you can point
 `REXSDK_DIR` at a `rexglue-sdk` source tree instead.
 
-**The build is not self-contained.** It needs `assets/default.xex` — the game executable from your
-own discs — which is not in this repo (CI clones a private `zolaware/reblue-assets`). Without it,
-`rexglue codegen` cannot run and `generated/` stays empty except for `rexglue.cmake`. Configure
-still succeeds in that state by design; the build does not. Assume you cannot do a full local build
-and reason from the source instead, unless the user says otherwise.
+**The build is not self-contained**, but both missing pieces are obtainable in about a minute; the
+`devloop` skill has the bootstrap.
+
+- The SDK is a public release. `v0.10.0` is what `generated/rexglue.cmake` pins, and slices exist
+  for win/linux/mac on amd64 and arm64. **There is no `android-arm64` slice**, which is what gates
+  the Android target.
+- `assets/default.xex` is the game executable from your own discs, ~8 MB inside a 7.8 GB ISO.
+  `tools/extract_xex.py` walks XDVDFS and reads only the sectors it occupies, locally or straight
+  off an adb-connected device. Under a second.
+
+With both, `rexglue codegen` emits 219 files in ~7 seconds and is deterministic. A full Windows
+*link* additionally needs vcpkg, since `find_package(directx-dxc CONFIG REQUIRED)` is unconditional
+on WIN32 even for the Vulkan-only target.
 
 Useful targets:
 
@@ -115,8 +125,11 @@ diagnosing a slow build. The short version:
 - **PCH or compiler cache, never both.** They fight — no compiler cache caches a PCH compilation,
   which is why CI sets `REBLUE_PCH=OFF`. Locally: PCH on while editing, cache on while
   reconfiguring.
-- **A full local build is not possible in this tree** — no `assets/default.xex`, no SDK, so codegen
-  cannot run. Say so rather than reporting a success that did not happen.
+- **Bootstrap first, then most of this works.** The SDK is a public release and `default.xex` can
+  be extracted from a disc image in under a second with `tools/extract_xex.py` — codegen then runs
+  in ~7 seconds and is deterministic. See the `devloop` skill. A *full* Windows link additionally
+  needs vcpkg, which is not installed here; short of it, syntax-check individual sources against the
+  real SDK headers in `out/sdk/win-amd64/include`. Never report a build success that did not happen.
 - **But the maths is testable.** `tools/xr_math_test/` compiles `xr_math.h` standalone against a
   stub `rex/types.h` and runs assertions on it. It caught the off-centre projection sign on its
   first run. Keep new maths in the dependency-free files so it stays reachable from here, and extend
