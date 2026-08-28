@@ -1,3 +1,31 @@
+diff --git a/cmake/rexglue_helpers.cmake b/cmake/rexglue_helpers.cmake
+index 41e6dce..35204ad 100644
+--- a/cmake/rexglue_helpers.cmake
++++ b/cmake/rexglue_helpers.cmake
+@@ -77,9 +77,20 @@ endfunction()
+ function(rexglue_configure_target target_name)
+     cmake_parse_arguments(ARG "" "" "GPU_PLUGINS" ${ARGN})
+ 
+-    target_sources(${target_name} PRIVATE
+-        ${REXGLUE_SHARE_DIR}/windowed_app_main_sdl.cpp
+-        ${REXGLUE_SHARE_DIR}/rex_app.cpp)
++    # An Android app is a .so an Activity loads, not a binary the OS execs, so
++    # there is no main() to provide. windowed_app.h already knows this: it
++    # defines XE_UI_WINDOWED_APPS_IN_LIBRARY on Android, which swaps
++    # REX_DEFINE_APP from defining GetWindowedAppCreator - the thing this
++    # template calls - to registering the app in a table the library exports.
++    # Compiling the template anyway is what produces "no member named
++    # GetWindowedAppCreator in namespace rex::ui".
++    if(ANDROID)
++        target_sources(${target_name} PRIVATE ${REXGLUE_SHARE_DIR}/rex_app.cpp)
++    else()
++        target_sources(${target_name} PRIVATE
++            ${REXGLUE_SHARE_DIR}/windowed_app_main_sdl.cpp
++            ${REXGLUE_SHARE_DIR}/rex_app.cpp)
++    endif()
+ 
+     target_compile_definitions(${target_name} PRIVATE
+         REXGLUE_BUILD_CONFIG="$<CONFIG>")
 diff --git a/include/rex/chrono/chrono.h b/include/rex/chrono/chrono.h
 index d876846..2cfb037 100644
 --- a/include/rex/chrono/chrono.h

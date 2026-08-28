@@ -94,8 +94,16 @@ endif()
 add_subdirectory(thirdparty)
 
 foreach(target IN LISTS REBLUE_TARGETS)
-    add_executable(${target})
-    set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE ON)
+    if(ANDROID)
+        # An APK loads a shared library from its Activity; nothing execs a
+        # binary. The SDK agrees - windowed_app.h switches REX_DEFINE_APP to the
+        # registration form on Android - so src/main.cpp needs no change, only
+        # the target type does.
+        add_library(${target} SHARED)
+    else()
+        add_executable(${target})
+        set_target_properties(${target} PROPERTIES WIN32_EXECUTABLE ON)
+    endif()
 endforeach()
 
 # OBJECT and never STATIC: an archive drops the REX_HOOK symbols.
