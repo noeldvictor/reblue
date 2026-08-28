@@ -51,6 +51,62 @@ path changed.
   reporting success. The dependency-free half of `src/xr/` exists partly so it can be reasoned about
   by reading.
 
+## Bootstrap: getting a tree that can actually build
+
+Two things are missing from a fresh clone, and both are obtainable in about a minute.
+
+**1. The SDK.** Public releases, no auth needed:
+
+```sh
+curl -sfL -o out/sdk/sdk.zip \
+  https://github.com/rexglue/rexglue-sdk/releases/download/v0.10.0/rexglue-sdk-0.10.0-win-amd64.zip
+unzip -q out/sdk/sdk.zip -d out/sdk    # -> out/sdk/win-amd64/{bin,include,lib,cmake}
+```
+
+`v0.10.0` is what `generated/rexglue.cmake` pins. Slices exist for `linux-amd64`, `linux-arm64`,
+`mac-amd64`, `mac-arm64` too. **There is no `android-arm64` slice** — that one has to be
+cross-built from source, and it gates the whole Android target.
+
+**2. `assets/default.xex`,** from your own Blue Dragon disc. It is ~8 MB inside a 7.8 GB ISO, so do
+not copy the disc:
+
+```sh
+python tools/extract_xex.py "path/to/Blue Dragon (Disc 1).iso"
+# or straight off a connected handheld, without pulling the ISO at all:
+MSYS_NO_PATHCONV=1 python tools/extract_xex.py --adb-serial <serial> \
+    --adb "$ADB" "/storage/XXXX-XXXX/Roms/xbox360/.../Blue Dragon (Disc 1).iso"
+```
+
+It walks XDVDFS and reads only the sectors the file occupies. Under a second over USB.
+
+> **`MSYS_NO_PATHCONV=1` is not optional in Git Bash.** MSYS rewrites any argument that starts with
+> `/` into a Windows path before Python sees it, so an on-device path silently becomes something
+> like `C:/Program Files/Git/storage/...` and `dd` returns zero bytes. The symptom is an
+> unexplained short read, not an error.
+
+Then codegen, which takes about 7 seconds:
+
+```sh
+out/sdk/win-amd64/bin/rexglue.exe codegen reblue_manifest.toml
+```
+
+219 files into `generated/`. It is deterministic — a re-run on the same xex reports
+"0 written, 219 unchanged", which is also the quickest way to confirm an extraction was correct.
+
+Both `assets/` and `generated/` carry their own `.gitignore` containing `*`, so the game
+executable and the recompiled guest code can never be committed. Do not weaken that.
+
+## Compile-checking without a full build
+
+A full Windows build additionally needs vcpkg (`find_package(directx-dxc CONFIG REQUIRED)` is
+unconditional on WIN32, even for the Vulkan-only target). Short of that, individual sources can be
+syntax-checked against the real SDK headers, which catches nearly everything:
+
+```sh
+CLANG="C:/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin/clang++.exe"
+"$CLANG" -std=c++23 -fsyntax-only -I. -Isrc -Iout/sdk/win-amd64/include -Igenerated src/xr/xr_settings.cpp
+```
+
 ## Verify without the SDK
 
 A full build is impossible in this tree, but `xr_math.h` depends on nothing but the integer
