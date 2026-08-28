@@ -108,6 +108,22 @@ reintroduce a reach into the cvar singleton from either file.
 left-handed with +Z forward, row-vector, row-major. They differ by a mirror on Z. Everything
 crossing that boundary goes through `FromOpenXRPose` in `xr_math.h`. Do not convert at a call site.
 
+## Android / Quest state
+
+The Android target builds and runs on a Quest 2. `tools/build_apk.sh` packages it, game data comes
+from `tools/extract_game_data.py`, and `args.txt` beside the game data appends cvars without
+rebuilding the APK - use it, a 62 MB reinstall to change a log level is not a dev loop.
+
+It gets as far as: XEX loaded, 154 kernel imports patched, guest heap up, VFS mounting 70008 records
+of real game data, Vulkan 1.1 on the Adreno 650, swapchain created. It then crashes in
+`BuildPipelineLayout`, and the cause is architectural rather than a porting gap: `kBindlessTextureCount`
+is **65536**, and the Quest 2 is a Vulkan 1.1 device where descriptor indexing is optional and mobile
+descriptor limits are far lower. See `research/20260828_1720_quest-bindless-blocker.md`.
+
+Diagnostics that exist now and should be used before guessing: the SDK logs to logcat on Android
+(spdlog android_sink), `crash_handler.cpp` unwinds with `_Unwind_Backtrace` and reports the faulting
+PC from the signal context, and the on-device log lives under the app's external files directory.
+
 ## Dev loop
 
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or

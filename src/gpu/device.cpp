@@ -379,19 +379,24 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       BD_ERROR("Plume createSwapChain failed");
       return false;
     }
+    BD_INFO("[device] BuildFramebuffers");
     if (!BuildFramebuffers(s)) {
       return false;
     }
+    BD_INFO("[device] BuildPresentSemaphores");
     if (!BuildPresentSemaphores(s)) {
       return false;
     }
+    BD_INFO("[device] BuildPipelineLayout");
     if (!BuildPipelineLayout(s)) {
       return false;
     }
+    BD_INFO("[device] BuildCopyPipeline");
     if (!BuildCopyPipeline(s)) {
       return false;
     }
     // overlay drawer uploads textures through this
+    BD_INFO("[device] TryInit (shader constants)");
     if (!TryInit()) {
       BD_ERROR("TryInit failed, shader constants disabled");
     }
@@ -402,6 +407,7 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
   }
 
   // Must precede any HostResourceHeap::Alloc.
+  BD_INFO("[device] HostHeap::Init");
   if (!bd::gpu::HostHeap::Get().Init()) {
     BD_ERROR("HostHeap init failed");
     return false;
@@ -411,6 +417,7 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
   // calling SetRenderTarget (RT[0] is implicitly the back buffer on X360), so
   // BindDrawFramebuffer falls back to s.back_buffer_surface for such draws.
   {
+    BD_INFO("[device] allocating back buffer placeholder in guest memory");
     auto *bb = bd::gpu::HostResourceHeap::Alloc<bd::gpu::GuestTexture>(
         bd::gpu::ResourceType::RenderTarget);
     if (!bb) {
