@@ -221,6 +221,14 @@ foreach(target IN LISTS REBLUE_COMMON_TARGETS REBLUE_TARGETS)
 endforeach()
 
 foreach(target IN LISTS REBLUE_TARGETS)
+    if(ANDROID)
+        # The NDK links with --gc-sections by default. The REX_HOOK and REX_FUNC
+        # registrations are static objects nothing refers to by name - they exist
+        # purely for their constructors - which is exactly what section garbage
+        # collection removes. This is the same hazard the OBJECT-not-STATIC
+        # comment above guards against, arriving by a different route.
+        target_link_options(${target} PRIVATE "-Wl,--no-gc-sections")
+    endif()
     if(WIN32)
         target_sources(${target} PRIVATE res/windows/reblue.rc res/windows/reblue.manifest)
     endif()

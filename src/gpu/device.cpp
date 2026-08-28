@@ -361,9 +361,12 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
 
     // kNumFrames + 1: a flip model swapchain needs one back buffer beyond the
     // frames in flight so acquiring N+1 never waits on scanout.
+    BD_INFO("[device] creating swap chain (window {})",
+            static_cast<const void *>(render_window));
     plume::RenderSwapChainDesc desc(
         render_window, plume::RenderFormat::B8G8R8A8_UNORM, kNumFrames + 1);
     s.swap_chain = s.queue->createSwapChain(desc);
+    BD_INFO("[device] swap chain created");
 #if !defined(REBLUE_D3D12)
     // plume's VulkanSwapChain defers VkSwapchain creation to resize(), so a
     // fresh swapchain is always empty until the first resize. The D3D12 backend

@@ -49,10 +49,46 @@ public class ReblueActivity extends SDLActivity {
         // runtime calls GetUserFolder(), which on POSIX consults XDG_DATA_HOME,
         // then HOME, then getpwuid_r - none of which mean anything for an
         // Android app, whose only writable home is this directory.
-        return new String[] {
-            "--game_data_root", game.getAbsolutePath(),
-            "--user_data_root", external.getAbsolutePath(),
-            "--cache_root", new File(external, "cache").getAbsolutePath(),
-        };
+        java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        args.add("--game_data_root");
+        args.add(game.getAbsolutePath());
+        args.add("--user_data_root");
+        args.add(external.getAbsolutePath());
+        args.add("--cache_root");
+        args.add(new File(external, "cache").getAbsolutePath());
+        args.addAll(readExtraArgs(external));
+        return args.toArray(new String[0]);
+    }
+
+    /**
+     * Extra arguments from args.txt beside the game data, one per line.
+     *
+     * Rebuilding and reinstalling a 62 MB APK to change a log level is a
+     * miserable way to debug. This makes any cvar reachable with a single adb
+     * push, which is the difference between a two minute loop and a five second
+     * one.
+     */
+    private java.util.List<String> readExtraArgs(File external) {
+        java.util.ArrayList<String> extra = new java.util.ArrayList<>();
+        File file = new File(external, "args.txt");
+        if (!file.isFile()) {
+            return extra;
+        }
+        try (java.io.BufferedReader reader =
+                 new java.io.BufferedReader(new java.io.FileReader(file))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.trim();
+                // '#' comments out a line, so options can be parked rather than
+                // deleted.
+                if (!line.isEmpty() && !line.startsWith("#")) {
+                    extra.add(line);
+                }
+            }
+            android.util.Log.i("reblue", "args.txt added " + extra.size() + " argument(s)");
+        } catch (java.io.IOException e) {
+            android.util.Log.w("reblue", "could not read " + file + ": " + e);
+        }
+        return extra;
     }
 }
