@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.reblue"
+    android:versionCode="1"
+    android:versionName="1.0.0">
+
+    <!-- 29 is the floor the native build targets. Quest 2 reports 32, the
+         AYN Thor 33. -->
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="33" />
+
+    <uses-feature android:name="android.hardware.vulkan.version" android:required="true" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="false" />
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <!-- Game data is side-loaded rather than imported through the Storage
+         Access Framework; see the content-URI stub in the SDK patch. -->
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+
+    <application
+        android:label="re:Blue"
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:extractNativeLibs="true">
+
+        <activity
+            android:name="com.reblue.ReblueActivity"
+            android:exported="true"
+            android:label="re:Blue"
+            android:launchMode="singleTask"
+            android:screenOrientation="landscape"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenSize|screenLayout|uiMode|navigation">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
