@@ -13,6 +13,18 @@ cmake_dependent_option(REBLUE_D3D12
 cmake_dependent_option(REBLUE_VULKAN_EXE
     "Build reblue_vk.exe alongside the D3D12 one" ON "WIN32;REBLUE_D3D12" OFF)
 option(REBLUE_BUILD_INSTALLER "Build the built-in first-run disc installer" ON)
+# OpenXR is Vulkan-only and off by default: the flat renderer is what ships, and
+# a tree without the loader still has to configure. The camera maths and the
+# settings compile either way, since neither reaches an OpenXR header - only the
+# session, swapchain, frame loop and input do, and those are listed in
+# src/CMakeLists.txt as reblue_openxr_only.
+#
+# Gated on a Vulkan-only configure rather than on "some Vulkan target exists",
+# because the sources would otherwise reach reblue.exe as well. On Windows that
+# means the win-vk preset, which is the one to develop VR against anyway:
+#   cmake --preset win-vk-release -DREBLUE_OPENXR=ON
+cmake_dependent_option(REBLUE_OPENXR
+    "Build the OpenXR session and stereo renderer" OFF "NOT REBLUE_D3D12" OFF)
 option(REBLUE_PSO_CAP "Compile in the PSO predictor-miss capture instrument" OFF)
 option(REBLUE_PROFILING "Compile in Tracy zones (never in Release)" ON)
 option(REBLUE_PCH "Precompile the hot shared headers" ON)

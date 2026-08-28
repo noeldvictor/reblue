@@ -53,7 +53,7 @@ Useful targets:
 
 Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Windows),
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
-`REBLUE_PCH`.
+`REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
 ## Layout
 
@@ -62,7 +62,9 @@ CMakeLists.txt          hand-edited; "rexglue migrate" will not touch it
 cmake/                  shader compilation, codegen wiring, embedding, build info
 config/                 the manifest's function map and per-feature hook tables (TOML)
 generated/rexglue.cmake SDK boilerplate — auto-generated, do not edit
+docs/                   VR_PORT_PLAN.md, the working plan for this fork
 reblue_manifest.toml    entrypoint, hook includes, recompiler flags
+research/               dated research notes - see Research notes below
 src/                    all host code
 thirdparty/             plume (render backend), XenosRecomp, implot, stb, zstd, miniz, ...
 ```
@@ -79,6 +81,24 @@ thirdparty/             plume (render backend), XenosRecomp, implot, stb, zstd, 
 | `src/ui/` | `bd::ui` | ImGui-based overlays and dialogs |
 | `src/audio/` | `bd::audio` | audio settings and debug |
 | `src/installer/` | `bd::installer` | the first-run disc wizard (desktop-only, `REBLUE_BUILD_INSTALLER`) |
+| `src/xr/` | `bd::xr` | VR: head pose to per-eye matrices, camera modes, world scale, XR settings |
+
+`src/xr/` splits deliberately. `xr_math.h`, `xr_camera.*` and `xr_settings.*` reach no OpenXR
+header, so they compile in every configuration and can be reasoned about without a headset — the
+coordinate conversion and the camera composition are the parts most likely to be subtly wrong, and
+keeping them dependency-free is what makes them checkable. The session, swapchain, frame loop and
+input go in `reblue_openxr_only` in `src/CMakeLists.txt` and build only under `REBLUE_OPENXR`.
+
+**Handedness lives in one place.** OpenXR is right-handed with -Z forward; Blue Dragon is D3D9-era
+left-handed with +Z forward, row-vector, row-major. They differ by a mirror on Z. Everything
+crossing that boundary goes through `FromOpenXRPose` in `xr_math.h`. Do not convert at a call site.
+
+## Research notes
+
+Findings from web research go in `research/` as `YYYYMMDD_HHMM_<slug>.md`, dated at the time of
+writing, with the sources linked at the end. They are a log, not a wiki: write a new file rather
+than editing an old one, so what was believed when a decision was made stays legible. When research
+changes the plan, say so in the note *and* update `docs/VR_PORT_PLAN.md`.
 
 ## How the guest is patched
 
@@ -213,7 +233,9 @@ fixed foveated rendering (`XR_FB_foveation`, large and nearly free) and Applicat
 luckiest fact about the project — these addresses do not need finding:
 
 - `bdCameraViewSetMatrices` (`0x82135228`) — the interception point; sets view and projection together
-- `bdCameraViewFrustumTest` (`0x82135030`) — culling, must be widened or head-turning pops geometry
+- `bdCameraViewFrustumTest` (`0x82135030`) — culling. Test once against a volume enclosing *both*
+  eyes plus a head-motion margin, not twice per eye and not a single eye's frustum scaled up; that
+  is what the VR industry converged on and it costs about half what per-eye queries do
 - `bdBuildProjectionMatrix` (`0x82168E18`) — already hooked by `config/hooks/output_resolution.toml`
 - `bdFieldCameraSetupFollow` (`0x821B1A58`), `bdCameraLookAt*`, `bdScriptOpCameraControl` — the
   game's own camera logic, which third-person mode suppresses
@@ -236,11 +258,16 @@ right. Do not attempt to invent a VR renderer on a device with no debugger.
 
 ### Order of work
 
-1. Fork `zolaware/plume` and find the Vulkan device-creation seam. OpenXR must dictate instance
-   extensions, device extensions, and physical device; plume creates the device today. This gates
-   everything VR.
-2. Stand up `src/xr/` (namespace `bd::xr`) behind a `REBLUE_OPENXR=OFF` default so the tree stays
-   green. Backend-dependent, so it belongs in `reblue_backend_only`.
+1. Fork `zolaware/plume` and widen the Vulkan device-creation seam. **Located** — it is smaller
+   than feared. In `thirdparty/plume/plume_vulkan.cpp`: `VulkanInterface::VulkanInterface()` builds
+   `enabledExtensions` from a required plus optional list before `vkCreateInstance`, and
+   `VulkanDevice::VulkanDevice(VulkanInterface *, const std::string &preferredDeviceName)` selects
+   the adapter *by name* before `VkDeviceCreateInfo`. So OpenXR needs three things threaded through
+   `CreateVulkanInterface()`: extra instance extensions, extra device extensions, and an explicit
+   `VkPhysicalDevice` rather than a name. Note `appInfo.apiVersion` is `VK_API_VERSION_1_2` and must
+   satisfy `xrGetVulkanGraphicsRequirements2KHR`. This still gates everything VR.
+2. `src/xr/` skeleton — **done** for the dependency-free half (maths, camera, settings, wired into
+   `ReblueApp::OnPostInitLogging`). The OpenXR half is next.
 3. Black stereo frame on the Quest over Link, from the desktop Vulkan build.
 4. Stereo scene rendering, then the 6DOF camera and its modes.
 5. In parallel and independently, because it is pure information and the longest pole: attempt the

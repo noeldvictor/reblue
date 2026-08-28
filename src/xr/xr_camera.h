@@ -1,0 +1,138 @@
+/**
+ * @file    xr/xr_camera.h
+ * @brief   Turns a head pose and the game's own camera into the per-eye view
+ *          and projection matrices the guest renderer is handed.
+ *
+ * @copyright Copyright (c) 2026 re:Blue contributors
+ * @license   BSD 3-Clause - see LICENSE
+ */
+#pragma once
+
+#include <rex/types.h>
+
+#include "xr/xr_math.h"
+
+namespace bd::xr {
+
+// Where the camera sits relative to the party. The mode decides the anchor;
+// the head pose always offsets freely from whatever that anchor turns out to
+// be, because taking control away from someone's neck is how you make them
+// sick.
+enum class CameraMode : i32 {
+  // Anchor at the player character's head. Blue Dragon's animations are
+  // authored for a camera that is somewhere else entirely, so this needs the
+  // heaviest smoothing of the four and is still going to be a novelty.
+  FirstPerson = 0,
+  // Anchor floats behind and above the character. The default: it keeps the
+  // game's framing legible while letting the player lean in and look around.
+  ThirdPerson = 1,
+  // Anchor detaches from the character and the world scales down hard. The
+  // most comfortable mode by a distance, because it sidesteps every problem
+  // caused by the game's authored camera framing.
+  Diorama = 2,
+  // Not a 3D camera at all: the flat image on a world-locked screen. Handled
+  // by the compositor rather than here, and listed so the enum covers every
+  // value bd_vr_camera_mode can hold.
+  Cinema = 3,
+};
+
+// What the game itself wanted this frame, read off bdCameraViewSetMatrices
+// before we overwrite it. Kept because several modes still want the game's
+// opinion: its position is the anchor in Diorama, and its yaw is what a
+// recentre lines the player up with.
+struct GameCamera {
+  Vec3 position;
+  // Forward and up as the guest computed them, already in game space.
+  Vec3 forward{0.0f, 0.0f, 1.0f};
+  Vec3 up{0.0f, 1.0f, 0.0f};
+};
+
+// The party leader's world transform, for the anchor in the two attached
+// modes. Supplied by the engine layer; the camera does not go looking for it.
+struct CharacterAnchor {
+  Vec3 position;   // feet, game units
+  f32 eyeHeight = 0.0f; // game units above position
+  f32 facingYaw = 0.0f; // radians about +Y
+  bool valid = false;
+};
+
+// One eye's worth of output, ready for the hook to byte-swap into guest memory.
+struct EyeMatrices {
+  Mat4 view;
+  Mat4 projection;
+};
+
+// Stateless per frame apart from the recentre offset and the smoothed anchor,
+// both of which have to persist across frames by definition.
+class Camera {
+public:
+  static Camera &Get();
+
+  // Latches what the game asked for. Called from the bdCameraViewSetMatrices
+  // hook before the override is composed.
+  void SubmitGameCamera(const GameCamera &cam);
+
+  // Latches the party leader's transform. Called from the field update once
+  // per frame; safe to never call, in which case the attached modes fall back
+  // to the game camera's own position.
+  void SubmitCharacter(const CharacterAnchor &anchor);
+
+  // Latches the head pose for this frame, in OpenXR space and metres. Converts
+  // and stores; does not compose.
+  void SubmitHeadPose(const Pose &openxrPose);
+
+  // Composes one eye. eyePose is the runtime's per-eye pose, in OpenXR space,
+  // and already carries the IPD offset, so we never reconstruct it ourselves.
+  EyeMatrices ComposeEye(const Pose &openxrEyePose, const Fov &fov) const;
+
+  // Yaw the player should walk relative to: the head's yaw, flattened, plus
+  // the recentre offset. Locomotion resolves the stick against this rather
+  // than against the game camera, or "forward" means whatever the game last
+  // decided and the player fights it.
+  f32 LocomotionYaw() const;
+
+  // Aligns the player's current facing with the game camera's, and drops the
+  // accumulated positional drift. Bound to a button, and called once on mode
+  // change so a switch does not leave the player facing a wall.
+  void Recenter();
+
+  // Snap turn, in radians, applied to the recentre yaw.
+  void ApplyTurn(f32 radians);
+
+  CameraMode Mode() const { return mode_; }
+  void SetMode(CameraMode mode);
+
+private:
+  Camera() = default;
+
+  // Anchor position and yaw in game space for the current mode, before the
+  // head pose is added.
+  Pose ComposeAnchor() const;
+
+  // Head offset in metres becomes an offset in game units. Two factors, and
+  // they mean different things: units-per-metre is a property of the game we
+  // have to measure, world scale is a preference about how big the world
+  // should feel.
+  f32 HeadOffsetScale() const;
+
+  CameraMode mode_ = CameraMode::ThirdPerson;
+
+  GameCamera gameCamera_;
+  CharacterAnchor character_;
+
+  // Head pose, already converted to game space, still in metres.
+  Pose head_;
+
+  // Applied to everything the head contributes, so the player can face the way
+  // the game intends without physically turning around.
+  f32 recenterYaw_ = 0.0f;
+  Vec3 recenterOffset_;
+
+  // Low-passed anchor, because the raw one snaps whenever the game cuts its
+  // camera and an unsmoothed cut straight into the eyes is the single most
+  // reliable way to make someone take the headset off.
+  mutable Vec3 smoothedAnchor_;
+  mutable bool smoothedValid_ = false;
+};
+
+} // namespace bd::xr

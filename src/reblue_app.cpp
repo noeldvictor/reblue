@@ -48,6 +48,7 @@
 #include "installer/installer.h"
 #include "platform/platform.h"
 #include "vfs/vfs.h"
+#include "xr/xr.h"
 
 #ifdef REBLUE_BUILD_INSTALLER
 REXCVAR_DEFINE_BOOL(
@@ -329,6 +330,7 @@ void ReblueApp::OnPostInitLogging() {
   bd::ui::Settings::Get().Init();
   bd::engine::Settings::Get().Init();
   bd::engine::GameOptions::Get().Init();
+  bd::xr::Settings::Get().Init();
 
   bd::engine::Achievements::Init();
 

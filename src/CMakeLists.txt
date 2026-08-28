@@ -30,6 +30,12 @@ set(reblue_d3d12_only
     gpu/shaders/shader_linker.cpp
     gpu/shaders/shader_linker.h)
 
+# The parts of src/xr that reach an OpenXR header, and so only compile when the
+# loader is present. xr_camera and xr_settings are deliberately not here: the
+# camera composition is plain maths and the settings are plain cvars, so both
+# build in every configuration and stay testable without a headset attached.
+set(reblue_openxr_only)
+
 set(reblue_installer_only
     installer/disc_install.cpp
     installer/disc_install.h
@@ -41,11 +47,17 @@ set(reblue_installer_only
     installer/upgrade_prompt.h)
 
 list(REMOVE_ITEM reblue_all
-     ${reblue_backend_only} ${reblue_d3d12_only} ${reblue_installer_only})
+     ${reblue_backend_only} ${reblue_d3d12_only} ${reblue_installer_only}
+     ${reblue_openxr_only})
 
 reblue_sources(${reblue_all})
 reblue_backend_sources(${reblue_backend_only})
 reblue_d3d12_sources(${reblue_d3d12_only})
 if(REBLUE_BUILD_INSTALLER)
     reblue_sources(${reblue_installer_only})
+endif()
+# Backend sources, not common ones: the session hands plume the physical device
+# and extension list the runtime demands, so it is Vulkan-specific by nature.
+if(REBLUE_OPENXR AND reblue_openxr_only)
+    reblue_backend_sources(${reblue_openxr_only})
 endif()

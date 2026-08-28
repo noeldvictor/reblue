@@ -186,8 +186,23 @@ write the constant down here once it is known.
 
 `bdCameraViewFrustumTest` (`0x82135030`) tests against the game's frustum. Once the head can look
 away from where the game thinks the camera points, geometry pops out of existence at the edges.
-Fix: hook it and expand the test frustum by `bd_vr_cull_expand`, or force it to pass in VR and
-accept the draw-call cost. Start with force-pass to prove the camera works, then tighten.
+
+**Test once against a volume enclosing both eyes**, plus a head-motion margin
+(`bd_vr_cull_expand`) — not twice per eye, and not a single eye's frustum scaled up. An object
+occluded for one eye can be visible to the other, so per-eye testing is the only *correct*
+alternative and it costs twice as much; a combined volume is correct for both viewpoints at roughly
+half the price. This is what Umbra's stereo camera does and what the industry converged on. Start by
+forcing the test to pass, to prove the camera works, then tighten to the combined volume.
+
+Two follow-ups from the same research, both for Phase 8: **round-robin occlusion** (alternate the
+queried eye each frame, trading a frame of visibility latency for half the queries) as a fallback if
+combined volumes prove too conservative, and **hybrid mono rendering** (render distant geometry once
+monoscopically, since stereo separation is imperceptible past a certain distance) which for a JRPG
+with large outdoor areas and a skybox could be a significant win.
+
+Watch `src/gpu/occlusion.cpp` and the guest's own queries (`bdCameraCheckAllPointsVisible`,
+`pfx_occlusion_count_ps`) — those double under two-pass stereo, and if the eyes disagree about
+whether a lens flare is occluded it will flicker.
 
 Same class of problem for LOD selection and shadow cascade fitting — both are camera-derived.
 
