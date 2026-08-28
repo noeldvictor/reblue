@@ -228,6 +228,7 @@ table first, because it is the part that gets stale.
 | OpenXR session, quad layer, world-locked and correctly placed | Works |
 | Head pose driving the guest's own view matrix | Works |
 | Touch controllers as a guest gamepad | Works |
+| Runs at 30 fps, the game's native rate | Works |
 | Stereo projection layer, per-eye render | **Not started** |
 | Cel shading, tourist mode | **Not started** |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
@@ -250,6 +251,26 @@ Three lessons from getting this far, all of which cost hours and all of which re
 See `research/20260828_1900_vr-camera-and-input.md` for the detail, including the hook seams
 (`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
 controllers are invisible to SDL.
+
+### The Quest frame budget
+
+**The GPU is 97% idle.** At the Android defaults a frame is 32ms, of which 1ms is the GPU fence and
+17ms is guest simulation and command recording. This inverts the usual mobile-VR advice, so before
+optimising anything, read `research/20260828_2010_quest-frame-budget.md`:
+
+- Shaders, fixed foveated rendering, ASTC transcoding and MSAA replacements all save **nothing**
+  right now. They are GPU-side, and the GPU finishes in 1ms.
+- LOD and culling are the exception, because they cut draw calls, which is CPU.
+  `bdCameraViewFrustumTest` (0x82135030) is the seam and is already named.
+- Fixed foveation becomes worth having *after* stereo, when the scene is drawn twice. Quest 2 has no
+  eye tracking, so `XR_FB_foveation` is fixed-only.
+
+Two defaults exist because of that note, and both are Android-only: `bd_max_render_height` 720 (the
+renderer otherwise sizes the scene to the 3664x1920 headset panel, costing 119ms a frame for a
+1280x720 game) and `bd_shadow_dimension` 1024. MSAA deliberately stays at 4x.
+
+**A near-zero GPU fence does not mean the GPU is idle.** It means the GPU was not the last thing
+waited on. A blocking present upstream hides the entire cost.
 
 ### What already works
 
