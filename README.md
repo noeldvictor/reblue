@@ -33,8 +33,9 @@ can wander around and look at it instead of fighting things.
 
 ## What this fork is trying to do
 
-Roughly in priority order. **It boots into VR on a Quest 2 with working controllers**; whether it
-plays through is untested. A clone needs two things before it can
+Roughly in priority order. **It boots into VR on a Quest 2, takes controller input, and a new game
+starts.** It is not playable: gameplay runs at 4-8 fps, and what you see is still a flat screen
+hanging in space rather than a world around you. A clone needs two things before it can
 build — the ReXGlue SDK (a public release) and `default.xex` from your own disc, which
 `tools/extract_xex.py` lifts out of an ISO in under a second without copying it.
 
@@ -54,7 +55,10 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — game data on device | **Done** | 3.2 GB extracted from disc 1 with `tools/extract_game_data.py`, driven by re:Blue's own install manifest. The VFS mounts 1274 archives / 70008 records. |
 | — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
 | **Quest 2 VR** | **Renders in VR** | Blue Dragon hangs in space in front of you as a world-locked screen, in stereo, at a readable size. Not yet *stereo 3D*: the game renders once, from one eye, so it is a cinema screen rather than a world you are inside. |
-| — performance | **30 fps, the game's native rate** | Was 6.7. The renderer was drawing a 1280x720 game at the 3664x1920 headset panel resolution, and the flat Android present - a surface a headset never shows - was costing 124ms of every 150ms frame. The GPU is now 97% idle. |
+| — performance, title screen | **30 fps, the game's native rate** | Was 6.7. The renderer was drawing a 1280x720 game at the 3664x1920 headset panel resolution, and the flat Android present - a surface a headset never shows - cost 124ms of every 150ms frame. |
+| — performance, in game | **4-8 fps** | A different problem, and the honest headline. ~180ms per frame is CPU - the recompiled PowerPC - against ~1ms on the GPU. Shader and texture work cannot touch it. |
+| — mono projection layer | **Built, never seen render** | Replaces the floating quad so the world surrounds you instead of hanging in front of you. Committed; the one capture of it was black, a NaN was fixed after that, and the headset went offline before a retest. |
+| — character-anchored camera | **Does not work** | `SubmitCharacter()` is never called, so third-person and first-person quietly fall back to the game's own camera. |
 | — controllers | **Working** | Touch controllers are not Android gamepads — they exist only as OpenXR actions, which is why SDL reported no pad and `adb input keyevent` did nothing. 13 actions, Touch bindings, presented to the guest as a 360 pad. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |

@@ -268,6 +268,46 @@ diagnosing a slow build. The short version:
   first run. Keep new maths in the dependency-free files so it stays reachable from here, and extend
   the test when it lands.
 
+## Reading the guest: the recompilation already did it
+
+**Do not install a decompiler.** `generated/` holds the entire XEX translated to C++ - 223 files,
+about 110 MB, **18,777 functions** - with the original PowerPC interleaved as comments and every
+address from `config/functions.toml` applied as a real name. It is exact rather than reconstructed,
+it is named, and it answers the question a decompiler is usually opened for: struct offsets.
+
+```sh
+grep -rln "DEFINE_REX_FUNC(bdPlayerFieldMovementUpdate)" generated/
+```
+
+```c
+	// mr r31,r3
+	r31.u64 = ctx.r3.u64;                     // r3 is the first argument
+	// lwz r11,7224(r31)
+	r11.u64 = REX_LOAD_U32(r31.u32 + 7224);   // and 7224 is a field in it
+```
+
+`ctx.r3` is the first argument, `r4` the second - the same register names `config/hooks/*.toml`
+lists, so a hook body and the generated source read against each other directly. **Invoke the
+`guest-source` skill** before going looking for anything in the original binary.
+
+It is a build product: never edit it, never commit it, and if it rebuilds unexpectedly a codegen
+input changed.
+
+## Rewriting the recompilation is in scope
+
+The owner has explicitly put the generated guest code on the table for performance work, and that
+matters, because **the in-game bottleneck is not the GPU**. A field scene costs ~180ms of CPU
+against ~1ms on the GPU fence, and that CPU is the recompiled PowerPC. Shaders, foveated rendering
+and texture formats cannot touch it - they are all GPU-side, and the GPU is asleep.
+
+So the expensive options are allowed: changing what codegen emits, hand-writing hot functions as
+host `REX_FUNC` implementations (the mechanism exists and `config/functions.toml` already names 1608
+candidates), or cutting work a VR port does not need the guest to do at all.
+
+**Measure before rewriting anything.** Find which functions actually hold the 180ms first. Two
+sessions have now been spent optimising things that turned out to cost nothing, and the frame
+budget section above is the record of it.
+
 ## Research notes
 
 Findings from web research go in `research/` as `YYYYMMDD_HHMM_<slug>.md`, dated at the time of
@@ -342,19 +382,40 @@ table first, because it is the part that gets stale.
 | SDK cross-built for android-arm64, APK, install, launch | Works |
 | XEX load, kernel imports, guest heap, VFS over real game data | Works |
 | Vulkan on Adreno 650, swapchain, pipelines | Works |
-| OpenXR session, quad layer, world-locked and correctly placed | Works |
-| Head pose driving the guest's own view matrix | Works |
-| Touch controllers as a guest gamepad | Works |
-| Runs at 30 fps, the game's native rate | Works |
-| Stereo projection layer, per-eye render | **Not started** |
-| Cel shading, tourist mode | **Not started** |
+| OpenXR session, quad layer, world-locked and correctly placed | Works, seen |
+| Touch controllers as a guest gamepad | Works, drives the game |
+| Head pose driving the guest's own view matrix | Works, seen moving |
+| Full three-disc game data, a new game starts | Works |
+| Title screen at 30 fps | Works |
+| **In-game frame rate** | **4-8 fps, and ~180ms of it is CPU** |
+| **Mono projection layer - the "in the world" mode** | **Built, never seen render** |
+| **Character-anchored camera modes** | **Do not work** |
+| Stereo, per-eye render | Not started |
+| Cel shading, tourist mode | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
+
+Three of those rows need saying plainly rather than being read past:
+
+- **`SubmitCharacter()` is never called.** `CharacterAnchor` has no source, so `ThirdPerson` and
+  `FirstPerson` fall back to the game's own camera position. The character-anchored modes do not do
+  what their names say.
+- **The projection layer has never been observed producing an image.** It is built, committed, and
+  replaces the quad in every non-Cinema mode. The one capture taken of it was black; a NaN was found
+  and fixed after that, and the headset went offline before a retest.
+- **30 fps is the title screen.** Gameplay is 4-8 fps.
 
 What the player sees is still a flat image on a world-locked screen: the game renders once, from one
 eye. The camera modes in `src/xr/xr_camera.cpp` are composed and delivered every frame, so the
 plumbing for 6DOF is live — but genuine stereo needs the guest's scene rendered twice per frame, or
 per-view matrices reaching shaders whose constants XenosRecomp already baked. That is a renderer
 change, not an XR one, and it is the next real piece of work.
+
+**Verify the pixels, not a proxy.** Got wrong repeatedly here, so it is a rule now. "13 input
+actions attached" is not "controllers work". "Swapchain format 37" is not "the colour is right". A
+clean build is not a working feature. Each of those was reported as success on the strength of a log
+line, and each was wrong or unverified. A VR claim is verified when a screenshot has been looked at
+or a number read off a run - and `bd_xr_autoplay` exists so that needs nobody in the headset. Say
+"built, unverified" otherwise. That is not a weaker claim, it is an accurate one.
 
 Three lessons from getting this far, all of which cost hours and all of which recur:
 
