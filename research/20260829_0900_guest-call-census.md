@@ -190,3 +190,52 @@ first thing in this investigation to do so.
 from a single autoplay run. It still is not a battle - five characters and enemies would be the real
 test of `bdAnimBoneEvaluate`, which has been suspiciously steady at ~61 calls across both scenes and
 is presumably per-character.
+
+## On the device, in VR, the answer is far starker
+
+Everything above was measured on the desktop build. Run on a Quest, in the VR scene, at the best
+known configuration (`render_scale=25, reflections=false, cull_bias=0.6`):
+
+```
+per frame, over 150 frames:
+  bdSceneNodeDrawSingle          2084 calls   16130160 bytes of guest code
+  bdAnimBoneEvaluate              126 calls     706608
+  bdAnimationUpdate               112 calls     203840
+  bdMatrixInverse4x4               14 calls       7952
+  ScriptManTaskUpdate               1 call       14068
+  bdFieldInteractionSearch          3 calls      17724
+  everything else                 0-1 calls     negligible
+```
+
+**`bdSceneNodeDrawSingle` is 23x the next consumer**, where the desktop showed 1.9x. 2084 calls a
+frame against 2891 draws - close to one node per draw - and 16 megabytes of guest code executed per
+frame in that one function.
+
+The desktop census got the *winner* right and badly understated the *margin*. Two field scenes on a
+PC gave 420 and 130 calls; the real VR scene gives 2084. Anyone tuning against the desktop numbers
+would have concluded animation was worth attacking too. It is not: at 706KB against 16.1MB it is
+noise.
+
+### The frame, fully attributed at last
+
+The renderer's own phases in the same run: `mutex 0.4ms, bindFB 2.0ms, flushState 10.5ms`.
+
+| | of ~56ms of CPU |
+| --- | --- |
+| draw recording (ours) | **~13ms** |
+| guest code | **~43ms**, overwhelmingly `bdSceneNodeDrawSingle` |
+
+So the CPU floor is not diffuse and it is not the recompiler in general. It is one guest function,
+walking two thousand scene nodes a frame, and it is where every remaining frame of headroom is.
+
+### Why cull_bias only bought 11%
+
+It removed 110 nodes of 3041. A radius bias culls the *small* ones, and the cost is per node rather
+than per pixel, so culling small nodes and large nodes is worth the same. The axis has to be
+something that removes *many* nodes - distance, or LOD, or whatever makes a JRPG field need two
+thousand of them in the first place.
+
+**Open question worth answering before writing any code**: why are there 2084 nodes? At one draw
+each with 144 vertices, this is a scene built from very many very small pieces. If they are
+individually placed props and foliage, distance culling should remove most of the far ones. If they
+are the same handful of meshes instanced across a terrain grid, the fix is batching, not culling.
