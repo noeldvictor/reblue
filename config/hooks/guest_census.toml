@@ -147,3 +147,32 @@ address = 0x8228259C
 name = "bdSceneCullDistanceHook"
 registers = ["r3"]
 after_instruction = false
+
+# The second path to bdSceneNodeDrawSingle, and the one that carries most of the
+# 2084 calls a frame. sub_82282608 sits immediately after bdSceneNodeCullTraverse
+# (0x82282490 + 0x178) and is its sibling: the same shape, a different visibility
+# test, and the node centre in r4 rather than r3.
+#
+#   addi r4,r1,80        ; r4 = the transformed centre    <- 0x82282754
+#   fmr   f1,f7          ; f1 = the world radius          <- 0x82282758
+#   bl    0x82392EC8     ; visibility test -> r3          <- 0x8228275C
+#   cmpwi r3,0                                            <- 0x82282760
+#   beq   0x82282780     ; not visible: skip the draw
+#   ...
+#   bl    0x8227FEE8     ; bdSceneNodeDrawSingle          <- 0x8228277C
+#
+# Addresses counted back from loc_82282780, which follows the draw call.
+# Culling only the first path left the draw count unmoved, which read as a
+# broken hook and was really the wrong population.
+
+[[midasm_hook]]
+address = 0x8228275C
+name = "bdSceneCullBiasHook2"
+registers = ["f1", "r4"]
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82282760
+name = "bdSceneCullDistanceHook"
+registers = ["r3"]
+after_instruction = false

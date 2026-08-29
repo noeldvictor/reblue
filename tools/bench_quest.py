@@ -227,6 +227,11 @@ def main():
               % (r["name"], r["frame"], r["fence"], r["elsewhere"],
                  1000.0 / r["frame"], r["draws"], delta))
 
+    if len(rows) > 1 and all(abs(r["frame"] - rows[0]["frame"]) < 0.05
+                             for r in rows):
+        print("WARNING: every configuration produced an identical frame "
+              "time. That is not a measurement - suspect stale logs or "
+              "settings that never reached the device.")
     print("\nA difference under ~30% is inside cross-restart noise, not a result.")
     print("'else' is the CPU floor: it does not move when the GPU is freed.")
 
