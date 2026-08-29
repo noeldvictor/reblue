@@ -39,6 +39,7 @@
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
 
@@ -230,11 +231,20 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // it again, so the frame subdivides once per pass - about six passes gave
   // roughly sixty vertical stripes. A post pass is a full-screen quad, three or
   // four vertices; scene geometry is not. That is the discriminator.
-  const bool scene_pass =
-      s.render_target != nullptr &&
-      s.render_target->width >= u32(bd::gpu::kDesignCanvasWidth) &&
-      s.render_target->height >= u32(bd::gpu::kDesignCanvasHeight) &&
-      args.vertexOrIndexCount > 6;
+  //
+  // The threshold has to follow bd_render_scale. Against a fixed design canvas,
+  // bd_render_scale=50 shrinks the scene target to 960x540, which falls under
+  // 1280x720, and stereo then silently does nothing - the two features were
+  // mutually exclusive, and they are precisely the pair that belong together
+  // because the render scale is what pays for stereo's doubled fill. Caught by
+  // screenshotting the combination, not by either feature's own test.
+  const u32 pct = u32(REXCVAR_GET(bd_render_scale));
+  const u32 min_w = u32(bd::gpu::kDesignCanvasWidth) * pct / 100u;
+  const u32 min_h = u32(bd::gpu::kDesignCanvasHeight) * pct / 100u;
+  const bool scene_pass = s.render_target != nullptr &&
+                          s.render_target->width >= min_w &&
+                          s.render_target->height >= min_h &&
+                          args.vertexOrIndexCount > 6;
   if (!REXCVAR_GET(bd_stereo) || !scene_pass) {
     emit();
     return;

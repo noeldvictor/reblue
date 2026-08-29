@@ -446,3 +446,28 @@ interpupillary distance. `bd::xr::LastGuestProjection()` now captures the guest'
 (45 degree horizontal fov, right-handed, -Z forward - the same handedness OpenXR uses), so deriving
 both from a real IPD and the runtime's per-view fov is the remaining step, and `xr_math` already has
 the maths with tests behind it.
+
+## The pre-flight that saved the device session
+
+Both `bd_render_scale` and `bd_stereo` were verified individually, on screen. The `all` preset runs
+them **together**, which is how they would actually be used - stereo doubles a fill-bound frame and
+the render scale is what pays for it - so the combination was screenshotted before taking any of it
+to a headset.
+
+**It rendered mono.** No stereo at all, silently, with `bd_stereo = true` set.
+
+The scene-pass gate in `DispatchDraw` tested `width >= kDesignCanvasWidth`, a fixed 1280. With
+`bd_render_scale=50` the scene target becomes 960x540, falls under the threshold, and stereo never
+applies to a single draw. **The two features were mutually exclusive**, and they are precisely the
+pair that belong together.
+
+Neither feature's own test could find this: each is correct alone. The draw count was right, both
+builds were green, nothing crashed, and no log line was wrong. Only looking at the combination
+found it.
+
+Fixed by scaling the threshold with `bd_render_scale`, and re-verified: the full combination -
+half-scale scene, no reflections, no shadows, stereo with parallax and convergence - renders
+correctly side by side.
+
+**Run the combination you intend to ship, and look at it.** Verifying features one at a time is
+necessary and is not sufficient.
