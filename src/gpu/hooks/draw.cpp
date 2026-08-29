@@ -149,6 +149,25 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   if (!bd::gpu::Video::BindDrawFramebufferLocked()) {
     return;
   }
+  // Whether this draw is scene geometry, decided before the flush because the
+  // shared constants are uploaded there and the multiview skew reads them.
+  //
+  // Both stereo paths need this and only one had it. The host patch below is
+  // gated on scene_pass already; the shader skew was not, so under multiview it
+  // ran in *every* vertex shader - including the full-screen quads of the post
+  // chain, which are drawn at w = 1, where a constant added to clip.x is a
+  // constant slide of the finished image rather than parallax. Measured as a
+  // uniform +38px of disparity at every depth, which is 2*separation at w = 1.
+  const u32 stereo_pct = u32(REXCVAR_GET(bd_render_scale));
+  const bool scene_pass =
+      s.render_target != nullptr &&
+      s.render_target->width >=
+          u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u &&
+      s.render_target->height >=
+          u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u &&
+      args.vertexOrIndexCount > 6;
+  s.stereoEligible = scene_pass;
+
   const auto t_fb = bd::gpu::DrawPhaseNow();
   if (!bd::gpu::Video::FlushRenderStateLocked(device_guest)) {
     return; // FlushRenderState logs its own reason
@@ -238,13 +257,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // mutually exclusive, and they are precisely the pair that belong together
   // because the render scale is what pays for stereo's doubled fill. Caught by
   // screenshotting the combination, not by either feature's own test.
-  const u32 pct = u32(REXCVAR_GET(bd_render_scale));
-  const u32 min_w = u32(bd::gpu::kDesignCanvasWidth) * pct / 100u;
-  const u32 min_h = u32(bd::gpu::kDesignCanvasHeight) * pct / 100u;
-  const bool scene_pass = s.render_target != nullptr &&
-                          s.render_target->width >= min_w &&
-                          s.render_target->height >= min_h &&
-                          args.vertexOrIndexCount > 6;
+  const u32 min_w = u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u;
+  const u32 min_h = u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u;
   if (!REXCVAR_GET(bd_stereo) || !scene_pass) {
     // Counted, because "stereo does nothing" has three different causes and
     // they are indistinguishable from the image: the cvar off, the scene-pass

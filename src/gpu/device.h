@@ -272,6 +272,13 @@ u32 CurrentRenderPassId();
 constexpr u32 kNumFrames = 2;
 
 struct VideoState {
+  // True while the draw being recorded is scene geometry rather than a
+  // full-screen post pass. Set per draw before the constants are flushed,
+  // because the multiview per-eye skew lives in the shared constants and must
+  // not reach a quad drawn at w = 1 - there a constant added to clip.x slides
+  // the whole finished image instead of producing parallax.
+  bool stereoEligible = false;
+
   // 'interface' is a Windows.h macro (#define interface struct).
   std::unique_ptr<plume::RenderInterface> render_iface;
   std::unique_ptr<plume::RenderDevice> device;

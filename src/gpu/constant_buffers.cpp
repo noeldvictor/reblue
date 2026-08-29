@@ -539,7 +539,11 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   //
   // bd_stereo does its per-eye work in UploadVertexShaderConstants instead, so
   // it must leave these at zero or the two mechanisms compound.
-  const bool stereo_on = REXCVAR_GET(bd_stereo_multiview);
+  // Multiview only, and only for scene geometry. The shader applies the skew
+  // unconditionally wherever these are non-zero, so gating has to happen here -
+  // which is the same gate the host's side-by-side patch already uses, and its
+  // absence is why multiview slid the whole image instead of adding depth.
+  const bool stereo_on = REXCVAR_GET(bd_stereo_multiview) && vs.stereoEligible;
   s.shared.stereoSeparation =
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
   s.shared.stereoConvergence =

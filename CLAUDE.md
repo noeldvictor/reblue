@@ -1135,12 +1135,21 @@ game composites into a headset at its native frame rate with working controllers
    Fixed in the XenosRecomp fork by emitting it before the return; the two views of one frame went
    from bit-identical to a mean difference of 14.6.
 
-   Second, and still open: the disparity is **uniform +38px at every depth**. That is ~0.04 NDC,
-   which is `2 * separation` at `w = 1` - so what is being skewed is a **full-screen post quad**,
-   not scene geometry. The shader skew runs in *every* vertex shader, and a post pass drawing a
-   quad at `w = 1` just slides the finished image sideways. The side-by-side path does not have this
-   problem because the host patch is gated on `scene_pass`. **The shader skew needs the same gate**
-   - it must apply to 3D geometry and not to the post chain.
+   Second: the disparity was then a **uniform +38px at every depth** - ~0.04 NDC, which is
+   `2 * separation` at `w = 1`, so what was being skewed was a **full-screen post quad**. The shader
+   skew ran in every vertex shader, and a post pass drawing at `w = 1` slides the finished image
+   instead of adding parallax. Fixed: `VideoState::stereoEligible` is set per draw before the
+   constants flush, and the shared stereo constants are zero unless the draw is scene geometry -
+   the same `scene_pass` gate the host's side-by-side patch always had.
+
+   Third, and **this is the remaining blocker**: with the gate in, the two views come out identical
+   again. The post chain is multiview now and writes both layers, but its **texture sampling is not
+   view-aware** - `surface_pool` builds each surface's SRV as a single-slice 2D view, so every post
+   pass reads one eye and writes it to both. Making multiview deliver needs the SRVs to be
+   `2D_ARRAY` and the sampling indexed by `ViewIndex`, which is a shader-side change to the post
+   passes. **Until then use `bd_stereo`**, which works: it is unregressed at `far +4, near -5,
+   near - far = -9px` on the flat desktop, bit-identical to the measurement taken before any of the
+   multiview work.
 
    **Multiview is still not usable, and is now one step further along.** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
