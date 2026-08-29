@@ -494,9 +494,15 @@ void Session::EndFrame(const FrameState &state) {
   frameBegun_ = false;
   // Cleared at the end of the frame they were queued for, so a frame that
   // queues nothing submits nothing rather than re-showing the last one.
+  // Latched, because the flag is set during Present and has to survive being
+  // reset for the next frame. Testing g_projectionQueued below instead of this
+  // - which is what the code did, having cleared it on the line above and then
+  // discarded this with a (void) cast - made the projection branch dead code.
+  // Every VR frame went out as a quad layer, a flat screen in space, no matter
+  // what the renderer put in it. It is why the projection layer had never been
+  // seen to produce an image.
   const bool hadProjection = g_projectionQueued;
   g_projectionQueued = false;
-  (void)hadProjection;
 
   // A quad layer when one was queued this frame, otherwise none. Submitting
   // zero layers is legal and keeps the runtime's frame pacing alive, which is
@@ -509,7 +515,7 @@ void Session::EndFrame(const FrameState &state) {
   const XrCompositionLayerBaseHeader *layers[1] = {nullptr};
   uint32_t layerCount = 0;
 
-  if (g_projectionQueued && swapchain_) {
+  if (hadProjection && swapchain_) {
     // This is the seam where stereo either reaches the headset or does not.
     //
     // With bd_stereo the renderer draws both eyes side by side into one image:
