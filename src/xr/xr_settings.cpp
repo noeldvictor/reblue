@@ -74,7 +74,14 @@ REXCVAR_DEFINE_INT32(bd_vr_camera_mode,
                      "2 = diorama, 3 = flat image on a world-locked screen.")
     .range(0, static_cast<i32>(bd::xr::CameraMode::Cinema));
 
-REXCVAR_DEFINE_DOUBLE(bd_vr_units_per_metre, 1.0, kCvarGroup,
+// 100, measured, not 1. Blue Dragon's field camera sits at y ~ 150 with the
+// ground at 0, which is an eye height of 1.5 m - so a game unit is a
+// centimetre. The default was 1.0, and that is what made every anchored camera
+// mode wrong: the head's 1.6 m of height became 1.6 cm of game movement, and
+// the third-person offset below put the camera 3 cm behind the character
+// instead of 3 m. What that renders is the inside of the character's head,
+// which is exactly what a capture showed.
+REXCVAR_DEFINE_DOUBLE(bd_vr_units_per_metre, 100.0, kCvarGroup,
                       "Blue Dragon world units per real-world metre. A "
                       "property of the game, not a preference: measure it "
                       "against a character of known height and leave it "
@@ -86,24 +93,46 @@ REXCVAR_DEFINE_DOUBLE(bd_vr_world_scale, 1.0, kCvarGroup,
                       "shrinks it, so 0.1 reads as a tabletop diorama.")
     .range(0.01, 10.0);
 
+// These are game units - centimetres - so the old (0, 1.5, -3.0) put the camera
+// 3 cm behind and 1.5 cm above the character. They were metres by mistake. The
+// ranges were +/-50 too, which is half a metre, so the values could not even be
+// tuned out of the bug from a config file.
 REXCVAR_DEFINE_DOUBLE(bd_vr_third_offset_x, 0.0, kCvarGroup,
                       "Third-person anchor offset, right of the character, in "
-                      "game units.")
-    .range(-50.0, 50.0);
+                      "game units (about 100 to the metre).")
+    .range(-2000.0, 2000.0);
 
-REXCVAR_DEFINE_DOUBLE(bd_vr_third_offset_y, 1.5, kCvarGroup,
-                      "Third-person anchor offset, above the character.")
-    .range(-50.0, 50.0);
+// Zero, not eye height: the head pose already carries the player's own 1.6 m
+// above the anchor, so putting eye height here too stacks them and the camera
+// ends up 3.7 m up looking down on the character - measured, from a capture.
+// This is the offset of the *anchor*, and the anchor belongs on the ground.
+REXCVAR_DEFINE_DOUBLE(bd_vr_third_offset_y, 0.0, kCvarGroup,
+                      "Third-person anchor offset, above the character, in "
+                      "game units. 0 puts the anchor at their feet and lets "
+                      "the player's own height supply eye level.")
+    .range(-2000.0, 2000.0);
 
-REXCVAR_DEFINE_DOUBLE(bd_vr_third_offset_z, -3.0, kCvarGroup,
+REXCVAR_DEFINE_DOUBLE(bd_vr_third_offset_z, -300.0, kCvarGroup,
                       "Third-person anchor offset along the character's "
-                      "facing. Negative sits behind them.")
-    .range(-50.0, 50.0);
+                      "facing, in game units. Negative sits behind them; -300 "
+                      "is about three metres back.")
+    .range(-2000.0, 2000.0);
 
-REXCVAR_DEFINE_DOUBLE(bd_vr_diorama_height, 8.0, kCvarGroup,
+// Battles are stationary set-pieces: the party and the enemies stand in fixed
+// ranks and nobody walks anywhere, so a follow camera has nothing to follow and
+// spends the fight jittering against the game's own battle camera. A fixed
+// diorama view is what the scene is actually shaped for - you look down on the
+// arena like a tabletop, which is also the most comfortable thing to do with a
+// camera the player does not drive.
+REXCVAR_DEFINE_BOOL(bd_vr_battle_diorama, true, kCvarGroup,
+                    "Switch to the diorama camera for the duration of a "
+                    "battle, whatever mode the field is using. Off keeps the "
+                    "field camera mode throughout.");
+
+REXCVAR_DEFINE_DOUBLE(bd_vr_diorama_height, 800.0, kCvarGroup,
                       "How far above the scene the diorama anchor floats, in "
-                      "game units.")
-    .range(0.0, 200.0);
+                      "game units. 800 is about eight metres.")
+    .range(0.0, 20000.0);
 
 REXCVAR_DEFINE_BOOL(bd_vr_snap_turn, true, kCvarGroup,
                     "Turn in fixed steps rather than smoothly. Smooth turning "

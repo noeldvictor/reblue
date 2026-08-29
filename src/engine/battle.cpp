@@ -85,6 +85,15 @@ static_assert(kBM_Phase == 0x94 && kBM_EnemyGroups == 0x7C,
 
 u32 StatsBase() { return bd::mem::try_load<u32>(kBattleStatsVA); }
 
+// Deliberately only the task-liveness half of RootEA: a battle is on screen
+// from the moment the camera task exists, which is before the manager has been
+// captured for this step. Waiting for the manager would leave the camera in
+// follow mode for the first frames of every battle, which is exactly when the
+// transition is most visible.
+bool BattleCameraLive() {
+  return LiveTask(bd::mem::try_load<u32>(addr::kBattleCameraCtl));
+}
+
 u32 RootEA() {
   // The manager is only valid while the battle view task is live.
   if (!LiveTask(bd::mem::try_load<u32>(addr::kBattleCameraCtl))) {
@@ -144,6 +153,8 @@ u32 ManagerField(u32 offset) {
 }
 
 } // namespace
+
+bool BattleActive() { return BattleCameraLive(); }
 
 void OnBattleGameStep() { g_gameStep.fetch_add(1, std::memory_order_relaxed); }
 

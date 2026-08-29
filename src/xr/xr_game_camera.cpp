@@ -10,8 +10,10 @@
 
 #include "core/logging.h"
 #include "xr/xr_camera.h"
+#include "engine/battle.h"
 #include "xr/xr_settings.h"
 
+REXCVAR_DECLARE(bool, bd_vr_battle_diorama);
 REXCVAR_DECLARE(double, bd_vr_anchor_distance);
 REXCVAR_DECLARE(double, bd_vr_anchor_eye_height);
 
@@ -71,10 +73,17 @@ void SyncTuning() {
   Settings &settings = Settings::Get();
   Camera &camera = Camera::Get();
   camera.SetTuning(settings.Tuning());
-  if (camera.Mode() != settings.Mode()) {
+  // A battle overrides the field's camera mode. SetMode already resets the
+  // anchor smoothing, so entering and leaving a fight cuts rather than sliding
+  // the player across the level - which is what you want here, because the
+  // battle arena is somewhere else entirely.
+  CameraMode wanted = settings.Mode();
+  if (REXCVAR_GET(bd_vr_battle_diorama) && bd::engine::BattleActive())
+    wanted = CameraMode::Diorama;
+  if (camera.Mode() != wanted) {
     // SetMode resets the anchor smoothing itself, so a mode change cuts rather
     // than sliding the player across the level.
-    camera.SetMode(settings.Mode());
+    camera.SetMode(wanted);
   }
 }
 

@@ -653,6 +653,22 @@ table first, because it is the part that gets stale.
 
 Three of those rows need saying plainly rather than being read past:
 
+- **The VR scale was wrong by 100x, and that is what made the anchored modes look broken.**
+  `bd_vr_units_per_metre` defaulted to **1.0** while a Blue Dragon unit is a **centimetre** - the
+  field camera sits at y ~ 150 with the ground at 0, which is a 1.5 m eye height. So the head's
+  1.6 m became 1.6 cm of game movement, and `bd_vr_third_offset` of `(0, 1.5, -3.0)` put the
+  third-person camera **3 cm** behind the character. A capture showed exactly that: the inside of
+  the character's head. The offsets' ranges were +/-50 too, half a metre, so it could not even be
+  tuned around from a config file. Now 100 units/metre, offsets in game units, ranges +/-2000.
+- **`bd_vr_third_offset_y` is 0, not eye height.** The head pose already carries the player's own
+  1.6 m above the anchor, so putting eye height here as well stacks them and the camera ends up
+  3.7 m up looking down - measured. The anchor belongs on the ground.
+- **Battles switch to the diorama camera** (`bd_vr_battle_diorama`, on by default). A battle is a
+  stationary set-piece: the ranks do not move, so a follow camera has nothing to follow and spends
+  the fight fighting the game's own battle camera. `bd::engine::BattleActive()` reads the same task
+  liveness the battle manager does, and deliberately only that half - waiting for the manager to be
+  captured would leave the camera in follow mode for the first frames of every battle, which is when
+  the transition is most visible.
 - **The anchored camera modes now have an anchor**, derived from the game's own follow camera
   (`CharacterFromFollowCamera` in `xr_camera.cpp`, fed from `ComposeView`). Blue Dragon's field
   camera sits behind the party leader and looks at them, so the leader is on the camera's forward

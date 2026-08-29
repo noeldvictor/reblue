@@ -22,6 +22,14 @@ namespace bd::engine {
 // liveness across frames.
 void OnBattleGameStep();
 
+// True while a battle is on screen. Reads the same liveness the battle manager
+// does - the battle camera control task - rather than any state of its own, so
+// it cannot disagree with the rest of this file about whether a battle exists.
+//
+// The VR camera uses it: battles are stationary set-pieces, so a follow camera
+// has nothing to follow and a fixed diorama view suits them far better.
+bool BattleActive();
+
 class Battle {
 public:
   Battle() = default;
