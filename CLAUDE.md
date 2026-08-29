@@ -165,8 +165,32 @@ What is missing is a **runtime**, and this is now well explored - do not repeat 
 **Do not leave `forcedDriver:null` / `requireHmd:false` in `steamvr.vrsettings`** - it stops a real
 headset working. Back the file up before touching it and restore it afterwards.
 
-So **Meta XR Simulator is the remaining option** - it is the one designed to run headless, and it is
-not installed. `XR_RUNTIME_JSON` overrides the active runtime per process, so installing it changes
+So **Meta XR Simulator is the remaining option**, it is the one designed to run headless, and
+getting it needs **one manual step that cannot be automated**: the binary sits behind a Meta
+developer login.
+
+The trail, so nobody re-walks it. Meta's Unity registry is public and the package is real:
+
+```sh
+curl -sSL https://npm.developer.oculus.com/com.meta.xr.simulator          # metadata, versions, public
+curl -sSL "https://www.facebook.com/horizon_devcenter_download?app_id=28549923061320041&sdk_version=81"
+# -> {"binaries":[{"version":"81","download_url":"https://securecdn.oculus.com/binaries-download-auth/?id=..."}]}
+```
+
+Both of those work unauthenticated. The `download_url` they hand back **404s without a session
+token** - `binaries-download-auth` is what the name says, and the Unity installer supplies a token
+this project has no way to obtain. The npm tarball itself is only the 31 KB Unity editor wrapper,
+not the runtime.
+
+**So: download it once from https://developers.meta.com/horizon/downloads/package/meta-xr-simulator-windows
+while logged in.** After that it is per-process and changes nothing globally:
+
+```sh
+XR_RUNTIME_JSON=<unzipped>/meta_openxr_simulator.json ./reblue_vk.exe
+```
+
+and the desktop build gains an eye pose, which is what the camera modes, the character anchor and
+the projection layer all need. `XR_RUNTIME_JSON` overrides the active runtime per process, so installing it changes
 nothing globally. Until then the desktop loop verifies **renderer** behaviour (stereo geometry, the
 post chain, captures) and the device is required for anything that needs an eye pose: the camera
 modes, the character anchor, the projection layer.
