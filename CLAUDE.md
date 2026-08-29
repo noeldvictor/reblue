@@ -1121,13 +1121,21 @@ game composites into a headset at its native frame rate with working controllers
      not be doubled (they would squash the whole source into one half). The correct VR answer is to
      route 2D onto a head-locked layer instead of into the eye images, which is what
      `bd_vr_hud_mode` already exists for.
-   - **Stereo's cost is draw submission, not the GPU.** Desktop, RTX 3060, 1920x1080, VR + stereo:
-     `dt 22.0ms (45 fps), fence 0.45ms, draws 2141, pso 715`. **The GPU fence is under half a
-     millisecond** - it is idle, and the frame is entirely the CPU recording twice as many draws
-     because `bd_stereo` submits every scene draw per eye. That is the same shape as the Quest,
-     where stereo costs a pacing tier while CPU-side `elsewhere` barely moves. **So the performance
-     fix is multiview - one draw for two views - and not any GPU-side tuning.** See the multiview
-     entry below for the resolve-pass design that gets there without the descriptor rework.
+   - **The CPU cost is the recompiled guest, not the renderer and not draw submission.** Measured on
+     the desktop, RTX 3060, 1920x1080, VR + stereo: `dt 17.9ms, fence 0.35ms, draws 2070`, and the
+     renderer's own share of that frame is `mutex 0.1ms, bindFB 0.3ms, flushState 2.1ms` - about
+     **2.5ms of 17.9**. The GPU is idle and the renderer is cheap; the remaining ~15ms is guest
+     simulation, which matches the Quest's ~46ms of guest time.
+
+     Two things were tried against it and **neither is a result**, so do not repeat them:
+     **multiview** measured *slower* than side-by-side (20.6ms against 18.3ms), and note
+     `NoteDraw()` is called once per *guest* draw before the per-eye loop, so the `draws` column
+     cannot see stereo's doubling at all - any argument from that number is void. **Vectorising the
+     per-draw constant byte-swap on x86** (it had no SIMD path where ARM64 did) moved 18.3ms to
+     17.9ms, 2%, which is noise. It is kept because it is strictly correct, not because it helped.
+
+     **So the performance work is the guest CPU** - the "Rewriting the recompilation is in scope"
+     section - and not the renderer, not draw submission, and not the GPU.
 
 1. **Stereo works, on the side-by-side path.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
    **near - far = -16px** - crossed, correctly signed, monotone with depth. Before it was flat to

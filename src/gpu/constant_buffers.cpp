@@ -7,6 +7,10 @@
  */
 #include "gpu/constant_buffers.h"
 
+#if defined(_M_X64) || defined(__x86_64__)
+#include <immintrin.h>
+#endif
+
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -253,9 +257,43 @@ void CopyByteSwap32Impl(u8 *dst, u32 guest_va, u32 size) {
     vst1q_u8(d8 + 32, vreinterpretq_u8_u32(v2));
     vst1q_u8(d8 + 48, vreinterpretq_u8_u32(v3));
   }
+#elif defined(__SSSE3__) || defined(_M_X64) || defined(__x86_64__)
+  // The same job on x86-64, which had none and ran the scalar loop for all
+  // 2048 dwords of every block - twice per draw, ~2000 draws a frame. That is
+  // the desktop's share of the per-draw cost, and the desktop is the dev loop.
+  //
+  // pshufb reverses four dwords at once against a constant mask. SSSE3 is the
+  // floor here: x86-64 targets that predate it are a decade older than the
+  // Vulkan 1.2 this build already requires.
+  {
+    const __m128i swap =
+        _mm_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
+    const __m128i abs_mask = _mm_set1_epi32(0x7FFFFFFF);
+    // Unsigned "greater than" has no direct SSE2 form, so bias both sides into
+    // signed range and use the signed compare. +Inf biased is the constant.
+    const __m128i bias = _mm_set1_epi32(int(0x80000000u));
+    const __m128i inf_biased = _mm_set1_epi32(int(0x7F800000u ^ 0x80000000u));
+    for (; i + 16 <= count; i += 16) {
+      const auto *s8 = reinterpret_cast<const u8 *>(src + i);
+      auto *d8 = reinterpret_cast<u8 *>(out + i);
+      for (int blk = 0; blk < 4; ++blk) {
+        __m128i v = _mm_shuffle_epi8(
+            _mm_loadu_si128(reinterpret_cast<const __m128i *>(s8 + blk * 16)),
+            swap);
+        if constexpr (kFlushNaN) {
+          const __m128i mag = _mm_and_si128(v, abs_mask);
+          const __m128i is_nan =
+              _mm_cmpgt_epi32(_mm_xor_si128(mag, bias), inf_biased);
+          v = _mm_andnot_si128(is_nan, v);
+        }
+        _mm_storeu_si128(reinterpret_cast<__m128i *>(d8 + blk * 16), v);
+      }
+    }
+  }
 #endif
 
-  // Tail, and the whole job on non-ARM64. The constant blocks are 4 KiB and
+  // Tail, and the whole job where neither vector path applies. The constant
+  // blocks are 4 KiB and
   // 256-byte aligned so the vector loop normally consumes all of it, but the
   // shared block is not a multiple of 64 bytes.
   for (; i < count; ++i) {
