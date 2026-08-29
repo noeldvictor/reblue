@@ -289,6 +289,79 @@ the code currently does:
 - **Measure before reaching for multiview.** It halves submission and binning, not shading. A
   composite-heavy renderer is more likely fill-bound, where multiview buys nothing.
 
+## The desktop loop: run the game in 90 seconds, with no headset
+
+**Do this before touching the device.** A desktop run boots the real guest, mounts the real game
+data, reaches a real field scene, prints the same `[perf]` census the Quest does, and can be
+screenshotted. It is the loop that verified `bd_render_scale`, `bd_reflections`, stereo, tourist
+mode and the guest call census, and it killed three wrong implementations that a clean build and a
+rising draw count would have called working.
+
+### Setting it up once
+
+```sh
+export PATH="/c/Program Files/LLVM/bin:$PATH"
+export VCPKG_ROOT="C:/vcpkg"
+R="$PWD/out/sdk/win-amd64"
+cmake --preset win-amd64-release -DREBLUE_D3D12=OFF -DREBLUE_BUILD_INSTALLER=OFF   -Drexglue_DIR="$R/lib/cmake/rexglue" -Dfmt_DIR="$R/lib/cmake/fmt"   -Dspdlog_DIR="$R/lib/cmake/spdlog" -DSDL3_DIR="$R/cmake"   -Dutf8cpp_DIR="$R/share/utf8cpp/cmake"
+cmake --build --preset win-amd64-release --target reblue
+```
+
+Four traps, all of which cost real time:
+
+- **`find_package` caches to whichever slice was configured last.** An Android install has no
+  Windows import libraries, and the failure is
+  `IMPORTED_IMPLIB not set for imported target "rex::runtime"` - which reads like a corrupt SDK and
+  is not. `VulkanHeaders` and `VulkanMemoryAllocator` are header-only and can stay pointed at
+  Android; the four above cannot.
+- **With `REBLUE_D3D12=OFF` the target is `reblue`, not `reblue_vk`.** That name only exists when
+  both backends are configured. The output file is still `reblue_vk.exe`.
+- **The exe must sit in the install root**, or it raises a modal *"running outside of its install
+  directory"* with no log line and no exit - indistinguishable from a hang. Point
+  `HKCU\Software\Zolawareeblue\Install` `InstallRoot` at the directory holding the exe, set
+  `SchemaVersion` to 3, and junction the game data in as `<InstallRoot>/game`.
+- **Command-line flags do not work.** `--help` returns a swallowed CLI11 parse error. Cvars go in
+  `<InstallRoot>/profiles/default/reblue.toml`, a flat TOML: `bd_xr_autoplay = true`.
+
+### Looking at the frame, which is the part that matters
+
+Three stereo implementations in a row produced striped garbage while the draw count doubled exactly
+as intended. Only a screenshot found them. Capture the window with **`PrintWindow`**, not
+`CopyFromScreen`: `SetForegroundWindow` is restricted, so `CopyFromScreen` grabs whatever is on top
+and hands back some other application's pixels.
+
+```powershell
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class W {
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr h, IntPtr dc, uint flags);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+}
+"@
+# GetWindowRect, then PrintWindow(handle, dc, 2) into a Bitmap, then Save.
+```
+
+This also reads modal dialogs the game puts up before logging exists, which is how the install-root
+message above was found.
+
+### Measuring on it
+
+**`other_ms` from `bd_perf_csv`, never the frame rate.** The desktop sits vsync-locked at exactly
+16.67ms with the GPU wait at 0.03ms, so `dt_ms` measures the monitor. `other_ms` is CPU per frame -
+about 5.8ms in a field scene - and it is the analogue of the Quest's ~62ms floor. Averaging the whole
+CSV is wrong: loading frames drag the mean to 21.7 fps against a steady state of 60. Take the last
+few hundred rows. The CSV lands in `logs/perf/`.
+
+`bd_xr_autoplay` drives it into a field scene on desktop too, so a measurement needs nobody at the
+keyboard.
+
+### What it cannot do
+
+Desktop CPU is roughly 3x a Quest core and the scene is lighter, so absolute numbers do not
+transfer - only correctness, ratios and rankings. Fill-rate wins have to be confirmed on the device
+with `tools/bench_quest.py`.
+
 ## Benchmarking
 
 - **Sweep with `tools/bench_quest.py`, never adb by hand.** Every performance knob reaches the game
