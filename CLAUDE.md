@@ -1124,6 +1124,15 @@ game composites into a headset at its native frame rate with working controllers
    was adding `-sep` to *both* eyes on top of the host patch), and the **left eye takes the positive
    constant** - backwards renders the scene pseudoscopic, and that is invisible in a symmetric test.
 
+   **Multiview is not settled, and the blocker is now a measurement limit rather than a bug.** Both
+   array slices are populated since the post chain became two-layer, and two captures at
+   `bd_stereo_debug_layer` 0 and 1 differ - but they come from *two separate runs*, and autoplay is
+   not frame-identical across restarts, so that difference cannot be attributed to the per-eye skew.
+   `bd_stereo_debug_layer` is read at surface creation, so one run samples one slice. **Settling it
+   needs a capture that reads both array slices in a single frame** - a small change, since
+   `copyTextureRegion` already takes an `arrayIndex`. Worth doing: multiview is one draw instead of
+   two, and stereo currently costs a whole pacing tier.
+
    **Multiview is still not usable, and is now one step further along.** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
    canvas - so the bloom and downsample targets were single-layer, took single-view pipelines, wrote
