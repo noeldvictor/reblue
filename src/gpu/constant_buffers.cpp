@@ -319,6 +319,10 @@ void InvalidateSharedBinding() { upload_state().sharedBound = false; }
 // god rays). bdCameraRefractionUvScaleHook pins device reg50 at the
 // bdCameraRender writers, and this catches blur draws those writers miss.
 constexpr u32 kScreenUVScaleRegByteOffset = 50 * 16;
+
+// The view-projection matrix's first register. Taken from the emitted HLSL,
+// where g_mViewProj(INDEX) reads VertexShaderConstants + (32 + INDEX) * 16.
+constexpr u32 kViewProjRegister = 32;
 constexpr u64 kBDBlurPSHash = 0xD94E164866C3B9BCull;
 void PinScreenUVScaleReg(u8 *block) {
   auto *ps = bd::gpu::state().pipelineState.pixelShader;
@@ -330,7 +334,8 @@ void PinScreenUVScaleReg(u8 *block) {
   }
 }
 
-ConstantAllocation UploadVertexShaderConstants(u32 device_guest) {
+ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
+                                               float eye_skew) {
   BD_CPU_ZONE("UploadVSConstants");
   auto &s = upload_state();
   if (!device_guest)
@@ -341,6 +346,14 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest) {
   CopyByteSwap32FlushNaN(alloc.memory,
                          device_guest + offsetof(D3DDevice, vsFloatConstants),
                          kConstantBlockBytes);
+  if (eye_skew != 0.0f) {
+    // clip.x' = clip.x + skew * clip.z, i.e. column 0 += skew * column 2, which
+    // with four float4 registers per matrix is one element per register. After
+    // the byte swap, so this operates on host-order floats.
+    auto *m = reinterpret_cast<float *>(alloc.memory) + kViewProjRegister * 4;
+    for (int row = 0; row < 4; ++row)
+      m[row * 4 + 0] += eye_skew * m[row * 4 + 2];
+  }
   return alloc;
 }
 

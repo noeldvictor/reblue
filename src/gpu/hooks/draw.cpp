@@ -39,6 +39,7 @@
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(f64, bd_stereo_separation);
 
 namespace {
 
@@ -253,8 +254,17 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         static_cast<i32>(half.y + half.height)};
     cmd_list->setViewports(&half, 1);
     cmd_list->setScissors(&rc, 1);
+    // Left eye negative, right eye positive, so the two views diverge about the
+    // mono image rather than one of them being the original.
+    const float sep = float(REXCVAR_GET(bd_stereo_separation));
+    if (sep != 0.0f)
+      bd::gpu::Video::BindEyeVertexConstants(device_guest,
+                                             eye ? sep : -sep);
     emit();
   }
+  // The last eye left a skewed block bound and FlushRenderState believes the
+  // constants are clean, so without this the next draw inherits an eye.
+  s.dirtyStates.vertexShaderConstants = true;
   // FlushViewport owns s.viewport and believes it is still set; the next draw
   // must reprogram it rather than inherit an eye's half.
   s.dirtyStates.viewport = true;

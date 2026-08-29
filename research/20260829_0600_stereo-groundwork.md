@@ -169,3 +169,44 @@ the first two are already recorded in the devloop skill. A draw-count check woul
 Scene draws double, and the frame is fill-bound, so this roughly doubles GPU cost - which is exactly
 what `bd_render_scale` exists to pay for. At 50 each eye is a quarter of a full view, so two eyes
 land at half the fragments of today's mono frame.
+
+## Per-eye parallax, without decomposing a matrix
+
+The second view now gets its own vertex constants. The mechanism avoids the handedness trap
+entirely: rather than reconstructing a per-eye view matrix and re-multiplying, it skews clip space.
+
+```
+clip.x' = clip.x + separation * clip.z
+```
+
+which is column 0 += separation * column 2 of the view-projection - one element in each of the four
+float4 registers at VS register 32, applied after the byte swap on the host-side copy. Left eye
+takes the negative, right the positive, so the two views diverge about the mono image instead of one
+of them being the original.
+
+**Why `clip.z` and not `clip.w`.** Skewing by `w` slides the whole image sideways by a constant and
+reads as nothing at all. Skewing by `z` displaces a vertex in proportion to its depth, which is
+parallax and is the entire depth cue. Confirmed on screen: at `bd_stereo_separation = 0.08` the near
+fence rail and the character move measurably between the eyes while the distant cliffs barely do -
+near shifting more than far is the signature of correct stereo.
+
+`UploadVertexShaderConstants` gained an optional `eye_skew`, and `Video::BindEyeVertexConstants`
+re-uploads and rebinds inside the per-eye loop. `FlushRenderState` has already bound the unskewed
+block by then, so the loop dirties `vertexShaderConstants` on the way out or the next draw inherits
+an eye.
+
+### What this is not, yet
+
+- **Not calibrated.** `bd_stereo_separation` is a clip-space skew, not an interpupillary distance in
+  metres, and it has no relationship to the head pose or to `xr_camera`'s per-eye matrices. Comfort
+  on a real headset is unknown and cannot be judged from a screenshot.
+- **Not an off-centre projection.** A correct per-eye frustum is asymmetric; this is a shear. It
+  gives the depth cue and it is cheap, but the geometry is an approximation and objects at the edges
+  will not land exactly where a true per-eye projection would put them.
+- **Not on the headset.** Half-width viewports of one target are the desktop stand-in; OpenXR wants
+  one image per view, and the present path already owns its target, which is what makes that step
+  small.
+
+The honest description is: **stereo with real parallax renders, verified on screen, and the exact
+per-eye geometry is the next thing to make correct.** `xr_math` already has the correct off-centre
+projection and it is unit-tested; wiring it in replaces the shear.

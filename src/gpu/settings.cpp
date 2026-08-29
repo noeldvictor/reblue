@@ -178,6 +178,16 @@ REXCVAR_DEFINE_BOOL(bd_stereo, false, kCvarGroup,
                     "viewports. Step one of stereo: no per-eye matrices yet, "
                     "so both halves show the same view.");
 
+// Parallax, not a shift. The per-eye upload adds separation * clip.z to
+// clip.x, so a vertex moves horizontally in proportion to its depth - which is
+// the depth cue. Adding separation * clip.w instead would slide the whole image
+// sideways and look like nothing at all.
+REXCVAR_DEFINE_DOUBLE(bd_stereo_separation, 0.03, kCvarGroup,
+                      "Eye separation for bd_stereo, as a clip-space skew. 0 "
+                      "gives two identical views; larger diverges them and "
+                      "deepens the effect. Comfort varies, so this is a knob.")
+    .range(0.0, 0.2);
+
 REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
                     "Render the 3D scene twice per frame from the same camera. "
                     "Diagnostic only - the image is unchanged and the cost "

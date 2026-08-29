@@ -153,6 +153,26 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 }
 } // namespace
 
+// Re-uploads the vertex constants with an eye skew and rebinds them, for the
+// second and subsequent views of one recorded draw. FlushRenderState has
+// already uploaded and bound the unskewed block by this point, so the caller
+// must dirty vertexShaderConstants afterwards to put the next draw back on a
+// clean one.
+void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew) {
+  auto &s = state();
+  if (!device_guest || !s.command_list)
+    return;
+  auto alloc = UploadVertexShaderConstants(device_guest, eye_skew);
+  if (!alloc.size)
+    return;
+#if defined(REBLUE_D3D12)
+  s.command_list->setGraphicsRootDescriptor(alloc.ref, 0);
+#else
+  s.command_list->setGraphicsPushConstants(kGuestPushConstantRangeIndex,
+                                           &alloc.gpuAddress, 0, sizeof(u64));
+#endif
+}
+
 bool Video::FlushRenderState(u32 device_guest) {
   std::lock_guard lock(state().mutex);
   return FlushRenderStateLocked(device_guest);
