@@ -164,3 +164,29 @@ building.
 
 **Do not build the culling change before running that.** The inference that pointed at culling came
 from a census that measures calls, checked against an experiment that measures something else.
+
+## A second scene, which is what the caveat asked for
+
+`bd_devmode` boots the game's own debug menu, and autoplay's START-then-A lands in a different field
+area - a sparse wasteland with the HUD live, 690 draws a frame at 393 vertices each, against the
+village's 829 draws at 249. Sparser and heavier per draw, which is a genuinely different shape.
+
+| function | village | wasteland | change |
+| --- | --- | --- | --- |
+| `bdSceneNodeDrawSingle` | 3,250,800 bytes | **1,006,200** | 420 calls -> 130 |
+| `bdAnimationUpdate` | 101,920 | **535,080** | 56 calls -> **294** |
+| `bdAnimBoneEvaluate` | 353,304 | 342,088 | 63 -> 61, steady |
+
+**`bdSceneNodeDrawSingle` leads in both**, which is what matters - the target holds. But the margin
+collapses from 9.2x to 1.9x, and `bdAnimationUpdate` moves by a factor of five between two field
+scenes of the same game.
+
+So the earlier caveat was not hypothetical: **the ranking below first place is scene-dependent and
+should not be trusted from one sample.** Anything built on "second place" needs measuring in the
+scene it is meant to help. First place has now survived two very different scenes, which is the
+first thing in this investigation to do so.
+
+`bd_devmode` is the cheap way to get a second sample, and is worth using before any conclusion drawn
+from a single autoplay run. It still is not a battle - five characters and enemies would be the real
+test of `bdAnimBoneEvaluate`, which has been suspiciously steady at ~61 calls across both scenes and
+is presumably per-character.
