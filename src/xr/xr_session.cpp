@@ -2,6 +2,7 @@
  * @file    xr/xr_session.cpp
  * @license BSD 3-Clause, see LICENSE
  */
+#include <vector>
 #include "xr/xr_session.h"
 
 #include <cstdio>
@@ -28,6 +29,7 @@
 #include "xr/xr_pad.h"
 
 REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(f64, bd_xr_refresh_rate);
 
 namespace bd::xr {
 
@@ -179,7 +181,11 @@ bool Session::CreateInstance() {
   // XR_KHR_vulkan_enable rather than enable2: the older extension lets the
   // application create its own VkInstance and VkDevice, which is what plume
   // does. enable2 wants to create them for us, and plume has no seam for that.
-  const char *extensions[] = {
+  // Required. An unsupported name here fails xrCreateInstance outright, which
+  // is why the optional one below is checked first rather than simply listed:
+  // adding it unconditionally took the whole session down on a runtime that
+  // does not advertise it, and the app then died before it could log why.
+  std::vector<const char *> extensions = {
       XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,
 #if defined(__ANDROID__)
       XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
@@ -187,8 +193,24 @@ bool Session::CreateInstance() {
   };
 
   XrInstanceCreateInfo create{XR_TYPE_INSTANCE_CREATE_INFO};
-  create.enabledExtensionCount = static_cast<uint32_t>(std::size(extensions));
-  create.enabledExtensionNames = extensions;
+  // Optional, and appended rather than probed: on Android the loader must be
+  // initialised before any xr call, so enumerating extensions here - before
+  // xrCreateInstance - left the app launching to a splash screen with a 4MB
+  // heap, no guest and no log at all. Asking for it and retrying without on
+  // failure needs no call before instance creation.
+  //
+  // What it buys: the app can choose the display rate instead of inheriting the
+  // system's and being paced to a submultiple. A Quest 2 runs 72Hz, so a frame
+  // that cannot hold 13.9ms is paced to 27.8 or 41.7 - and this port measured a
+  // 41.6ms frame around 20.6ms of work, a whole tier wasted. At 60Hz the tiers
+  // are 16.7/33.3/50 and that work lands on 33.3ms, which is 30fps: the rate
+  // Blue Dragon originally ran at.
+  const size_t requiredExtensions = extensions.size();
+  if (REXCVAR_GET(bd_xr_refresh_rate) > 0.0)
+    extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+
+  create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+  create.enabledExtensionNames = extensions.data();
 
 #if defined(__ANDROID__)
   // The runtime wants the same pair again on the instance itself.
@@ -209,6 +231,15 @@ bool Session::CreateInstance() {
 
   XrInstance instance = XR_NULL_HANDLE;
   XrResult result = xrCreateInstance(&create, &instance);
+  if (XR_FAILED(result) && extensions.size() > requiredExtensions) {
+    // The optional display-rate extension is not available here. Drop it and
+    // retry rather than losing the whole session over a pacing preference.
+    BD_INFO("OpenXR: no display refresh rate extension, continuing without it");
+    extensions.resize(requiredExtensions);
+    create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    create.enabledExtensionNames = extensions.data();
+    result = xrCreateInstance(&create, &instance);
+  }
   if (XR_FAILED(result)) {
     // Not an error. No runtime installed is the ordinary desktop case, and the
     // caller falls back to the flat renderer.
@@ -347,6 +378,7 @@ bool Session::CreateSession(VkInstance_T *instance,
   if (!CreateActions())
     BD_ERROR("OpenXR: input actions unavailable; guest has no pad");
 
+  RequestDisplayRefreshRate();
   BD_INFO("OpenXR: session created");
   return true;
 }
@@ -717,6 +749,64 @@ void Session::SubmitQuadLayer(f32 widthMetres, f32 heightMetres,
   quadWidth_ = widthMetres;
   quadHeight_ = heightMetres;
   quadDistance_ = distanceMetres;
+}
+
+// Asks the runtime for a display rate the port can actually hold.
+//
+// Without this the app inherits the system rate - 72Hz on a Quest 2 - and the
+// compositor paces it to a submultiple when it cannot keep up: 13.9ms, then
+// 27.8, then 41.7. The port measured a 41.6ms frame containing 20.6ms of work,
+// so it was being held at the 24Hz tier with an entire tier of headroom unused
+// and xrWait absorbing the difference.
+//
+// At 60Hz the tiers are 16.7/33.3/50ms and that same work lands on 33.3ms,
+// which is 30fps - the rate Blue Dragon originally ran at. 72 is the panel's
+// number, not the game's.
+//
+// bd_xr_refresh_rate picks the target; 0 leaves the runtime alone. The nearest
+// supported rate at or below the request is used, because asking for a rate the
+// device does not have is an error rather than a negotiation.
+void Session::RequestDisplayRefreshRate() {
+  const f64 wanted = REXCVAR_GET(bd_xr_refresh_rate);
+  if (wanted <= 0.0 || !instance_ || !session_)
+    return;
+
+  PFN_xrEnumerateDisplayRefreshRatesFB enumerate = nullptr;
+  PFN_xrRequestDisplayRefreshRateFB request = nullptr;
+  if (XR_FAILED(xrGetInstanceProcAddr(
+          AsInstance(instance_), "xrEnumerateDisplayRefreshRatesFB",
+          reinterpret_cast<PFN_xrVoidFunction *>(&enumerate))) ||
+      XR_FAILED(xrGetInstanceProcAddr(
+          AsInstance(instance_), "xrRequestDisplayRefreshRateFB",
+          reinterpret_cast<PFN_xrVoidFunction *>(&request))) ||
+      enumerate == nullptr || request == nullptr) {
+    BD_INFO("OpenXR: no display refresh rate control, leaving it to the runtime");
+    return;
+  }
+
+  uint32_t count = 0;
+  if (XR_FAILED(enumerate(AsSession(session_), 0, &count, nullptr)) || count == 0)
+    return;
+  std::vector<float> rates(count, 0.0f);
+  if (XR_FAILED(enumerate(AsSession(session_), count, &count, rates.data())))
+    return;
+
+  float best = 0.0f;
+  for (const float r : rates)
+    if (r <= float(wanted) + 0.5f && r > best)
+      best = r;
+  if (best <= 0.0f) {
+    BD_INFO("OpenXR: no display rate at or below {:.0f}Hz, leaving it alone",
+            wanted);
+    return;
+  }
+
+  if (XR_FAILED(request(AsSession(session_), best))) {
+    BD_WARN("OpenXR: display rate {:.0f}Hz refused", best);
+    return;
+  }
+  BD_INFO("OpenXR: display rate set to {:.0f}Hz (asked {:.0f}, device offers "
+          "{} rates)", best, wanted, count);
 }
 
 void Session::SubmitProjectionLayer() { g_projectionQueued = true; }

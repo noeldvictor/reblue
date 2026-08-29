@@ -32,6 +32,17 @@ REXCVAR_DEFINE_BOOL(bd_vr_enabled, false, kCvarGroup,
                     "Open an OpenXR session and render in stereo. Off runs the "
                     "ordinary flat renderer. Requires restart.");
 
+// The compositor paces to submultiples of the display rate, so a frame that
+// cannot hold 13.9ms at 72Hz is dropped to 27.8 or 41.7. Asking for 60Hz makes
+// the tiers 16.7/33.3/50 and lets a ~20ms frame land on 33.3ms - 30fps, which
+// is what Blue Dragon originally ran at. 0 leaves the runtime alone.
+REXCVAR_DEFINE_DOUBLE(bd_xr_refresh_rate, 0.0, kCvarGroup,
+                      "Display refresh rate to request, in Hz. 0 leaves it to "
+                      "the runtime. The nearest supported rate at or below the "
+                      "request is used. Requires restart.")
+    .range(0.0, 120.0)
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_INT32(bd_vr_camera_mode,
                      static_cast<i32>(bd::xr::CameraMode::ThirdPerson),
                      kCvarGroup,

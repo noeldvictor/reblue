@@ -261,3 +261,56 @@ So the remaining work splits into two very different problems:
 
 The honest reading: the port is one pacing question away from running at above its native frame
 rate, and the CPU work that looked like the whole problem this morning has already done its job.
+
+## 28.9 fps: the game's native rate, in VR, on a Quest 2
+
+```
+configuration                                              frame    fence     else    fps   draws
+render_scale=25, reflections=false, cull_distance=350,
+  xr_refresh_rate=60                                      34.6ms    0.3ms   19.0ms   28.9    519
+  xr_refresh_rate=72                                      41.8ms    0.1ms   19.2ms   23.9    536
+```
+
+**Identical work, 5 fps apart.** 34.6ms is the 60/2 tier; 41.8ms is the 72/3 tier. The only
+difference is which rate the app asked the runtime for.
+
+Blue Dragon shipped at 30fps on an Xbox 360. **28.9 is that rate.** Against this morning's 5.9,
+the port is **4.9x** faster.
+
+### Why asking matters more than it sounds
+
+A Quest compositor paces to submultiples. Inheriting the system's 72Hz means the tiers are 13.9,
+27.8 and 41.7ms - and a frame of ~20ms of work misses 13.9, so it is thrown all the way down to
+41.7. Requesting 60Hz moves the tiers to 16.7, 33.3 and 50, and the same ~20ms frame lands on 33.3.
+
+Nothing rendered differently. The port was being paced against a target it was never going to hit,
+and 72Hz is the panel's number rather than the game's.
+
+`bd_xr_refresh_rate` requests it, defaulting to 0 (leave the runtime alone). The extension is
+appended only when the cvar is set, and `xrCreateInstance` is retried without it on failure.
+
+### Two mistakes on the way in, both worth recording
+
+**Requesting the extension unconditionally killed the session.** An unsupported extension name fails
+`xrCreateInstance` outright, and the app then died before it could log why.
+
+**Probing for it first was worse.** Calling `xrEnumerateInstanceExtensionProperties` before
+`xrCreateInstance` looks like the careful thing to do, and on Android it is not: the loader has to be
+initialised first, so the app launched to a splash screen with a 4MB native heap, no guest, and no
+log at all. The symptom was identical to the first mistake, which made it look like the fix had not
+worked.
+
+**Append and retry needs no call before instance creation**, which is why that is what it does now.
+
+### Where the frame is
+
+| | |
+| --- | --- |
+| this morning | 5.9 fps |
+| now | **28.9 fps** at 60Hz, render_scale 25, reflections off, cull 350 |
+| CPU | 19.0ms against the 33.3ms the tier allows - comfortably inside |
+| GPU | 0.3ms |
+| next tier | 16.7ms at 60Hz, which needs the CPU roughly halved again |
+
+The cull is blunt at 350 - things pop in - so the honest next step is a gentler distance curve, or
+per-node cost, now that there is real headroom inside the tier to spend on quality.

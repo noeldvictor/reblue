@@ -135,6 +135,9 @@ public:
   // there is no depth between the eyes. Real stereo needs the guest's scene
   // drawn twice, which is a renderer change; this needs only a different layer.
   void SubmitProjectionLayer();
+  // Asks the runtime for a display rate the port can hold, so the compositor
+  // does not pace it down to a submultiple of the panel's.
+  void RequestDisplayRefreshRate();
 
   // Places the screen in front of wherever the player was looking on the first
   // frame, once. Call after BeginFrame; does nothing thereafter.
