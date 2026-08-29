@@ -288,3 +288,14 @@ the code currently does:
   missing subsampled layout.
 - **Measure before reaching for multiview.** It halves submission and binning, not shading. A
   composite-heavy renderer is more likely fill-bound, where multiview buys nothing.
+
+## Benchmarking
+
+- **Sweep with `tools/bench_quest.py`, never adb by hand.** Every performance knob reaches the game
+  through `args.txt`, so a whole matrix costs no build and no reinstall.
+  `python tools/bench_quest.py levers` runs render scale, shadows and reflections one variable at a
+  time and prints a comparison table; `fill` runs the scissor sweep; `--config "k=v,k=v"` runs
+  anything else and `--targets` adds the per-surface draw census. It encodes the traps that have
+  each cost hours here: every push result is checked rather than assumed, the proximity-sensor
+  broadcast is sent twice, and it prints the reminder that a difference under ~30% is
+  cross-restart noise rather than a result.

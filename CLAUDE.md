@@ -237,6 +237,14 @@ Two things to know before touching the SDK tree:
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
 diagnosing a slow build. The short version:
 
+- **Sweep with `tools/bench_quest.py`, never adb by hand.** Every performance knob reaches the game
+  through `args.txt`, so a whole matrix costs no build and no reinstall.
+  `python tools/bench_quest.py levers` runs render scale, shadows and reflections one variable at a
+  time and prints a comparison table; `fill` runs the scissor sweep; `--config "k=v,k=v"` runs
+  anything else and `--targets` adds the per-surface draw census. It encodes the traps that have
+  each cost hours here: every push result is checked rather than assumed, the proximity-sensor
+  broadcast is sent twice, and it prints the reminder that a difference under ~30% is
+  cross-restart noise rather than a result.
 - **Know the four loop lengths, and pick the shortest one that answers the question.** Measured
   here: a cvar experiment via `args.txt` is **~30s and builds nothing**; a `src/` change is
   **~10s to compile**, ~15s to package, ~5s to install, ~30s to the title screen; a codegen flag
