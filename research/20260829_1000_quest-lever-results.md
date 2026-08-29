@@ -68,3 +68,25 @@ Still an order of magnitude out, and the shape of the remaining work is now unam
 a proven lever with more room in it (render scale below 50, and foveation, which was dismissed on
 the false "not fill-bound" reading and should be reassessed), and the CPU needs the node-submission
 cost attacked directly, with culling as the first candidate.
+
+## Foveation is not the lever it looks like, in this architecture
+
+`bd_render_scale` working reopened fixed foveated rendering, which had been dismissed on the
+since-disproved reading that the frame was not fill-bound. It should stay closed, for a different
+and better reason.
+
+`XR_FB_foveation` reduces the shading rate across an **OpenXR swapchain image**. This port does not
+render the scene into a swapchain image: the guest draws into its own surfaces - the ones
+`D3DDevice_CreateSurface` hands out and `bd_render_scale` resizes - and present composites the
+finished frame into the runtime's image. The 68.7ms of fence is spent in the guest's surfaces.
+Foveating the swapchain would apply to a single full-screen composite blit that costs almost
+nothing.
+
+So foveation is worth exactly nothing **until the guest scene renders directly into per-eye XR
+swapchain images**, which is the same piece of work stereo needs next. After that it is free
+performance and Quest 2 supports it (fixed only - there is no eye tracking). Before that it is
+effort against a blit.
+
+The session currently requests two extensions, `XR_KHR_vulkan_enable` and
+`XR_KHR_android_create_instance`, and adding the foveation pair to that list would compile and do
+nothing measurable.
