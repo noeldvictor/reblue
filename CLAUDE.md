@@ -101,7 +101,8 @@ per-surface census the device does. Set up once:
 
 - The registry record has to name **the directory holding the exe** - running from anywhere else
   raises a modal "running outside of its install directory" with no log line and no exit, which
-  looks exactly like a hang. `HKCU\Software\Zolawareeblue\Install`, `InstallRoot` plus
+  looks exactly like a hang. `HKCU\Software\Zolaware
+eblue\Install`, `InstallRoot` plus
   `SchemaVersion` = 3, and the game data at `<InstallRoot>/game` (a junction is fine).
 - Command-line flags **do not work** - `--help` returns a swallowed CLI11 parse error. Cvars go in
   `<InstallRoot>/profiles/default/reblue.toml`, which is a flat TOML: `bd_xr_autoplay = true`.
@@ -566,9 +567,9 @@ table first, because it is the part that gets stale.
 | Full three-disc game data, a new game starts | Works |
 | Title screen at 30 fps | Works |
 | **In-game frame rate** | **4-8 fps, and ~180ms of it is CPU** |
-| **Mono projection layer - the "in the world" mode** | **Built, never seen render** |
+| Mono projection layer - the "in the world" mode | Works, captured and looked at |
 | **Character-anchored camera modes** | **Do not work** |
-| Stereo, per-eye render | Not started |
+| **Stereo, per-eye render** | **Both eyes render; disparity is flat, so no depth** |
 | Cel shading, tourist mode | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
 
@@ -584,9 +585,8 @@ Three of those rows need saying plainly rather than being read past:
   `research/20260829_1420_autoplay-walks-and-the-anchor-hook-is-dead.md` for everything already
   ruled out - the file being compiled, the hook being registered, `args.txt` being read, and the
   byte-swap being right - so none of it gets re-checked.
-- **The projection layer has never been observed producing an image.** It is built, committed, and
-  replaces the quad in every non-Cinema mode. The one capture taken of it was black; a NaN was found
-  and fixed after that, and the headset went offline before a retest.
+- **The projection layer produces an image**, and there is now a capture of it to point at. This
+  entry said the opposite for weeks on the strength of one black grab taken before a NaN fix.
 - **30 fps is the title screen.** Gameplay is 4-8 fps.
 
 What the player sees is still a flat image on a world-locked screen: the game renders once, from one
@@ -608,7 +608,15 @@ then fails with "file has been modified since the precompiled header was built" 
 actions attached" is not "controllers work". "Swapchain format 37" is not "the colour is right". A
 clean build is not a working feature. Each of those was reported as success on the strength of a log
 line, and each was wrong or unverified. A VR claim is verified when a screenshot has been looked at
-or a number read off a run - and `bd_xr_autoplay` exists so that needs nobody in the headset. Say
+or a number read off a run - and `bd_xr_autoplay` plus `bd_capture_after_s` mean that needs nobody
+in the headset. **`bd_capture_after_s` writes the composited frame to `logs/capture/`** as raw RGBA
+with a one-line header; pull it and convert with PIL. Seconds rather than a bool because `args.txt`
+is read once at launch, so a bool only ever catches the title screen - 143 lands in a field scene,
+after the field comes up at ~130s and before autoplay starts walking at 150s. It cost one plume fix
+(`copyTextureRegion` had no texture-to-buffer case and crashed on a null `dstTexture`) and it has
+already paid for itself twice: it confirmed the projection layer, and it showed stereo has no depth.
+Note the Quest system-screenshot intents complete and write nothing here, and `adb screencap` does
+not see compositor layers, so this is the only route. Say
 "built, unverified" otherwise. That is not a weaker claim, it is an accurate one.
 
 Three lessons from getting this far, all of which cost hours and all of which recur:
@@ -991,12 +999,19 @@ Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and 
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
 game composites into a headset at its native frame rate with working controllers. What is left:
 
-1. **Stereo.** The one thing standing between this and actual VR. Today the scene renders once, from
-   one eye, onto a world-locked quad - a cinema screen rather than a world you are inside. It needs
-   either the guest's scene drawn twice per frame, or per-view matrices reaching shaders whose
-   constants XenosRecomp already baked. **This is a renderer change, not an XR one.** The camera
-   modes are composed and delivered every frame already, so the 6DOF plumbing is live and waiting.
-   Budget: the GPU is 97% idle, so drawing twice is affordable; the CPU is the constraint.
+1. **Stereo - and the remaining work is now a specific number, not "not started".** Both eyes
+   render; a capture proves it. What they do not carry is depth. Per-band SAD matching across a
+   captured frame gives **+59px at the sky and +57px at the near ground** - two pixels across the
+   scene's whole depth range, where real stereo would be tens to hundreds. That is one image shifted
+   sideways.
+
+   The maths is right and the shader is right. `oPos.x += eyeSign * (g_StereoSeparation * oPos.z -
+   g_StereoConvergence * oPos.w)` scales with `oPos.z`, which is parallax rather than a slide. But
+   it runs only in a multiview pipeline, and the log says **12 multiview against 201 mono** - the
+   scene geometry is drawn by the other 201, so the skew never touches it. **So the next piece of
+   work is why 94% of pipelines are still mono**, not the camera maths and not the shader. The
+   camera modes are composed and delivered every frame already, so the 6DOF plumbing is live and
+   waiting. See `research/20260829_1500_looking-at-the-frame.md`.
 2. **The occlusion descriptor set**, which is dropped rather than fixed on Android and costs four
    pipelines. Collapse sets 0/1/2 - one physical set bound three times to satisfy three HLSL
    register spaces - and the layout fits Adreno's four without dropping anything.
