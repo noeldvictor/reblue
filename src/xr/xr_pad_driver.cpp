@@ -60,6 +60,22 @@ u8 ToTrigger(f32 v) {
   return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
 }
 
+// How long to keep mashing A before also walking.
+//
+// Generous, and it has to be: a stick deflection while the file menu is up
+// moves the selection, and the run then sits in a menu for ever - measured as
+// 18 draws/frame with the camera pinned, which reads as a hang rather than as
+// a wrong button. Launch to a field scene is about 130s on a Quest 2 with a
+// cold cache, so this waits past it rather than racing it. Autoplay is for
+// unattended runs that already take minutes; buying certainty with 20 seconds
+// is the right trade.
+constexpr double kWalkStart = 150.0;
+
+// Radians per second around the circle. Slow enough that the character is
+// genuinely traversing rather than spinning on the spot - a fast turn rate
+// looks like movement to the pad and like standing still to the streamer.
+constexpr double kWalkTurnRate = 0.35;
+
 // START once the game has had time to reach its title, then A on a slow
 // repeat. Blue Dragon's opening is START, then a confirm on the file menu,
 // then dialogue - all of which A advances. Held for a few frames because the
@@ -80,6 +96,22 @@ void ApplyAutoplay(PadState &pad) {
   // A for 200ms out of every 1.2s thereafter.
   const double phase = std::fmod(t - 6.4, 1.2);
   pad.a = phase < 0.2;
+
+  // Then walk. Pressing A alone gets the game into the field and leaves the
+  // character standing on the spot, which is not a representative measurement
+  // and, worse, is invisible: the guest only calls bdPlayerFieldMovementUpdate
+  // when the character is actually moving, so every hook on the player object
+  // silently never fires and the position probe below it stays empty. That
+  // read for a long time as "the anchored camera modes do not work".
+  //
+  // A slow circle rather than a straight line, so the character stays in one
+  // region of the map - a straight walk leaves the playable area or hits
+  // geometry and stops, which puts the measurement back where it started.
+  if (t >= kWalkStart) {
+    const double a = (t - kWalkStart) * kWalkTurnRate;
+    pad.leftStickX = static_cast<f32>(std::sin(a));
+    pad.leftStickY = static_cast<f32>(std::cos(a));
+  }
 }
 
 u16 ButtonsFrom(const PadState &pad) {

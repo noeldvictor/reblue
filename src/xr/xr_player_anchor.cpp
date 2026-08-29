@@ -67,7 +67,7 @@ REX_HOOK_RAW(bdPlayerFieldMovementUpdate) {
   const u32 self = ctx.r3.u32;
   __imp__bdPlayerFieldMovementUpdate(ctx, base);
 
-  if (!self || !bd::xr::Settings::Get().Enabled())
+  if (!self)
     return;
 
   using Clock = std::chrono::steady_clock;
@@ -76,6 +76,11 @@ REX_HOOK_RAW(bdPlayerFieldMovementUpdate) {
   const bool due =
       std::chrono::duration<double>(now - last).count() >= 1.0;
 
+  // Deliberately above the Enabled() gate below. The probe is how the position
+  // offset gets identified in the first place, and gating a diagnostic on the
+  // feature it is meant to bring up makes a silent probe ambiguous - it could
+  // mean the hook never fired, or that VR was off, and those need different
+  // fixes. It cost a full device cycle to tell them apart once.
   if (REXCVAR_GET(bd_vr_player_probe) && due) {
     last = now;
     for (u32 off : kCandidateOffsets) {
@@ -85,6 +90,9 @@ REX_HOOK_RAW(bdPlayerFieldMovementUpdate) {
               bd::mem::load<float>(self + off + 8));
     }
   }
+
+  if (!bd::xr::Settings::Get().Enabled())
+    return;
 
   const i32 offset = REXCVAR_GET(bd_vr_player_pos_offset);
   if (offset <= 0)

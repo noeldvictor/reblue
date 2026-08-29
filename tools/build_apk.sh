@@ -57,11 +57,31 @@ echo "==> staging native libraries"
 # extractNativeLibs is on in the manifest, so these need not be page-aligned or
 # stored uncompressed; the installer unpacks them.
 cp "$NATIVE_DIR/libreblue.so" "$NATIVE_DIR/librexruntime.so" "$OUT/staging/lib/arm64-v8a/"
-# The OpenXR loader, when the build has one. libreblue.so links against it by
-# soname, so it has to be in the APK or the app will not start at all.
+# The OpenXR loader. libreblue.so links against it by soname, so if the build
+# needs it and it is not in the APK the app dies in dlopen before main() -
+# "library libopenxr_loader.so not found", logged by the Java harness to
+# logcat, with no reblue log file written at all. That looks exactly like a
+# launch hang, and the previous version of this block made it easy to hit: the
+# path came only from $OPENXR_LOADER, so forgetting to export it silently
+# produced a broken APK that installed and reported success.
+#
+# So: find it without being told, and refuse to package a binary that needs it
+# and has not got it.
+if [ -z "${OPENXR_LOADER:-}" ]; then
+  for cand in "out/xr-loader-android/src/loader/libopenxr_loader.so"; do
+    [ -f "$cand" ] && OPENXR_LOADER="$cand" && break
+  done
+fi
 if [ -n "${OPENXR_LOADER:-}" ] && [ -f "$OPENXR_LOADER" ]; then
   cp "$OPENXR_LOADER" "$OUT/staging/lib/arm64-v8a/"
   echo "    staged $(basename "$OPENXR_LOADER")"
+fi
+# DT_NEEDED is the authority on whether this build actually wants it.
+if grep -aq "libopenxr_loader.so" "$NATIVE_DIR/libreblue.so"    && [ ! -f "$OUT/staging/lib/arm64-v8a/libopenxr_loader.so" ]; then
+  echo "libreblue.so links against libopenxr_loader.so but it is not staged." >&2
+  echo "The APK would install cleanly and then fail in dlopen before main()." >&2
+  echo "Build the loader, or point OPENXR_LOADER at it." >&2
+  exit 1
 fi
 
 echo "==> assembling"
