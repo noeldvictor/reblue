@@ -418,3 +418,6 @@ FodyWeavers.xsd
 *.msp
 /docs/native-renderer-followups.md
 /dist
+
+# vcpkg build artifacts (VCPKG_ROOT=/c/vcpkg, manifest mode)
+vcpkg_installed/
