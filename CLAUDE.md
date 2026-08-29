@@ -1124,18 +1124,23 @@ game composites into a headset at its native frame rate with working controllers
    was adding `-sep` to *both* eyes on top of the host patch), and the **left eye takes the positive
    constant** - backwards renders the scene pseudoscopic, and that is invisible in a symmetric test.
 
-   **Multiview replicates the draw to both layers and does not vary the view index. Measured, from
-   one frame.** `bd_capture_after_s` now captures **both array slices stacked** when the present
-   source is a multiview target, so the two eyes come out of a single frame and there is no
-   cross-run confound. The result is unambiguous: both views fully rendered (97.7% non-black each)
-   and **bit-identical - mean difference 0.00, disparity 0 in every band**. So the geometry is being
-   replicated correctly and `SV_ViewID` reads 0 in both views.
+   **Multiview: the per-eye skew was unreachable code, and that is fixed. It now applies to the
+   wrong draws.** Two findings, both from capturing *both array slices in one frame* -
+   `bd_capture_after_s` does that now when the present source is a multiview target, which is the
+   only way to compare eyes without a cross-run confound.
 
-   The SPIR-V declares `OpCapability MultiView` but carries **no `BuiltIn ViewIndex`** - only
-   `BuiltIn Position` - so `iViewID` is being eliminated somewhere between the emitted HLSL and the
-   shader cache. That is the thing to chase. Note the dumped HLSL contains more than one variant
-   behind `#if`, so compiling it standalone does not necessarily reproduce what the cache build
-   does; check the cache's own SPIR-V rather than a hand compile.
+   First: the skew was emitted at the **end** of the generated vertex shader, after the guest's own
+   `return;`. Dead code. It compiled, DXC dropped it, and the SPIR-V declared `OpCapability
+   MultiView` while carrying **no `BuiltIn ViewIndex`** - healthy-looking and completely inert.
+   Fixed in the XenosRecomp fork by emitting it before the return; the two views of one frame went
+   from bit-identical to a mean difference of 14.6.
+
+   Second, and still open: the disparity is **uniform +38px at every depth**. That is ~0.04 NDC,
+   which is `2 * separation` at `w = 1` - so what is being skewed is a **full-screen post quad**,
+   not scene geometry. The shader skew runs in *every* vertex shader, and a post pass drawing a
+   quad at `w = 1` just slides the finished image sideways. The side-by-side path does not have this
+   problem because the host patch is gated on `scene_pass`. **The shader skew needs the same gate**
+   - it must apply to 3D geometry and not to the post chain.
 
    **Multiview is still not usable, and is now one step further along.** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
