@@ -25,6 +25,7 @@
 #include "src/gpu/shaders/hlsl/copy_depth_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/cel_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/pfx_occlusion_count_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/resolve_msaa_color_2x.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/resolve_msaa_color_4x.hlsl.dxil.h"
@@ -37,6 +38,7 @@
 #include "src/gpu/shaders/hlsl/copy_depth_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/cel_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/pfx_occlusion_count_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/resolve_msaa_color_2x.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/resolve_msaa_color_4x.hlsl.spirv.h"
@@ -289,6 +291,8 @@ bool BuildCopyPipeline(VideoState &s) {
                                            "main", kHostShaderFormat);
   s.gamma_correction_ps = s.device->createShader(
       REBLUE_SHADER_BLOB(gamma_correction_ps), "main", kHostShaderFormat);
+  s.cel_ps = s.device->createShader(REBLUE_SHADER_BLOB(cel_ps), "main",
+                                    kHostShaderFormat);
   s.occlusion_count_ps = s.device->createShader(
       REBLUE_SHADER_BLOB(pfx_occlusion_count_ps), "main", kHostShaderFormat);
   if (!s.copy_vs || !s.copy_color_ps || !s.copy_depth_ps ||
@@ -342,6 +346,16 @@ bool BuildCopyPipeline(VideoState &s) {
       CreateHostGraphicsPipeline(s.device.get(), pipe_desc, "gamma-correction");
   if (!s.gamma_correction_pipeline) {
     BD_ERROR("Plume createGraphicsPipeline for gamma_correction failed");
+    return false;
+  }
+
+  // Cel shading: the same present pass with posterisation and ink lines in
+  // front of the gamma maths. Built unconditionally so bd_cel_shading can be
+  // toggled at runtime without a restart.
+  pipe_desc.pixelShader = s.cel_ps.get();
+  s.cel_pipeline = CreateHostGraphicsPipeline(s.device.get(), pipe_desc, "cel");
+  if (!s.cel_pipeline) {
+    BD_ERROR("Plume createGraphicsPipeline for cel failed");
     return false;
   }
 

@@ -322,6 +322,10 @@ struct VideoState {
   std::unique_ptr<plume::RenderPipeline> copy_color_pipeline;
   std::unique_ptr<plume::RenderPipeline> gamma_correction_pipeline;
   std::unique_ptr<plume::RenderShader> gamma_correction_ps;
+  // Cel shading. Same slot in present as the gamma pass, and does the gamma
+  // work itself, so the two are alternatives rather than a chain.
+  std::unique_ptr<plume::RenderPipeline> cel_pipeline;
+  std::unique_ptr<plume::RenderShader> cel_ps;
   // Exponent of the guest's scanout gamma ramp, captured by the
   // bdBuildGammaRampLUT hook: BD uploads ramp(x) = x^((2-sub)*mul/2) via
   // SetGammaRamp, default settings give x^0.5. Applied at present.

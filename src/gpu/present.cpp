@@ -38,6 +38,8 @@
 #include "gpu/screenshot.h"
 #include "gpu/settings.h"
 
+REXCVAR_DECLARE(bool, bd_cel_shading);
+
 namespace bd::gpu {
 
 namespace {
@@ -253,7 +255,12 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // layout + bindless sets were bound once at BeginCommandList.
   constexpr float kPresentGamma = 1.0f;             // guest ramp unscaled
   constexpr float kPresentDisplayCorrection = 1.0f; // full X360 scanout curve
-  s.command_list->setPipeline(s.gamma_correction_pipeline.get());
+  // Cel shading replaces the gamma pass rather than following it: the cel
+  // shader ends with the same gamma maths, so this is a swap and the push
+  // constants below are unchanged either way.
+  const bool cel = REXCVAR_GET(bd_cel_shading) && s.cel_pipeline;
+  s.command_list->setPipeline(cel ? s.cel_pipeline.get()
+                                  : s.gamma_correction_pipeline.get());
   struct PresentPushConstants {
     u32 descriptor_index;
     u32 descriptor_index_2;

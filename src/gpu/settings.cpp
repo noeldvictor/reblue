@@ -173,6 +173,15 @@ REXCVAR_DEFINE_DOUBLE(bd_effect_distance, 1.0, kCvarGroup,
 // half-width viewport each. One guest frame, one render list, two views - the
 // opposite of bd_stereo_test, which tried to make the guest produce the second
 // view and could not.
+// Fork goal 3. A present-time post-process rather than a material change: Blue
+// Dragon already ships toon shaders, so the characters are lit with a ramp
+// already, and what the art wants on top is ink lines and flatter colour. Doing
+// it at present covers every material without touching XenosRecomp, without a
+// shader cache rebuild, and without having to know which draws are characters.
+REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
+                    "Cel shading: posterised colour and ink outlines, applied "
+                    "over the finished frame. Costs one full-screen pass.");
+
 REXCVAR_DEFINE_BOOL(bd_stereo, false, kCvarGroup,
                     "Submit every draw twice, into left and right half-width "
                     "viewports. Step one of stereo: no per-eye matrices yet, "
