@@ -29,6 +29,28 @@ option(REBLUE_PSO_CAP "Compile in the PSO predictor-miss capture instrument" OFF
 option(REBLUE_PROFILING "Compile in Tracy zones (never in Release)" ON)
 option(REBLUE_PCH "Precompile the hot shared headers" ON)
 
+# Every guest load and store goes through eight macros in the generated PCH,
+# and all eight cast through `volatile`. That forbids the host compiler from
+# eliminating a redundant reload or forwarding a store to a load - on every
+# variable access in the game.
+#
+# Measured on this tree, aarch64 -O2, instructions per function:
+#
+#   bdBuildViewMatrix            1000 -> 818   (-18%, loads 234 -> 135)
+#   bdCameraRender               2068 -> 2037  (-1.5%)
+#   bdPlayerFieldMovementUpdate  2688 -> 2666  (-0.8%)
+#
+# So the win is real but concentrated in maths-heavy code, where there are
+# redundant loads to remove; control-flow-heavy functions barely move.
+#
+# OFF because it is not known to be safe. `volatile` presumably stops the
+# compiler hoisting a load out of a guest spin-loop, and a guest thread polling
+# a flag in shared memory would hang. Nothing has established that Blue Dragon
+# has no such loop. Turn it on to measure on a device, not to ship.
+option(REBLUE_RELAXED_GUEST_MEMORY
+       "Drop volatile from guest RAM accessors (experiment; see the comment)"
+       OFF)
+
 # reblue is the shipping executable and carries every backend-independent
 # subsystem. reblue_vk is the second Windows exe, built out of the same
 # configure so one build dir holds both runtimes.
@@ -179,6 +201,18 @@ target_link_libraries(reblue_common PRIVATE rex::runtime)
 target_compile_definitions(reblue_common PRIVATE REBLUE_COMMON_TU)
 # The hooks include the codegen-emitted reblue_funcs.h.
 add_dependencies(reblue_common reblue_codegen)
+
+if(REBLUE_RELAXED_GUEST_MEMORY)
+    # After codegen, because codegen rewrites the header every time it runs.
+    # The MMIO accessors are deliberately left volatile - those really are
+    # device registers.
+    add_custom_command(TARGET reblue_codegen POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E echo
+                "relaxing guest memory accessors (REBLUE_RELAXED_GUEST_MEMORY)"
+        COMMAND python "${CMAKE_CURRENT_SOURCE_DIR}/tools/relax_guest_memory.py"
+                "${REBLUE_GEN_DIR}/reblue_pch.h"
+        VERBATIM)
+endif()
 
 foreach(target IN LISTS REBLUE_COMMON_TARGETS REBLUE_TARGETS)
     # shader_common.h is the one source of the SPEC_CONSTANT_* values, shared

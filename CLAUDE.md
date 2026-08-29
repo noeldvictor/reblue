@@ -318,11 +318,12 @@ touching guest performance:
   **2,049,797 to 1,306,101 - a 36% cut** - because those scratch registers can now live in ARM64
   registers instead of the context struct. Builds clean; **correctness and fps are both unverified
   on device.** `skip_msr` is the remaining unset flag and is deliberately left alone.
-- **Every guest memory access is `volatile`**, which costs real instructions: a representative
-  recompiled sequence compiles to 11 instructions without it and **23 with**, because redundant
-  reloads and spill-forwarding cannot be eliminated. It cannot simply be removed - a guest
-  spin-loop polling a flag would hang if its load were hoisted - so it needs a flag and device
-  testing.
+- **Every guest memory access is `volatile`**, which costs real instructions, but unevenly. Built
+  both ways and disassembled: `bdBuildViewMatrix` goes 1000 -> 818 instructions and loses **42% of
+  its loads**, while `bdCameraRender` moves 1.5% and `bdPlayerFieldMovementUpdate` 0.8%. The win is
+  in maths-heavy code with redundant loads to remove, not everywhere. `REBLUE_RELAXED_GUEST_MEMORY`
+  turns it off and is **OFF by default**: `volatile` is presumably what stops a guest spin-loop's
+  load being hoisted, and nothing has established Blue Dragon has no such loop.
 - **Two things that look expensive and are not**, recorded so they are not investigated twice:
   FPSCR flush-mode switching is guarded by a cached compare and only writes FPCR on an actual
   change, and indirect dispatch is a range check plus a table lookup. Neither is a bottleneck.
