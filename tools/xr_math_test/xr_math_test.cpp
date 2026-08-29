@@ -16,6 +16,7 @@
  * @license   BSD 3-Clause - see LICENSE
  */
 #include <cmath>
+#include <limits>
 #include <cstdio>
 #include <numbers>
 
@@ -483,6 +484,54 @@ void TestCullVolume() {
   Check(tiltedContained, "containment holds with vertically offset eyes");
 }
 
+// The guest hands out a view matrix full of NaN on some frames - loads, camera
+// cuts - and draws nothing on those, so it never notices. The anchor here is
+// low-passed, and Lerp(NaN, x, t) is NaN, so before this was guarded a single
+// poisoned frame stuck to the camera for the rest of the session and every
+// frame after it rendered black inside the headset.
+//
+// The bug that motivated this test was found on hardware, from a log line,
+// after a black screen. It is exactly the kind of thing this harness should
+// have caught first: it needs no headset and no renderer.
+void TestNaNRecovery() {
+  std::printf("NaN recovery\n");
+
+  const f32 nan = std::numeric_limits<f32>::quiet_NaN();
+  Camera &c = Camera::Get();
+  CameraTuning t;
+  ResetCamera(c, CameraMode::ThirdPerson, t);
+
+  GameCamera good;
+  good.position = {10.0f, 20.0f, 30.0f};
+
+  // Settle on a real camera first, so the anchor holds something valid.
+  for (int i = 0; i < 16; ++i)
+    c.SubmitGameCamera(good);
+  EyeMatrices eye = c.ComposeEye(Pose{}, kFov);
+  Check(std::isfinite(eye.view.m[3][0]), "a normal game camera composes finite");
+
+  // One poisoned frame.
+  GameCamera poisoned;
+  poisoned.position = {nan, nan, nan};
+  c.SubmitGameCamera(poisoned);
+  eye = c.ComposeEye(Pose{}, kFov);
+  Check(std::isfinite(eye.view.m[3][0]),
+        "a NaN game camera does not produce a NaN view");
+
+  // And - the part that actually mattered - the damage must not persist. Every
+  // later frame is good, so every later frame must compose.
+  bool recovered = true;
+  for (int i = 0; i < 8; ++i) {
+    c.SubmitGameCamera(good);
+    eye = c.ComposeEye(Pose{}, kFov);
+    for (int r = 0; r < 4 && recovered; ++r)
+      for (int col = 0; col < 4; ++col)
+        if (!std::isfinite(eye.view.m[r][col]))
+          recovered = false;
+  }
+  Check(recovered, "the camera recovers on the next good frame");
+}
+
 } // namespace
 
 int main() {
@@ -496,6 +545,7 @@ int main() {
   TestWorldScale();
   TestRecentreAndTurn();
   TestCullVolume();
+  TestNaNRecovery();
 
   std::printf("\n%s\n", g_failures == 0 ? "all checks passed"
                                         : "FAILURES PRESENT");
