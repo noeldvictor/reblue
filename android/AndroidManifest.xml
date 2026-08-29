@@ -33,7 +33,8 @@
         android:label="re:Blue"
         android:allowBackup="false"
         android:hasCode="true"
-        android:extractNativeLibs="true">
+        android:extractNativeLibs="true"
+        android:debuggable="true">
 
         <activity
             android:name="com.reblue.ReblueActivity"
