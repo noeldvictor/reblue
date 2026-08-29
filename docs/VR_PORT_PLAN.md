@@ -111,10 +111,44 @@ and quitting does not hang.
 
 **Goal:** the game renders twice, once per eye, into the XR swapchains.
 
-Start with the brute-force approach: two full render passes with different view/projection
-constants. `bdCameraRender` (`0x82142D30`) is the natural boundary — drive it twice per frame with
-different matrices latched. Do not start with multiview; get correctness first, optimise in
-Phase 8.
+**Superseded, 2026-08-29. Do not drive the guest twice.** This section used to say
+`bdCameraRender` (`0x82142D30`) was the natural boundary and to call it twice per frame. It was
+tried, at two levels, and it does not work:
+
+| seam re-entered | draws/frame |
+| --- | --- |
+| off | 826 |
+| `bdCameraRender` | 965 (+15%) |
+| `sub_822D3598`, the whole view driver | 997 (+21%) |
+
+Neither doubles, because **the render list is built once per frame above both seams** and a replay
+finds only the remainder. Forcing it means re-running visibility and sorting per eye, on a frame
+that already carries a ~62ms CPU floor. Re-entering a guest function mid-frame is safe and does work
+- neither experiment crashed - it just does not produce a second scene.
+
+**What does work: record once, submit twice.** `bd_stereo` submits every scene *geometry* draw twice
+in `DispatchDraw`, into left and right viewports, with its own per-eye constant upload. One guest
+frame, one render list, two views - the guest, the traversal, the sort and the draw recording are
+all untouched, and only GPU fill doubles. It renders, with parallax and convergence, verified by
+screenshot on the desktop build.
+
+Three things this cost, all of which a draw count called "working":
+
+- **Doubling every draw** subdivides the frame into vertical stripes: the post chain reads the target
+  it is doubling, so each pass halves again. Restrict to scene geometry.
+- **Restricting by target size** is not enough - the full-resolution post passes render to the scene
+  surface. The discriminator is vertex count: a post pass is a full-screen quad of 3-4 vertices.
+- **The scene-pass threshold must scale with `bd_render_scale`**, or the two features are mutually
+  exclusive: at 50 the scene target falls under a fixed 1280x720 gate and stereo silently applies to
+  nothing.
+
+Per-eye geometry is a skew of the view-projection at VS registers 32-35, which are its **columns**:
+`register32 += separation * register34 + convergence * register35`, i.e.
+`clip.x' = clip.x + sep*clip.z + conv*clip.w`. Reading them as rows mixes components and sends the
+two eyes to different viewpoints. Still to do: per-eye OpenXR views rather than half-viewports, and
+deriving the two constants from a real IPD and the runtime's per-view fov instead of clip-space
+units. `bd::xr::LastGuestProjection()` captures the guest's own projection - 45 degree horizontal
+fov, right-handed, -Z forward, the same handedness OpenXR uses.
 
 Touches:
 
@@ -559,12 +593,29 @@ Registered alongside the existing cvars in `src/gpu/settings.cpp` and surfaced t
 
 ## Immediate next actions
 
-1. Fork `zolaware/plume` and find the device-creation seam. Everything in Phase 0 waits on this.
-2. Stand up `src/xr/` with a `REBLUE_OPENXR=OFF` default so the tree stays green.
-3. Get a black stereo frame on the Quest 2 over Link, from `reblue_vk.exe`.
-4. In parallel and independently: attempt the ReXGlue SDK `android-arm64` cross-build. It is
-   pure information and it is the longest pole — start it early even though it is Phase 6.
-5. Whenever you want a quick win that touches nothing else: tourist mode (Phase 5b). The character
-   model and stat breakdown already exist, so it is a genuinely small piece of work.
+Rewritten 2026-08-29. Everything the old list asked for is done: plume is forked with the seam,
+`src/xr/` is up, the SDK cross-builds for android-arm64, and tourist mode works.
 
-Do not start with OpenXR on-device. Do not start with cel shading.
+**1. Put the Quest on USB and run `python tools/bench_quest.py all`.** One command, no build. It
+sweeps the levers verified on desktop, one variable at a time, and prints a table. Everything below
+is gated on what it says.
+
+**2. Read `elsewhere` in that run, not just the fence.** The frame's two halves may not be
+independent. `bd_debug_max_draws=500` once took the Quest's CPU from 60.7ms to 29.5ms - 31ms across
+~2400 draws, where the renderer cost measured on desktop predicts about 10ms. The factor of three
+suggests part of the "CPU floor" is the guest waiting on the render thread, in which case
+**`bd_render_scale=50` will shrink it as a side effect** and the floor is partly a symptom of the
+fill problem. If `elsewhere` does not move, it is real computation.
+
+**3. Only then choose the CPU work.** If the floor is real, the census
+(`bd_guest_census`) says `bdSceneNodeDrawSingle` dominates - 420 calls a frame against
+`bdAnimBoneEvaluate`'s 63 - so the lever is submitting fewer nodes, and `src/xr/xr_cull.cpp` is
+written, unit-tested and connected to nothing. Run the census in a battle first: it has already
+changed its own answer once by looking somewhere new.
+
+**4. Stereo on the headset.** `bd_stereo` renders correctly on desktop. The device step is per-eye
+OpenXR views instead of half-viewports; the present path already owns its target, which is what
+makes it small.
+
+Do not hand-write `bdAnimBoneEvaluate` - the census says it is a tenth of the cost the plan assumed.
+Do not build culling before step 2. Do not start with cel shading.
