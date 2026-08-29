@@ -321,3 +321,48 @@ what the function does with them is wrong. Establishing that properly means foll
 than inferring from the call shape. That is the next step and it is pure source reading, no device.
 
 Recorded so the same 20 minutes are not spent again on the same guess.
+
+## The guest's projection, in a known convention at last
+
+`config/functions.toml` already named the two helpers `bdCameraViewSetMatrices` calls:
+**`bdCameraViewSetMatrix` (0x82135128) is the view and `bdCameraViewSetProjMatrix` (0x821351A8) is
+the projection**, each taking the source matrix in `r5`. So the earlier reading was wrong in an
+instructive way - `r31+84` and `r31+148` *are* the right addresses, they are just the buffers the
+engine copies *from*, and 0x82DDA964 is exactly what `r5` turns out to hold.
+
+Hooking the projection setter and reading `r5` gives, in a live field scene:
+
+```
+[ 2.41421  0.00000  0.00000  0.00000]
+[ 0.00000  4.29193  0.00000  0.00000]
+[ 0.00000  0.00000 -1.00005 -1.00000]
+[ 0.00000  0.00000 -1.00005  0.00000]
+```
+
+An ordinary perspective projection. 2.41421 is cot(22.5), so a 45 degree horizontal field of view;
+4.29193 is that times 16/9; and the -1 at [2][3] is the perspective divide taken from **-Z**. So the
+engine's projection is right-handed with -Z forward - **the same convention OpenXR uses**, which is
+a genuine piece of luck given how much of this file is about handedness going wrong.
+
+### Three failed reads, one cause
+
+It took three attempts to see this, and all three failed the same way: **`bd::mem::try_load` already
+returns host order.** Byte-swapping its result again turned a clean matrix into 8.4e34 and a field
+of zeros, which read as uninitialised memory and sent two investigations down the wrong path. The
+fix was to stop interpreting and dump raw words in hex both ways round - `401A8279` is 2.41421 read
+directly, and nothing at all read backwards.
+
+Every read of a *guest structure* swaps, which is why the reflex was there. A helper that has already
+done it for you is the exception, and this one is not obviously named.
+
+### What this unlocks
+
+An off-centre per-eye frustum is now a single term in a matrix whose layout is known: **`[2][0]`
+shifts the frustum horizontally without moving the eye**, which is exactly the asymmetric projection
+`xr_math` already produces and unit-tests. Paired with an eye translation in the view matrix from
+the sibling hook, that is correct stereo geometry rather than the empirical shear currently in
+`DispatchDraw`.
+
+`bd::xr::LastGuestProjection()` now exposes the captured matrix, and
+`config/hooks/stereo.toml` carries the hook. The remaining work is to apply the per-eye projection
+at the point the constants are uploaded, replacing the skew.

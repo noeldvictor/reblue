@@ -26,3 +26,21 @@ address = 0x822D3C50
 name = "bdStereoSecondViewHook"
 registers = ["r31"]
 after_instruction = true
+
+# The camera's view and projection, at the point the engine sets them.
+#
+# bdCameraViewSetMatrices (0x82135228) calls these two in turn, and
+# config/functions.toml already names them: bdCameraViewSetMatrix is the view,
+# bdCameraViewSetProjMatrix is the projection. r5 is the source matrix in both
+# cases - 16 floats of guest-endian data.
+#
+# This is the seam correct per-eye stereo belongs on. The clip-space skew in
+# DispatchDraw works but is empirical: it shears whatever transform occupies VS
+# register 32, which is the identity for many draws and an affine matrix with a
+# 0.041 scale for others, and is certainly not a view-projection.
+
+[[midasm_hook]]
+address = 0x821351A8
+name = "bdCameraProjMatrixHook"
+registers = ["r5"]
+after_instruction = false
