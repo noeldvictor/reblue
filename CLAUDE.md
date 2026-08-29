@@ -384,7 +384,24 @@ optimising anything, read `research/20260828_2010_quest-frame-budget.md`:
 
 Two defaults exist because of that note, and both are Android-only: `bd_max_render_height` 720 (the
 renderer otherwise sizes the scene to the 3664x1920 headset panel, costing 119ms a frame for a
-1280x720 game) and `bd_shadow_dimension` 1024. MSAA deliberately stays at 4x.
+1280x720 game) and `bd_shadow_dimension` 1024.
+
+**Measure on gameplay, not on the title screen.** Every number in that note was taken at the title
+screen, and the title screen is not representative of anything - it is a static 2D image with the
+GPU 97% idle. In an actual field scene, at the same 720p cap, the same build costs:
+
+```
+frame 237ms = xrWait 7.3 + submit 0.2 + present 0.0 + fence 108.3 + drain 1.6 + elsewhere 119.3
+```
+
+**Both ends are loaded**: ~108ms GPU and ~119ms CPU, against 1ms and 17ms at the title. So the
+conclusion drawn there - that the GPU is idle and only CPU work matters - is true of the title
+screen and false of the game. The MSAA default was chosen on that basis and is the first thing to
+re-test: a real scene runs a multi-pass post chain that a static title screen never touches, and 4x
+MSAA on a tiler pays for every one of those passes.
+
+The honest state: the title screen runs at its native 30 fps, and gameplay does not. Do not quote
+the title-screen numbers as the port's performance.
 
 **A near-zero GPU fence does not mean the GPU is idle.** It means the GPU was not the last thing
 waited on. A blocking present upstream hides the entire cost.
