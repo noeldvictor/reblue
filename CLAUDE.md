@@ -647,7 +647,7 @@ table first, because it is the part that gets stale.
 | **In-game frame rate** | **4-8 fps, and ~180ms of it is CPU** |
 | Mono projection layer - the "in the world" mode | Works, captured and looked at |
 | Character-anchored camera modes | Anchored off the follow camera; unit-tested, untuned |
-| Stereo, per-eye render | **Works.** Crossed disparity, correctly signed, 24.5 fps |
+| Stereo, per-eye render | **Works on device.** far +3 / near -33px crossed, 28-30 fps |
 | Cel shading, tourist mode | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
 
@@ -1113,7 +1113,28 @@ Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and 
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
 game composites into a headset at its native frame rate with working controllers. What is left:
 
-0. **Two things a user spotted immediately, both real, both open.**
+0. **Measured on the Quest, 2026-08-29, with everything from that day in.**
+
+   ```
+   [xr] 29.7 fps | frame 33.7ms = xrWait 13.1 + fence 0.2 + drain 0.5 + elsewhere 19.8
+   stereo disparity: far +3px, near -33px, near - far = -36px  -> crossed, correct
+   ```
+
+   **Stereo, on hardware, at the game's native rate**, in the 60/2 tier - `bd_xr_refresh_rate=60,
+   bd_render_scale=25, bd_reflections=false, bd_cull_distance=350, bd_stereo=true,
+   bd_stereo_separation=0.02`. Stereo used to cost a whole tier (20 fps / 50ms); it no longer does.
+   Frame rate still varies 20-30 fps with what is on screen, so quote the range, not the best.
+
+   **`REBLUE_RELAXED_GUEST_MEMORY` hangs the game on ARM64. Do not enable it.** This file used to
+   say `volatile` was "presumably what stops a guest spin-loop's load being hoisted, and nothing has
+   established Blue Dragon has no such loop". Now something has: with the flag on, the app starts,
+   logs 67 lines, and sits there alive and stuck - no crash, no error. On x86 it was worth exactly
+   **0%** (17.9ms either way), so there is nothing to trade for the risk. Two traps if you try it
+   anyway: the relax step is a POST_BUILD on `reblue_codegen`, so it does nothing unless codegen
+   actually re-runs; and it rewrites the **shared** `generated/` header, so a desktop configure
+   silently relaxes the Android build too.
+
+1. **Two things a user spotted immediately, both real, both open.**
    - **2D overlays land across the eye seam, not in each eye.** The intro's "Microsoft Game Studios"
      is drawn *once* at full viewport width, so it straddles the middle of a side-by-side frame and
      each eye sees half of it. 2D draws fail the `scene_pass` gate - few vertices - so they are not
@@ -1137,7 +1158,7 @@ game composites into a headset at its native frame rate with working controllers
      **So the performance work is the guest CPU** - the "Rewriting the recompilation is in scope"
      section - and not the renderer, not draw submission, and not the GPU.
 
-1. **Stereo works, on the side-by-side path.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
+2. **Stereo works, on the side-by-side path.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
    **near - far = -16px** - crossed, correctly signed, monotone with depth. Before it was flat to
    2px. Verified from a capture with `bd_capture_after_s`; nobody has to wear the headset to check.
 

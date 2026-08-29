@@ -106,11 +106,20 @@ if(REBLUE_REXGLUE)
     if(NOT EXISTS "${REBLUE_REXGLUE}")
         message(FATAL_ERROR "REBLUE_REXGLUE does not exist: ${REBLUE_REXGLUE}")
     endif()
-    set_target_properties(rex::rexglue PROPERTIES IMPORTED_LOCATION "${REBLUE_REXGLUE}")
-    get_target_property(rexglue_configs rex::rexglue IMPORTED_CONFIGURATIONS)
+    # rex::rexglue is an ALIAS in some SDK slices, and set_target_properties
+    # refuses to touch an alias - "can not be used on an ALIAS target", which
+    # takes the whole configure down. Resolve to the real target first.
+    set(rexglue_target rex::rexglue)
+    get_target_property(rexglue_aliased rex::rexglue ALIASED_TARGET)
+    if(rexglue_aliased)
+        set(rexglue_target ${rexglue_aliased})
+    endif()
+    set_target_properties(${rexglue_target} PROPERTIES
+        IMPORTED_LOCATION "${REBLUE_REXGLUE}")
+    get_target_property(rexglue_configs ${rexglue_target} IMPORTED_CONFIGURATIONS)
     if(rexglue_configs)
         foreach(cfg IN LISTS rexglue_configs)
-            set_target_properties(rex::rexglue PROPERTIES
+            set_target_properties(${rexglue_target} PROPERTIES
                 IMPORTED_LOCATION_${cfg} "${REBLUE_REXGLUE}")
         endforeach()
     endif()
