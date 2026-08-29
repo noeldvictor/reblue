@@ -147,3 +147,13 @@ address = 0x8228259C
 name = "bdSceneCullDistanceHook"
 registers = ["r3"]
 after_instruction = false
+
+# Site test for the second path to bdSceneNodeDrawSingle. Only the compare, and
+# a body that reads no guest memory and changes nothing - just a counter. If the
+# app still hangs before logging with this in, the *site* is the problem; if it
+# runs, the previous hang came from the body or from the r4 read alongside it.
+[[midasm_hook]]
+address = 0x82282760
+name = "bdSceneCullSiteProbe"
+registers = []
+after_instruction = false

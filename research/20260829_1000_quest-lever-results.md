@@ -161,3 +161,60 @@ cull_bias=0.6`), against a 5.9 fps baseline. **2.6x.**
 The GPU half is finished as an engineering problem. Everything from here is the ~56ms of CPU, and
 the two things that have moved it are draw count (a little) and nothing else yet. The census points
 at `bdSceneNodeDrawSingle`; the bias experiment says size is the wrong way to select what to cut.
+
+## Distance culling: the CPU floor comes down 43%
+
+Measured with the repaired loop - the one that waits for the app to actually die and refuses to
+report a run that produced no new log:
+
+```
+configuration                                    frame    fence     else    fps   draws
+render_scale=25, reflections=false              75.3ms    0.1ms   65.8ms   13.3   3713
+  + cull_distance=1200                          73.2ms    0.1ms   64.8ms   13.7   3649
+  + cull_distance=600                           47.0ms    0.2ms   37.4ms   21.3   1731
+```
+
+**At 600 the draw count halves and the CPU falls from 65.8ms to 37.4ms - 43% - for 13.3 -> 21.3
+fps, a 1.60x.** Far outside the +/-30% band, and the largest single win in the port so far.
+
+Against this morning's 5.9 fps baseline that is **3.6x**.
+
+It also confirms the census: node submission *is* the CPU floor. Halving the nodes halved the CPU,
+which is what a cost that is per-node and nothing else looks like.
+
+### It worked the whole time
+
+`bd_cull_distance` was reported as "no effect" twice. Both reports were invalid, and for the same
+reason: **`am force-stop` does not reliably kill a VR app the Oculus runtime is holding.** The
+process survived, `am start` became a no-op, the app carried on with its previous args, and every
+configuration in the sweep measured the same unchanged live process - producing tables of identical
+numbers that read as "this setting does nothing".
+
+Two conclusions were published from that: that the cull did nothing, and that a second call path
+must be bypassing it. Both wrong. The second path, `sub_82282608`, was then hooked, hung the guest,
+and was reverted with a further wrong explanation about addresses.
+
+A site probe settles it: **the second path never executes in this scene at all** - an inert hook on
+its compare never fires once. Every one of the ~2000 `bdSceneNodeDrawSingle` calls a frame comes
+through `bdSceneNodeCullTraverse`, the path that was hooked correctly from the start.
+
+**The tooling was the bug, and it cost three wrong conclusions.** A measurement loop that silently
+reports the previous run is worse than no measurement, because it is indistinguishable from a real
+negative result. `bench_quest.py` now polls `pidof` until the process is gone, records the newest
+log before launch and discards the run if it has not changed, and warns when every configuration
+produces an identical frame time - which is the check that finally caught it.
+
+### Where the frame is now
+
+| | |
+| --- | --- |
+| this morning | 5.9 fps |
+| now | **21.3 fps** at `render_scale=25, reflections=false, cull_distance=600` |
+| GPU | 0.2ms - still nothing |
+| CPU | 37.4ms, still the whole frame |
+| 72 fps needs | 13.9ms |
+
+The CPU is still 2.7x too slow, and it is still node submission. `bd_cull_distance` is a blunt
+instrument - things pop in at the boundary - so the next move is either a gentler curve (fade rather
+than cut) or attacking the per-node cost itself, which is `bdSceneNodeDrawSingle` at 7,740 bytes of
+recompiled PowerPC per node.

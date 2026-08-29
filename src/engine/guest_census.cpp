@@ -214,3 +214,13 @@ void bdSceneCullDistanceHook(PPCRegister &r3) {
     BD_INFO("[cullhook] fired, limit={:.0f} decision={} r3now={}",
             REXCVAR_GET(bd_cull_distance), g_cull_this_node, r3.u32);
 }
+
+// Deliberately inert: no guest memory read, no register written, no cvar
+// lookup. Its only job is to answer whether hooking 0x82282760 at all is what
+// hung the guest.
+void bdSceneCullSiteProbe() {
+  static std::atomic<u64> hits{0};
+  const u64 n = hits.fetch_add(1, std::memory_order_relaxed);
+  if (n == 0 || n == 5000)
+    BD_INFO("[siteprobe] second-path compare reached, hit {}", n);
+}
