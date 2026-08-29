@@ -1,7 +1,7 @@
 [submodule "thirdparty/plume"]
 	path = thirdparty/plume
 	url = git@github.com:noeldvictor/plume.git
-	branch = reblue-openxr
+	branch = main
 [submodule "thirdparty/XenosRecomp"]
 	path = thirdparty/XenosRecomp
 	url = git@github.com:noeldvictor/XenosRecomp.git

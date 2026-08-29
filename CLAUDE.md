@@ -285,10 +285,23 @@ lives.
 Both patches outgrew `patches/` and now live as real history in the owner's forks. **Push changes
 to these, do not add new patch files.**
 
+**Work on `main` in every fork.** No feature branches, matching how this repo itself is worked.
+
 | Submodule | Fork | Branch | Carries |
 | --- | --- | --- | --- |
-| `thirdparty/plume` | `noeldvictor/plume` | `reblue-openxr` | `VulkanInterfaceOptions`, so an OpenXR runtime can name the instance extensions, device extensions, physical device and minimum API version |
-| `thirdparty/XenosRecomp` | `noeldvictor/XenosRecomp` | `reblue` | Unmodified so far. `zolaware-main` on the same fork carries the full upstream history it was taken from |
+| `thirdparty/plume` | `noeldvictor/plume` | **`main`** | `VulkanInterfaceOptions` so an OpenXR runtime can name its extensions and physical device, plus Vulkan multiview: `viewMask` on the pipeline and framebuffer descs, and the `VkPhysicalDeviceMultiviewFeatures` enable without which a view mask is silently ignored |
+| `thirdparty/XenosRecomp` | `noeldvictor/XenosRecomp` | `reblue` (see below) | `SV_ViewID` on every vertex shader and the per-eye off-axis skew that makes multiview stereo work, plus `vs_6_1` because `SV_ViewID` is a shader model 6.1 semantic |
+| ReXGlue SDK (not a submodule) | `noeldvictor/rexglue-sdk` | **`main`** | The Android ARM64 port |
+
+**XenosRecomp is the exception, and it needs a decision.** Its fork carries three branches:
+`main` is the *original upstream* (hedge-dev), `zolaware-main` is the full history the reblue fork
+was taken from, and `reblue` is the working branch our commits sit on. `main` and `reblue` have
+**unrelated histories**, so the work cannot simply be merged onto `main` - moving it there means
+force-pushing `main` to the reblue lineage, which discards the upstream history that branch
+currently holds. `zolaware-main` preserves what matters, so this is safe to do, but it is
+destructive and has not been done.
+
+Until then `reblue` is the branch, and it is where the multiview work is pushed.
 
 The ReXGlue SDK is **not** a submodule - it is cloned to `out/rexglue-src` and pointed at with
 `REXSDK_DIR`, because no `android-arm64` release slice exists. Its Android port is

@@ -536,6 +536,23 @@ void Session::EndFrame(const FrameState &state) {
       projViews[i].subImage.imageRect.extent = {eyeW, fullH};
       projViews[i].subImage.imageArrayIndex = 0;
     }
+    // One-shot: what the compositor is actually handed per eye. This is the
+    // only part of stereo that can be checked without wearing the headset -
+    // two different offsets mean two different pictures reach the two eyes.
+    {
+      static bool logged = false;
+      if (!logged) {
+        logged = true;
+        BD_INFO("[xr] projection views: eye0 rect {}x{}+{} eye1 rect {}x{}+{} "
+                "(sideBySide={})",
+                projViews[0].subImage.imageRect.extent.width,
+                projViews[0].subImage.imageRect.extent.height,
+                projViews[0].subImage.imageRect.offset.x,
+                projViews[1].subImage.imageRect.extent.width,
+                projViews[1].subImage.imageRect.extent.height,
+                projViews[1].subImage.imageRect.offset.x, sideBySide);
+      }
+    }
     projection.space = AsSpace(appSpace_);
     projection.viewCount = 2;
     projection.views = projViews;
