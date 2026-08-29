@@ -43,10 +43,16 @@ option(REBLUE_PCH "Precompile the hot shared headers" ON)
 # So the win is real but concentrated in maths-heavy code, where there are
 # redundant loads to remove; control-flow-heavy functions barely move.
 #
-# OFF because it is not known to be safe. `volatile` presumably stops the
-# compiler hoisting a load out of a guest spin-loop, and a guest thread polling
-# a flag in shared memory would hang. Nothing has established that Blue Dragon
-# has no such loop. Turn it on to measure on a device, not to ship.
+# OFF because it HANGS THE GAME. Measured 2026-08-29 on the desktop build: the
+# guest stops during startup, just after "guest debug config applied", with no
+# crash and no fatal - it simply never proceeds. `volatile` is what stops the
+# compiler hoisting a load out of a guest spin-loop, and Blue Dragon has such a
+# loop on the startup path. See
+# research/20260829_0700_relaxed-guest-memory-hangs.md.
+#
+# Kept rather than deleted, because a narrower version is still plausible -
+# relaxing leaf functions with no loops, or excluding known poll sites - and
+# because the measurement is worth being able to repeat.
 option(REBLUE_RELAXED_GUEST_MEMORY
        "Drop volatile from guest RAM accessors (experiment; see the comment)"
        OFF)
