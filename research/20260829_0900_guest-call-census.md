@@ -116,3 +116,48 @@ the seam. Distance culling and LOD sit next to it.
 
 Before building any of that: **run this census in a battle.** A field scene has one party member,
 and the ranking has already changed once by looking somewhere new.
+
+## Correction: bd_debug_max_draws does not test the census inference
+
+The previous section concluded "the CPU pays for draws" and pointed at culling. The experiment run
+to check it says something narrower, and the difference matters.
+
+`bd_debug_max_draws` caps submission inside `DispatchDraw`, which is **host** code. The guest still
+walks every scene node, so `bdSceneNodeDrawSingle` still runs its 420 times whatever the cap is.
+Capping therefore removes renderer cost only, and cannot say anything about the guest-side node
+submission the census measured.
+
+Desktop, last 400 frames:
+
+| cap | CPU (`other_ms`) | 
+| --- | --- |
+| none | 4.20ms |
+| 400 | 3.70ms |
+
+0.5ms for roughly 440 skipped draws is **~1.1us per draw of renderer cost**, which agrees with the
+`flushState` 0.8ms and `bindFB` 0.2ms already reported. Nothing about the guest.
+
+### Which makes the Quest number strange, in a useful way
+
+On the Quest, `bd_debug_max_draws=500` took `elsewhere` from **60.7ms to 29.5ms** - 31ms across
+about 2400 skipped draws, or ~13us per draw. Desktop is roughly 3x faster per core, so renderer cost
+there should be near 3.3us per draw. **13us is four times too much to be renderer work.**
+
+The explanation that fits is **back-pressure**: part of what the Quest frame counts as `elsewhere` is
+the guest thread waiting on the render thread, not computing. Fewer submitted draws means less GPU
+work, which means a shorter wait, which shows up as "CPU" time that was never CPU work.
+
+If that holds, then some of the ~62ms floor is not a floor at all, and **the fill work already
+verified would shrink it as a side effect** - the two halves of the frame are not as separable as
+this note has been assuming.
+
+### How to settle it, in one run
+
+It needs the device, and it is already covered by the `levers` preset:
+`bd_render_scale=50` makes the GPU much faster while leaving every draw and every guest node walk
+exactly where it was. If `elsewhere` falls, the wait was real and the CPU floor is partly a
+symptom. If `elsewhere` does not move, the floor is genuine computation and culling is worth
+building.
+
+**Do not build the culling change before running that.** The inference that pointed at culling came
+from a census that measures calls, checked against an experiment that measures something else.
