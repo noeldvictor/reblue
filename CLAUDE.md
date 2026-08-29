@@ -580,27 +580,51 @@ fence, 183ms a frame - identical within noise to VR on. **Blue Dragon runs at 5.
 with the flat renderer.** The session, the layer, the camera composition and the pad cost
 essentially nothing. The port is slow; VR was never the reason.
 
-And the GPU half is **insensitive to resolution**: 720p and 360p both cost ~110ms. So it is not
-fill, not blend, not framebuffer bandwidth - which eliminates every quality setting, and foveated
-rendering with them, since that only reduces shading rate.
+### The bottleneck is fragments
 
-**Proven draw-bound.** `bd_debug_max_draws` caps draws per frame (a measurement, not a setting - the
-frame renders wrong). At ~2925 draws the frame is 183ms with 112.8ms on the fence; at 500 draws it
-is **30.1ms with 0.1ms on the fence**, i.e. 5.5 fps becomes 33 fps. Working the cost out from both
-points gives roughly **60 microseconds of GPU time per draw**, near enough linear.
+**Proven fill-bound.** `bd_debug_fill_scale` shrinks the *scissor* to N percent of the viewport
+without touching the viewport, so vertex work, draw count, pipeline state and every upload stay
+bit-identical and only the surviving fragment count moves. A field scene, MSAA off:
 
-60µs a draw is the anomaly - a simple mobile draw should be single-digit microseconds, and 2925 of
-them at that price *is* the frame. It is a per-draw constant roughly two orders of magnitude too
-large, and it is resolution independent, which is exactly why every quality setting failed to move
-it. **Finding what that 60µs is, is now the whole problem.**
+| `bd_debug_fill_scale` | fragments | fence | frame | draws |
+| --- | --- | --- | --- | --- |
+| 100 | 1.0x | **141ms** | 210ms | 2812 |
+| 50 | 0.25x | **17ms** | 98ms | 2902 |
+| 25 | 0.0625x | **0.1ms** | 71ms | 3095 |
 
-What is left is ~2925 draws a frame on a tile-based renderer, which points at the **binning pass** -
-a tiler runs all geometry through vertex processing before shading, and that scales with draw calls
-and vertex count, not pixels. Not yet proven: `gpu_total_ms` reads 3.5ms against a 110ms fence, but
-that column is unreliable at this draw count (one timestamp per draw into a 512-entry pool). The
-next step is `ovrgpuprofiler` or Snapdragon Profiler, not another guess.
+**3095 draws and 450,000 vertices cost the GPU 0.1ms.** Draws and geometry are free; fragments are
+the entire GPU cost. The fall is super-linear because a tiler skips tiles that contain nothing.
 
-See `research/20260828_2330_the-real-bottleneck.md` for the eliminations, and note that
+**Two earlier conclusions were wrong, and both failed the same way - one experiment, two variables.**
+
+- *"Draw-bound"*, from `bd_debug_max_draws` taking the fence from 112.8ms to 0.1ms. Removing a draw
+  removes its fragments too, so that test can never separate the two. The scissor test holds draws
+  fixed and still empties the GPU. There is no 60µs-per-draw anomaly and no binning problem.
+- *"Insensitive to resolution"*, from `bd_max_render_height` moving nothing. It was resizing the
+  wrong surface. A per-target draw census (`NoteDrawTarget`, keyed on the surface, in the `[perf]`
+  line) at `bd_max_render_height=360` shows `1280x720: 2434 draws` **unchanged** beside
+  `688x360: 22 draws`. The scene renders into a surface pinned to the design canvas
+  (`kDesignCanvasWidth/Height`), created by the guest through `D3DDevice_CreateSurface`; the cvar
+  sizes the output fit. Foveated rendering was dismissed on this evidence and should be reassessed.
+
+`bdOutputResViewScaleHook` only ever scaled *up*, so the canvas was a floor - but removing that
+guard is **inert**, the scene surface does not come through that hook. The seam is
+`D3DDevice_CreateSurface_hook` (`src/gpu/hooks/resource.cpp`), which is where `bd_render_scale`
+acts.
+
+**There is also a hard CPU floor of ~62ms.** At `fill_scale=25` the GPU is idle and the frame is
+still 71ms, so the CPU alone caps the port near **14 fps**: ~46ms guest simulation plus ~14ms draw
+recording. Fixing fill completely gets a field scene to roughly 10-14 fps, not to 72. Both halves
+have to be solved, and only the GPU half currently has a proven lever.
+
+**Do not trust a static count of the emitted HLSL.** A pixel shader body reads like 143-158 global
+loads per fragment because the constants are `#define`s that re-expand at every use. Hoisting them
+to entry-initialised statics was implemented and **changed the compiled SPIR-V by +0.2%** - DXC
+already CSEs them. Measured by rebuilding the shader cache and comparing size, no device needed.
+Reverted. The same idea was separately tried and reverted for vertex shaders.
+
+See `research/20260829_0230_the-frame-is-fill-bound.md` for the full trail and
+`research/20260828_2330_the-real-bottleneck.md` for the eliminations it corrects. Note that
 `src/xr/xr_cull.cpp` is **dead code** - written, unit-tested, never connected to anything.
 
 ### The Quest frame budget

@@ -91,3 +91,63 @@ is likely worth more than the resolution scaling.
 - `NoteDrawTarget` - per-target draw census in the `[perf]` line. Permanent.
 - `bd_debug_max_draws`, `bd_debug_max_pso` - kept, but read the caveat above: neither isolates a
   single variable.
+
+---
+
+## Follow-up, same session: two hypotheses tested without a device
+
+The Quest dropped off USB partway through, so both of these were settled from the emitted shader
+dump and the shader cache instead. Recording them because both looked strong and both were wrong.
+
+### "Pixel shaders do 143-158 global loads per fragment"
+
+Counting `vk::RawBufferLoad` in the dumped HLSL bodies gives 143-158 per pixel shader invocation
+against 91 for a vertex shader - the constants are `#define`s, so every textual use re-expands into
+a load, and `ShadowTexture_Texture2DDescriptorIndex` appears 13 times (once per PCF tap) with
+`g_ShadowPcfScale` 10 times. Unlike the vertex shaders, **pixel shaders use no `a0`-indexed form at
+all** - 0 indexed macros, 116 scalar macro uses from 75 distinct constants - so the "hoist to a
+`static const`" fix that provably does nothing for vertex shaders should have been a pure win here.
+
+Implemented in the fork, in `shader_common.h` (the shared scalars) and `shader_recompiler.cpp` (the
+single-register float4s and the sampler descriptor indices), leaving the parameterised forms as
+macros. Rebuilt the shader cache and compared:
+
+```
+before: 2,740,507 bytes
+after : 2,746,387 bytes   (+0.2%)
+```
+
+**DXC already common-subexpression-eliminates them.** The compiled output is unchanged; the loads
+never existed outside the HLSL text. Reverted.
+
+This is a cheap and reusable technique: a codegen change that should shrink the shader can be
+accepted or rejected by rebuilding `shader_cache.cpp` and comparing its size, in about a minute,
+with no device and no deploy.
+
+### "The pixel shaders are 1000-line ubershaders"
+
+`bd_normal_ps` has a 986-line body, `bd_mirror_ps` 1179, against 11 texture ops each. But the bodies
+are properly branched - 40 `if`s on uniform booleans (`g_bNMap`, `g_bShadowMap`, `g_bTexture0`),
+only 5 `select`s and no loops - so the paths are not flattened, and much of the line count is the
+shared `tfetch2D`/`tfetch3D` helper library that every shader includes, including an unrolled
+bicubic filter that costs four samples when used.
+
+So neither the constant loads nor a flattened ubershader explains the fragment cost. **What makes a
+fragment expensive here is still unknown** and needs a GPU profiler on the device, not another read
+of the source.
+
+## Status of the fix
+
+`bd_render_scale` (25-100, default 100) scales scene surfaces at
+`D3DDevice_CreateSurface_hook`, for requests at or above the design canvas only, and converts the
+guest's own viewports by the bound target's actual/requested ratio in `D3DDevice_SetViewport_hook`
+(`GuestTexture::requestedWidth/Height` carries it). The resolve path already handles a scaled
+resolve - `CopySurfaceToTextureLocked` has a comment describing a 672x720 scene resolving to
+1280x720 - so the downstream is in place.
+
+**It compiles and has never been run.** The device left before it could be deployed. Expect
+`bd_render_scale=50` to quarter the fragment cost and take the fence from ~141ms to roughly 17ms by
+analogy with the scissor sweep, giving a ~98ms frame; the ~62ms CPU floor is untouched by it. The
+things to check on the first run are the post-process chain, which samples the scene surface and
+derives texel offsets from dimensions the guest still believes are 1280x720, and anything that reads
+`bdSetViewportConstants`' (1/W, 1/H) in VS/PS c21.

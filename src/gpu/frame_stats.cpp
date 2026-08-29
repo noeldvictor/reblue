@@ -40,11 +40,16 @@ std::atomic<u64> g_ph_state{0};
 
 // Draw counts and pixel area per distinct render target size. Small fixed
 // table rather than a map: this is on the per-draw path.
+// Keyed on the surface itself, not on its dimensions. Keying on dimensions
+// lumps every distinct 1280x720 surface into one row, which hides a pass that
+// re-renders the scene into a second surface of the same size.
 struct TargetTally {
-  u32 w = 0, h = 0, draws = 0;
+  const void *id = nullptr;
+  u32 w = 0, h = 0, draws = 0, binds = 0;
 };
 std::mutex g_target_mutex;
-TargetTally g_targets[12];
+TargetTally g_targets[24];
+const void *g_last_target = nullptr;
 std::atomic<u32> g_stat_draws{0};
 std::atomic<u32> g_barrier_call_count{0};
 std::atomic<u32> g_barrier_count{0};
@@ -133,7 +138,7 @@ void UpdateFrameStats() {
         // Sorted by pixel volume, because the question is which surface is
         // eating the fill rate, not which is drawn to most often.
         std::lock_guard<std::mutex> tl(g_target_mutex);
-        TargetTally sorted[12];
+        TargetTally sorted[24];
         std::copy(std::begin(g_targets), std::end(g_targets), std::begin(sorted));
         std::sort(std::begin(sorted), std::end(sorted),
                   [](const TargetTally &a, const TargetTally &b) {
@@ -142,9 +147,10 @@ void UpdateFrameStats() {
         for (const auto &t : sorted) {
           if (!t.draws)
             continue;
-          BD_INFO("[perf]   target {}x{}: {} draws/frame, {} Mpix/frame if "
-                  "each covered it once",
-                  t.w, t.h, t.draws / ticks,
+          BD_INFO("[perf]   target {:012X} {}x{}: {} draws/frame over {} "
+                  "binds/frame, {} Mpix/frame if each covered it once",
+                  u64(uintptr_t(t.id)), t.w, t.h, t.draws / ticks,
+                  t.binds / std::max(ticks, 1u),
                   (u64(t.w) * t.h * (t.draws / std::max(ticks, 1u))) / 1000000);
         }
         for (auto &t : g_targets)
@@ -182,19 +188,26 @@ u32 FrameStatFrameCount() {
   return g_stat_frame_count.load(std::memory_order_relaxed);
 }
 
-void NoteDrawTarget(u32 width, u32 height) {
+void NoteDrawTarget(const void *id, u32 width, u32 height) {
   if (!width || !height)
     return;
   std::lock_guard<std::mutex> lock(g_target_mutex);
+  // A rebind is a pass boundary here: consecutive draws to the same surface are
+  // one pass, and a return to a surface after leaving it is a new one.
+  const bool rebound = (id != g_last_target);
+  g_last_target = id;
   for (auto &t : g_targets) {
-    if (t.draws && t.w == width && t.h == height) {
+    if (t.draws && t.id == id) {
       ++t.draws;
+      t.binds += rebound ? 1u : 0u;
       return;
     }
     if (!t.draws) {
+      t.id = id;
       t.w = width;
       t.h = height;
       t.draws = 1;
+      t.binds = 1;
       return;
     }
   }

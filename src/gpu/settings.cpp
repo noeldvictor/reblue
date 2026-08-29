@@ -132,6 +132,14 @@ REXCVAR_DEFINE_INT32(bd_debug_fill_scale, 100, kCvarGroup,
                      "fragment cost from everything else.")
     .range(10, 100);
 
+REXCVAR_DEFINE_INT32(bd_render_scale, 100, kCvarGroup,
+                     "Render the 3D scene at N percent of the design canvas in "
+                     "each axis, 100 = native 1280x720. The frame is "
+                     "fill-bound on a Quest 2, so 50 quarters the fragment "
+                     "cost. Distinct from bd_max_render_height, which sizes "
+                     "the output fit and leaves the scene alone.")
+    .range(25, 100);
+
 REXCVAR_DEFINE_INT32(bd_msaa, 4, kCvarGroup,
                      "MSAA sample count for the 3D scene: 0 = off, 2, 4, 8. "
                      "Clamped to device support, ignored while "

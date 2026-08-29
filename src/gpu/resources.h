@@ -58,6 +58,12 @@ struct GuestTexture {
   std::unique_ptr<plume::RenderTextureView> textureView;
   u32 width = 0;
   u32 height = 0;
+  // What the guest asked for, when bd_render_scale made the allocation smaller
+  // than the request. The guest keeps addressing the surface in these terms -
+  // its viewports are in design-canvas space - so the ratio is what converts.
+  // Zero when unscaled.
+  u32 requestedWidth = 0;
+  u32 requestedHeight = 0;
   u32 depth = 0;
   u32 mipLevels = 1;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;

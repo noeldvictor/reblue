@@ -23,11 +23,15 @@
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/format.h"
+#include "gpu/output.h"
+#include "gpu/settings.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/surface_pool.h"
 #include "gpu/texture_upload.h"
+
+REXCVAR_DECLARE(i32, bd_render_scale);
 
 namespace {
 
@@ -56,10 +60,31 @@ bd::gpu::GuestTexture *D3DDevice_CreateSurface_hook(u32 width, u32 height,
           ? bd::gpu::Video::CvarMSAASampleCount()
           : plume::RenderSampleCount::COUNT_1;
 
+  // Scene surfaces only. A Quest 2 field frame is fill-bound - clipping the
+  // scissor to 25% takes the GPU fence from 141ms to 0.1ms while the draw count
+  // rises - and the scene renders into a surface pinned to the 1280x720 design
+  // canvas. Smaller surfaces are view textures, shadow maps and the bloom
+  // chain, which the census shows costing almost nothing, so leave them alone.
+  u32 alloc_w = width;
+  u32 alloc_h = height;
+  const i32 pct = REXCVAR_GET(bd_render_scale);
+  const bool scaled = pct < 100 && width >= u32(bd::gpu::kDesignCanvasWidth) &&
+                      height >= u32(bd::gpu::kDesignCanvasHeight);
+  if (scaled) {
+    alloc_w = std::max(1u, width * u32(pct) / 100u);
+    alloc_h = std::max(1u, height * u32(pct) / 100u);
+  }
+
   // Pooled reuse of the same-dim scratch surfaces the engine recreates every
   // frame, fresh committed alloc on miss. Reuse is fence-gated, so GPU-safe.
-  return bd::gpu::SurfacePool::Acquire(width, height, format,
-                                       static_cast<u32>(msaa_count));
+  auto *surface = bd::gpu::SurfacePool::Acquire(alloc_w, alloc_h, format,
+                                                static_cast<u32>(msaa_count));
+  if (surface) {
+    // Set both ways: a pooled surface carries whatever the last user left.
+    surface->requestedWidth = scaled ? width : 0;
+    surface->requestedHeight = scaled ? height : 0;
+  }
+  return surface;
 }
 
 // D3DDevice_CreateTexture is __stdcall and returns D3DBaseTexture*:
