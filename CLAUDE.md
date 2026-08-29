@@ -148,9 +148,16 @@ Three pieces of setup, all of which look like a hang when wrong:
 
 **`REBLUE_OPENXR=OFF` means no eye pose, so `ViewOverrideActive()` is false and the camera modes are
 not exercised** - stereo geometry is checkable this way, the anchor and the camera modes are not.
-Building the Windows OpenXR loader from the already-checked-out `out/xr-loader-android/` source and
-pointing it at Meta XR Simulator or SteamVR would close that gap, and is the highest-value next step
-for this loop. See `research/20260829_1730_the-desktop-loop-works.md`.
+**The Windows OpenXR loader is built and reblue links against it** - `out/xr-loader-win`, from the
+`out/xr-headers/openxr` source, and it must be **static** (`-DDYNAMIC_LOADER=OFF`): an earlier tree
+left a 23 KB stub DLL whose import lib links with `undefined symbol: xrEndSession`, which reads like
+a missing dependency and is not. A real static loader is 3.1 MB.
+
+What is missing is a **runtime**. Oculus and SteamVR are both installed here and neither works
+without hardware - `OpenXR: no usable runtime (-4)`. **Meta XR Simulator is the headless one and is
+not installed**; it is the single remaining piece for testing camera modes with no headset, and
+`XR_RUNTIME_JSON` overrides the active runtime per process so installing it changes nothing globally.
+See `research/20260829_1730_the-desktop-loop-works.md`.
 
 `REBLUE_OPENXR=ON` additionally needs `REBLUE_OPENXR_INCLUDE` and `REBLUE_OPENXR_LOADER`. The
 OpenXR-SDK source is already checked out under `out/xr-loader-android/` (that build tree is the

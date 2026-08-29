@@ -73,12 +73,34 @@ moving. The Quest captures at quarter scale were too soft to judge anything by e
 `REBLUE_OPENXR=OFF` here, so there is no eye pose, `ViewOverrideActive()` is false, and the camera
 modes are not exercised. **The character anchor cannot be verified this way as configured.**
 
-The fix is a second configure with `REBLUE_OPENXR=ON` against a PC OpenXR runtime. The OpenXR-SDK
-source is already checked out under `out/xr-loader-android/` and its headers are platform-neutral,
-so a Windows loader is a second build of the same tree rather than a new dependency. That plus Meta
-XR Simulator or SteamVR would make the anchor, the camera modes and the projection layer all
-checkable without hardware. **That is the highest-value next step for this loop**, and it is the
-thing the original plan wanted all along.
+**The Windows OpenXR loader is now built and reblue links against it**, so that half is done:
+
+```sh
+cmake -S out/xr-headers/openxr -B out/xr-loader-win -G Ninja -DCMAKE_BUILD_TYPE=Release       -DDYNAMIC_LOADER=OFF -DBUILD_TESTS=OFF -DBUILD_API_LAYERS=OFF -DBUILD_CONFORMANCE_TESTS=OFF
+cmake --build out/xr-loader-win --target openxr_loader
+# then reconfigure reblue with
+#   -DREBLUE_OPENXR=ON
+#   -DREBLUE_OPENXR_INCLUDE=<repo>/out/xr-headers/openxr/include
+#   -DREBLUE_OPENXR_LOADER=<repo>/out/xr-loader-win/src/loader/openxr_loader.lib
+```
+
+**Build it static (`DYNAMIC_LOADER=OFF`).** There was already an `out/xr-loader-win` from an earlier
+session containing a 23 KB DLL and a 1.2 KB import lib - a stub from a failed build - and linking
+against it fails with `undefined symbol: xrEndSession` and friends, which reads like a missing
+dependency rather than a broken artifact. A real static loader is 3.1 MB.
+
+What is still missing is a **runtime**, not the loader. This machine has the Oculus and SteamVR
+runtimes (SteamVR is the active one), and neither works without hardware attached:
+
+```
+OpenXR: no usable runtime (-4), staying on the flat renderer
+```
+
+`-4` is `XR_ERROR_RUNTIME_UNAVAILABLE`. Meta XR Simulator is the headless one and is **not
+installed**; it is the missing piece, and installing it would make the anchor, the camera modes and
+the projection layer all checkable with no headset. Note the per-process override
+`XR_RUNTIME_JSON=<path to manifest>` exists, so pointing at a simulator does not require changing
+the machine's active runtime.
 
 ## The correction worth recording
 
