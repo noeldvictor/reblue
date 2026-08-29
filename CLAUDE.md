@@ -237,6 +237,12 @@ Two things to know before touching the SDK tree:
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
 diagnosing a slow build. The short version:
 
+- **Know the four loop lengths, and pick the shortest one that answers the question.** Measured
+  here: a cvar experiment via `args.txt` is **~30s and builds nothing**; a `src/` change is
+  **~10s to compile**, ~15s to package, ~5s to install, ~30s to the title screen; a codegen flag
+  change is **~8s for codegen plus ~77s** because all 54 recompiled TUs rebuild; and a full
+  disassembly measurement out of `libreblue.so` needs no device at all. Most questions asked in this
+  port were answerable at one of the shorter lengths than the one reached for.
 - **The device loop is about 60 seconds, and that turned out to be fine.** Measured, on this
   machine: incremental `src/` build **~10s**, `tools/build_apk.sh` **~15s**, `adb install -r`
   **~5s**, launch to title screen **~30s**. The whole VR port was built this way. The advice below
@@ -327,6 +333,45 @@ touching guest performance:
 - **Two things that look expensive and are not**, recorded so they are not investigated twice:
   FPSCR flush-mode switching is guarded by a cached compare and only writes FPCR on an actual
   change, and indirect dispatch is a range check plus a table lookup. Neither is a bottleneck.
+
+### The vector unit is the big ARM64 opportunity
+
+`research/20260828_2200_arm64-neon-vector-path.md`. **NEON is mandatory on ARMv8-A**, so the Quest 2
+has it and the port already uses it: Xenon's VMX is translated to SSE intrinsics through SIMDe,
+which maps to NEON. The problem is not instruction selection, it is that **the vector register file
+lives in memory**. Counted out of the shipped `libreblue.so`:
+
+| | instructions |
+| --- | --- |
+| Vector register memory traffic (q-reg `ldr`/`str`/`stur`/`stp`) | ~129,800 |
+| Endian swizzling (`tbl`, `rev32/64/16`, `ext`) | ~18,600 |
+| Actual float SIMD arithmetic (`fmul`/`fadd`/`fsub`/`fmla`/`fdiv`) | ~8,600 |
+
+**Roughly fifteen memory operations per useful arithmetic one**, and byte-swizzling costs more than
+double the maths. Every VMX op loads from `ctx.vN` and stores straight back, so a value written by
+one instruction and read by the next round-trips through memory instead of staying in a register.
+
+The GPRs do not have this problem **because there is a flag for them and it is on**. The SDK's eight
+codegen flags cover LR, CTR, XER, CR, reserved, non-argument and non-volatile GPRs, and MSR - **not
+one touches VMX**. The same optimisation that removed 743,696 context accesses for integer registers
+has never been applied to the vector unit, in a game whose maths is mostly vector.
+
+Three changes, in order, all in the forked SDK's codegen rather than `src/`:
+
+1. **Vector registers as locals** - emit `simde__m128 v12;` and let the compiler allocate it,
+   spilling to `ctx.vN` only at call boundaries. The large one.
+2. **Hoist the endian conversion** so a register staying in host byte order across a function does
+   not get swapped in and out for nothing.
+3. **`fmla`** - only 248 fused multiply-adds against 719 `vmaddfp` in the source. SIMDe's
+   `add(mul(a,b),c)` is not being contracted; `-ffp-contract=fast` is worth testing, since guest
+   results are already not bit-exact with a Xenon.
+
+Ruled out, so nobody re-runs it: **LSE atomics** (only ~11 LSE and ~24 exclusive-loop instructions
+in 5.8 million - atomics are not hot, despite the build targeting baseline `armv8-a` with no
+`-mcpu`), **fp16 and dotprod** (zero uses, and recompiled PowerPC would not produce them).
+
+**These are static instruction counts, not a profile.** They say where the instructions are, not
+where the time goes.
 
 ## Research notes
 
