@@ -15,6 +15,7 @@
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "engine/tourist_mode.h"
 #include "xr/xr_camera_capture.h"
 
 namespace bd::xr {
@@ -79,6 +80,10 @@ void bdCameraProjMatrixHook(PPCRegister &r5) {
     std::memcpy(&p.m[i], &bits, sizeof(float));
   }
   bd::xr::StoreGuestProjection(p);
+
+  // Runs every frame and on the guest thread, which is what tourist mode needs
+  // and what its own intended seam turned out not to provide.
+  bd::engine::TouristModeTick();
 
   static std::atomic<int> logged{0};
   if (logged.fetch_add(1, std::memory_order_relaxed) == 400) {
