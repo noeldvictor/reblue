@@ -130,8 +130,27 @@ cmake --preset win-amd64-release -DREBLUE_D3D12=OFF -DREBLUE_OPENXR=OFF -DREBLUE
 cmake --build --preset win-amd64-release --target reblue
 ```
 
-With `REBLUE_D3D12=OFF` the Vulkan executable is the `reblue` target, not `reblue_vk` - that name
-only exists when both backends are configured.
+With `REBLUE_D3D12=OFF` the *target* is `reblue`, but **the binary it produces is still
+`reblue_vk.exe`**. This file said otherwise; it is the target name that changes, not the output.
+
+**This works, it was verified on 2026-08-29, and it is the fastest correctness loop available** -
+about 2.5 minutes faster per iteration than the device, because there is no APK, no install, and a
+field scene arrives in ~75s instead of ~130s. It also captures at 1920x1080 instead of a
+quarter-scale 344x180, which is the difference between judging an image and guessing at it. The
+device remains the only place performance numbers mean anything.
+
+Three pieces of setup, all of which look like a hang when wrong:
+
+- The registry record must name **the directory holding the exe** (see above).
+- Game data at `<InstallRoot>/game` - a junction to an existing extraction is fine, so the copy
+  already made for the device needs no duplication: `New-Item -ItemType Junction`.
+- Cvars in `<InstallRoot>/profiles/default/reblue.toml`, flat TOML. Command-line flags do not work.
+
+**`REBLUE_OPENXR=OFF` means no eye pose, so `ViewOverrideActive()` is false and the camera modes are
+not exercised** - stereo geometry is checkable this way, the anchor and the camera modes are not.
+Building the Windows OpenXR loader from the already-checked-out `out/xr-loader-android/` source and
+pointing it at Meta XR Simulator or SteamVR would close that gap, and is the highest-value next step
+for this loop. See `research/20260829_1730_the-desktop-loop-works.md`.
 
 `REBLUE_OPENXR=ON` additionally needs `REBLUE_OPENXR_INCLUDE` and `REBLUE_OPENXR_LOADER`. The
 OpenXR-SDK source is already checked out under `out/xr-loader-android/` (that build tree is the
@@ -389,9 +408,12 @@ diagnosing a slow build. The short version:
   be extracted from a disc image in under a second with `tools/extract_xex.py` — codegen then runs
   in ~7 seconds and is deterministic. See the `devloop` skill. A *full* Windows link additionally
   needs vcpkg. **It is installed** - `C:/vcpkg`, with `vcpkg_installed/` already populated, and
-  LLVM 22 lives at `C:/Program Files/LLVM/bin` - so the desktop build is available and was for a
-  long time believed not to be. This file said otherwise for weeks and that is what kept the
-  simulator route closed. Never report a build success that did not happen.
+  LLVM lives at `C:/Program Files/LLVM/bin`. The desktop build **was configured, built and run on
+  2026-08-29** and it works. This file claimed for weeks that it did not, while also stating further
+  down that vcpkg was present - both sentences were in the file at once, and the whole VR port was
+  built on-device with printf because nobody tried the route the file said was closed. Never report
+  a build success that did not happen, and never leave a "this does not work" claim in place without
+  a date and a reason.
 - **But the maths is testable.** `tools/xr_math_test/` compiles `xr_math.h` standalone against a
   stub `rex/types.h` and runs assertions on it. It caught the off-centre projection sign on its
   first run. Keep new maths in the dependency-free files so it stays reachable from here, and extend
