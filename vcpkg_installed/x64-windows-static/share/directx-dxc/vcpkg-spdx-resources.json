@@ -1,0 +1,36 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "82ce347a400fb2d7c9fe298a79b3da64bfb1ab8dabdf1394b1f93a0b1f02bded35cbea67b8541da5568d06682808271fbcba0e7dfc17ce5cead3172e19cb5f7e"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2407/dxc_2024_07_31.zip",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "dxc_2024_07_31.zip",
+  "packageFileName" : "dxc_2024_07_31.zip"
+},
+{
+  "SPDXID" : "SPDXRef-resource-1",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "9feaa85ca6d42d5a2d6fe773706bbab8241e78390a9d61ea9061c8f0eeb5a3e380ff07c222e02fbf61af7f2b2f6dd31c5fc87247a94dae275dc0a20cdfcc8c9d"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "https://raw.githubusercontent.com/microsoft/DirectXShaderCompiler/v1.8.2407/LICENSE.TXT",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "LICENSE.2024_07_31",
+  "packageFileName" : "LICENSE.2024_07_31"
+}
+  ]
+}

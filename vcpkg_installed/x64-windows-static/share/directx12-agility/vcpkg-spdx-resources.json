@@ -1,0 +1,20 @@
+{
+  "packages": [
+{
+  "SPDXID" : "SPDXRef-resource-0",
+  "checksums" : 
+  [
+    {
+      "algorithm" : "SHA512",
+      "checksumValue" : "05baa55231684ab10a3e905c9b85ce78f04ade9360f7de84a06bbae3bfc3123bcccaa563647a25e151cc759106bc19e37740ef78563592d28e3a723fd744b42f"
+    }
+  ],
+  "copyrightText" : "NOASSERTION",
+  "downloadLocation" : "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/1.614.1",
+  "licenseConcluded" : "NOASSERTION",
+  "licenseDeclared" : "NOASSERTION",
+  "name" : "Microsoft.Direct3D.D3D12.1.614.1.zip",
+  "packageFileName" : "Microsoft.Direct3D.D3D12.1.614.1.zip"
+}
+  ]
+}

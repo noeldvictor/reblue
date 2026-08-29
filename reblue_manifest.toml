@@ -35,5 +35,19 @@ xer_as_local = true
 cr_as_local = true
 reserved_as_local = true
 non_volatile_as_local = true
-non_argument_as_local = true
+# non_argument_as_local: DO NOT ENABLE. It miscompiles the guest.
+#
+# Enabling it cuts ctx. accesses across generated/ by 36% (2,049,797 ->
+# 1,306,101), which looked like a large free win. It is not: on device the game
+# dies during startup, 0.2s after the VFS mounts, with
+#
+#   [disc] file-load fatal, failed file: '<unknown>'
+#
+# and no preceding read failure, so the guest's own IO path is being
+# miscompiled rather than a file actually being missing. Bisected by building
+# with and without it against identical game data - without it the game reaches
+# a field scene, with it it never gets past startup.
+#
+# non_volatile_as_local stays on and is fine; it has shipped all along.
+# non_argument_as_local = true
 
