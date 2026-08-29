@@ -204,4 +204,13 @@ void bdSceneCullDistanceHook(PPCRegister &r3) {
     g_culled_count.fetch_add(1, std::memory_order_relaxed);
   }
   g_tested_count.fetch_add(1, std::memory_order_relaxed);
+
+  // Unconditional, not gated on the census cvar: the census gate produced no
+  // output on a run where it had worked before, so gating the diagnostic on it
+  // was hiding whether this hook runs at all.
+  static std::atomic<int> shown{0};
+  const int n = shown.fetch_add(1, std::memory_order_relaxed);
+  if (n < 3)
+    BD_INFO("[cullhook] fired, limit={:.0f} decision={} r3now={}",
+            REXCVAR_GET(bd_cull_distance), g_cull_this_node, r3.u32);
 }

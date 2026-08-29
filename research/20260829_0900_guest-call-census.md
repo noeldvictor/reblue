@@ -265,3 +265,32 @@ and the cost is per object regardless of size.
 props - rocks, plants, fence posts, the clutter a 2007 JRPG scatters to make a field look inhabited -
 and on a Xenon with a hardware command processor they were nearly free. Each one now costs a walk
 through 7,740 bytes of recompiled PowerPC.
+
+## The distance cull works; a second call path bypasses it
+
+`bd_cull_distance` changed no draw counts, which read like a broken hook. It is not:
+
+```
+[cullhook] fired, limit=700 decision=true r3now=0
+```
+
+The hook runs, the limit reaches it, the distance test rejects the node, and `r3` is zeroed so the
+guest takes its own not-visible branch. The mechanism is correct.
+
+**The draws come from somewhere else.** `bdSceneNodeDrawSingle` has *two* callers -
+`bdSceneNodeCullTraverse` (`0x82282490`), which is hooked, and `sub_82282608`, which is not. Culling
+one path cannot reduce a draw count the other path is producing, and at 2084 calls a frame against
+roughly 1270 distinct objects, the second path is evidently carrying most of it.
+
+That was visible from the very first grep - two call sites in
+`generated/reblue_recomp.38.cpp` and `generated/reblue_recomp.51.cpp` - and it was read past,
+because the first caller had a name that matched what was being looked for and the second did not.
+
+**`sub_82282608` is the next thing to read.** It sits immediately after `bdSceneNodeCullTraverse`
+(`0x82282490` + `0x178` = `0x82282608`), so it is the very next function in the binary, which
+usually means a sibling: a second traversal, probably for a different node class - transparent
+objects, or a second pass over the same tree.
+
+The general lesson is the one this file keeps recording in different forms: a diagnostic that says
+"no effect" is not evidence the mechanism is broken. Here the mechanism was provably working and
+the population it acted on was the wrong one.
