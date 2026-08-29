@@ -39,7 +39,10 @@ LOG_GLOB = "/sdcard/Android/data/" + PKG + "/files/logs/*.log"
 
 # Always on: VR plus autoplay, so a field scene is reached with an empty
 # headset, and MSAA off so it is never silently a second variable.
-BASE = {"bd_vr_enabled": "true", "bd_xr_autoplay": "true", "bd_msaa": "0"}
+BASE = {"bd_vr_enabled": "true", "bd_xr_autoplay": "true", "bd_msaa": "0",
+        # The tier the port actually targets. Without this it is paced against
+        # 72Hz it will never hit and loses a whole tier for nothing.
+        "bd_xr_refresh_rate": "60"}
 
 PRESETS = {
     # Proven fill-bound: fence 141ms -> 17ms -> 0.1ms while the draw count rises.
@@ -57,16 +60,20 @@ PRESETS = {
         {"bd_render_scale": "50", "bd_reflections": "false",
          "bd_shadows": "false"},
     ],
-    # Stereo. Costs a second view of the scene, so it roughly doubles a
-    # fill-bound frame - which is what render_scale pays for: two half-scale
-    # eyes are half the fragments of a full-scale mono frame.
+    # Stereo, and the cost of getting it back into a pacing tier. Stereo has
+    # real depth as of 2026-08-29; use tools/stereo_check.py to confirm that,
+    # not this, which only measures speed.
+    #
+    # Mono at these settings is 34.6ms / 28.9fps. Stereo alone falls to 50.0ms
+    # because the compositor drops a tier - and note the CPU barely moves
+    # (19.0 -> 20.2ms), so the cost is GPU fill that `fence` does not show.
     "stereo": [
         {},
         {"bd_stereo": "true"},
-        {"bd_stereo": "true", "bd_stereo_separation": "0.06",
-         "bd_stereo_convergence": "0.03"},
-        {"bd_stereo": "true", "bd_stereo_separation": "0.06",
-         "bd_stereo_convergence": "0.03", "bd_render_scale": "50"},
+        {"bd_stereo": "true", "bd_render_scale": "20",
+         "bd_cull_distance": "250", "bd_shadows": "false"},
+        {"bd_stereo": "true", "bd_render_scale": "15",
+         "bd_cull_distance": "200", "bd_shadows": "false"},
     ],
     # Everything verified on desktop, together. The one to run first.
     "all": [

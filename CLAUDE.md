@@ -329,6 +329,12 @@ Two things to know before touching the SDK tree:
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
 diagnosing a slow build. The short version:
 
+- **`tools/stereo_check.py` answers "does stereo have depth" in one command.** It captures a frame
+  with `bd_capture_after_s`, matches the two eyes band by band and prints a verdict: **FLAT** (the
+  eye offset is proportional to `clip.z` and divides out to a constant slide), **INVERTED** (crossed
+  the wrong way, so the world renders pseudoscopic), or **OK**. It is checked against the three real
+  captures that produced those states, so it is a regression test and not just a report. Run it
+  after anything touching the camera, the projection or the shader recompiler.
 - **Sweep with `tools/bench_quest.py`, never adb by hand.** Every performance knob reaches the game
   through `args.txt`, so a whole matrix costs no build and no reinstall.
   `python tools/bench_quest.py levers` runs render scale, shadows and reflections one variable at a
