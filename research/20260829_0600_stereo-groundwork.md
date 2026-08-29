@@ -210,3 +210,38 @@ an eye.
 The honest description is: **stereo with real parallax renders, verified on screen, and the exact
 per-eye geometry is the next thing to make correct.** `xr_math` already has the correct off-centre
 projection and it is unit-tested; wiring it in replaces the shear.
+
+## The convergence term is wrong, and the screenshot said so
+
+Correct off-axis stereo wants two terms, not one:
+
+```
+clip.x' = clip.x + separation * clip.z + convergence * clip.w
+```
+
+`separation * clip.z` is the eye translation and gives the parallax. `convergence * clip.w` should
+move the projection centre, which after the perspective divide is a constant NDC shift and sets the
+distance at which parallax is zero. Without it every object sits behind the screen, which is the
+usual reason cheap stereo is uncomfortable to fuse - so this looked like the right next step and the
+arithmetic is standard.
+
+Implemented as `column 0 += separation * column 2 + convergence * column 3`, by analogy with the
+skew that works.
+
+**It is wrong.** At `convergence = 0.05` the frame is a horizontal smear. At `0.004` - twelve times
+smaller - the two eyes show *completely different viewpoints*, not a small offset: different camera
+angle, character in a different place on the terrain. A constant NDC shift cannot do that, so
+element 3 of those four registers is not the translation column the analogy assumed.
+
+Which means the matrix layout at VS register 32 is not simply four rows of a row-vector
+view-projection, and **the skew that does work is working for a reason not yet understood**. It
+produces correct-looking depth-ordered parallax, but that should be treated as empirical rather than
+derived until the layout is actually established - read out of `bdCameraViewSetMatrices`
+(`0x82135228`), which sets view and projection and is the place the convention can be confirmed
+rather than inferred.
+
+Reverted. Separation-only stereo stands, because that one was looked at and was right.
+
+Third time in this file that a plausible change was killed by a screenshot: doubling every draw,
+doubling by target size, and now this. None would have been caught by a draw count, a log line, or a
+clean build.
