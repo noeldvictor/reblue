@@ -505,13 +505,29 @@ bool Session::CreateSwapchain(u32 width, u32 height) {
     xrEnumerateSwapchainFormats(AsSession(session_), formatCount, &formatCount,
                                 formats.data());
 
+  // UNORM strictly ahead of SRGB, in two passes. One pass with an OR takes
+  // whichever the runtime happens to list first, and Quest lists SRGB first -
+  // so this said UNORM-first and did the opposite.
+  //
+  // It matters because the frame is copied across with vkCmdCopyImage, which
+  // moves raw bytes and converts nothing. The game writes display-ready,
+  // already gamma-corrected pixels into a UNORM target; handing those to the
+  // compositor in an SRGB image tells it to decode them a second time, which
+  // comes out dark and over-saturated. Invisible on the title screen, because
+  // white and magenta are near enough unchanged by it.
   int64_t chosen = 0;
   for (int64_t format : formats) {
-    // UNORM ahead of SRGB: the game's own swapchain is UNORM and the frame is
-    // copied across verbatim, so matching exactly avoids a colour shift.
-    if (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_R8G8B8A8_SRGB) {
+    if (format == VK_FORMAT_R8G8B8A8_UNORM) {
       chosen = format;
       break;
+    }
+  }
+  if (!chosen) {
+    for (int64_t format : formats) {
+      if (format == VK_FORMAT_R8G8B8A8_SRGB) {
+        chosen = format;
+        break;
+      }
     }
   }
   if (!chosen && !formats.empty())
