@@ -461,16 +461,27 @@ constexpr u32 kCaptureRowAlign = 64; // texels, i.e. 256 bytes at RGBA8
 
 // Records the copy. Returns false if nothing was set up, in which case the
 // resolve step must not run.
+//
+// `layers` > 1 captures both array slices of a multiview target, stacked
+// vertically into one file. That is the only way to compare the two eyes
+// honestly: bd_stereo_debug_layer is read when the surface is created, so a run
+// can only ever sample one slice, and comparing two runs compares two different
+// scenes - autoplay is not frame-identical across restarts. Both eyes have to
+// come out of the same frame or the difference means nothing.
 bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
-                   u32 height, plume::RenderFormat format) {
+                   u32 height, plume::RenderFormat format, u32 layers = 1,
+                   plume::RenderTextureLayout restore_layout =
+                       plume::RenderTextureLayout::PRESENT) {
   if (width == 0 || height == 0)
     return false;
 
+  const u32 slices = layers > 1 ? 2u : 1u;
   const u32 row_texels =
       ((width + kCaptureRowAlign - 1) / kCaptureRowAlign) * kCaptureRowAlign;
-  const u64 size = u64(row_texels) * height * 4ull;
+  const u64 size = u64(row_texels) * height * slices * 4ull;
 
-  if (!g_capture_buffer || g_capture_w != width || g_capture_h != height) {
+  if (!g_capture_buffer || g_capture_w != width ||
+      g_capture_h != height * slices) {
     g_capture_buffer.reset();
     g_capture_buffer =
         s.device->createBuffer(plume::RenderBufferDesc::ReadbackBuffer(size));
@@ -479,7 +490,7 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
       return false;
     }
     g_capture_w = width;
-    g_capture_h = height;
+    g_capture_h = height * slices;
     g_capture_row_texels = row_texels;
   }
 
@@ -487,17 +498,18 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
       back, plume::RenderTextureLayout::COPY_SOURCE);
   s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0,
                            &to_copy, 1);
-  s.command_list->copyTextureRegion(
-      plume::RenderTextureCopyLocation::PlacedFootprint(
-          g_capture_buffer.get(), format, width, height, 1, row_texels),
-      plume::RenderTextureCopyLocation::Subresource(back));
+  for (u32 slice = 0; slice < slices; ++slice) {
+    s.command_list->copyTextureRegion(
+        plume::RenderTextureCopyLocation::PlacedFootprint(
+            g_capture_buffer.get(), format, width, height, 1, row_texels,
+            u64(slice) * row_texels * height * 4ull),
+        plume::RenderTextureCopyLocation::Subresource(back, 0, slice));
+  }
 
   // Back to the layout the rest of the frame expects, exactly as the XR copy
   // above does - leaving it in COPY_SOURCE shows as a black layer on Quest
   // rather than as an error.
-  const plume::RenderTextureBarrier restore(
-      back, XrCompositorPacing() ? plume::RenderTextureLayout::COLOR_WRITE
-                                 : plume::RenderTextureLayout::PRESENT);
+  const plume::RenderTextureBarrier restore(back, restore_layout);
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
                            &restore, 1);
   return true;
@@ -874,9 +886,20 @@ void Video::Present(GuestTexture *frontBuffer) {
 
   // Recorded after the XR copy, so what lands in the file is exactly the image
   // the compositor was handed, not an earlier stage of it.
+  // A two-layer scene target carries both eyes, so capture that rather than the
+  // composited back buffer, which is one eye by the time the mono post chain
+  // has finished with it. Anything else captures `back` as before.
+  const bool multiview_rt = rt && rt->texture && rt->layers > 1;
   const bool capturing =
-      CaptureDue() && RecordCapture(s, back, s.swap_chain->getWidth(),
-                                    s.swap_chain->getHeight(), kCaptureFmt);
+      CaptureDue() &&
+      (multiview_rt
+           ? RecordCapture(s, rt->texture, rt->width, rt->height, rt->format,
+                           rt->layers, plume::RenderTextureLayout::SHADER_READ)
+           : RecordCapture(s, back, s.swap_chain->getWidth(),
+                           s.swap_chain->getHeight(), kCaptureFmt, 1,
+                           XrCompositorPacing()
+                               ? plume::RenderTextureLayout::COLOR_WRITE
+                               : plume::RenderTextureLayout::PRESENT));
 
   const u32 cur = s.frame.load(std::memory_order_relaxed);
   FrameEnd(s.command_list);
