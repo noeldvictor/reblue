@@ -40,6 +40,7 @@
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
+REXCVAR_DECLARE(f64, bd_stereo_convergence);
 
 namespace {
 
@@ -257,9 +258,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // Left eye negative, right eye positive, so the two views diverge about the
     // mono image rather than one of them being the original.
     const float sep = float(REXCVAR_GET(bd_stereo_separation));
-    if (sep != 0.0f)
-      bd::gpu::Video::BindEyeVertexConstants(device_guest,
-                                             eye ? sep : -sep);
+    const float conv = float(REXCVAR_GET(bd_stereo_convergence));
+    if (sep != 0.0f || conv != 0.0f)
+      bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? sep : -sep,
+                                             eye ? -conv : conv);
     emit();
   }
   // The last eye left a skewed block bound and FlushRenderState believes the

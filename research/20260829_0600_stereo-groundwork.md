@@ -411,3 +411,38 @@ Filter the sample to the thing being measured. MSAA at the title screen, `bd_deb
 removing fragments along with draws, stereo doubling the post chain, and now a matrix read from
 draws that never write it. Every one of them produced a confident and wrong conclusion from a
 correctly-executed measurement.
+
+## Settled: the registers are columns, and convergence works
+
+The mapping was decided from numbers already in hand rather than another build. Taking the four
+registers as **columns**, register 35 is `(0.06307, -0.12165, 0.99057, -6.26658)` - its xyz has
+length 1.0000, so it is the camera's forward axis plus a distance, which is exactly what `clip.w`
+must be. Read as **rows**, the w coefficients would include -485.24, and no perspective matrix has
+that. One reading is possible and the other is not.
+
+So the transform is whole registers at a time:
+
+```
+register 32 += skew * register 34 + shift * register 35
+```
+
+i.e. `clip.x' = clip.x + skew * clip.z + shift * clip.w`. The previous code took *one element* from
+each register - what an assumption of row-major produces - which mixes x with z and w and is exactly
+why the convergence term sent the two eyes to different viewpoints while the skew still happened to
+shear something plausible.
+
+**Verified on screen at separation 0.06, convergence 0.03:** both eyes render the full scene
+cleanly, with near geometry displaced more than far, and none of the smearing or divergence the
+row-major version produced at a twelfth of the convergence.
+
+This is now a genuine off-axis frustum: `bd_stereo_separation` sets the eye offset and
+`bd_stereo_convergence` sets the distance at which parallax is zero, which is the parameter that
+decides whether a headset is comfortable.
+
+### Still to do
+
+The two knobs are in clip-space units, not metres, and are not tied to head pose or to an actual
+interpupillary distance. `bd::xr::LastGuestProjection()` now captures the guest's own projection
+(45 degree horizontal fov, right-handed, -Z forward - the same handedness OpenXR uses), so deriving
+both from a real IPD and the runtime's per-view fov is the remaining step, and `xr_math` already has
+the maths with tests behind it.

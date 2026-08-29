@@ -73,13 +73,20 @@ void ResetFrame(u32 slot);
 
 // Byte-swap VS/PS float constants from guest device+0x700 / device+0x1700 into
 // the upload heap.
-// eye_skew adds skew * clip.z to clip.x, which displaces a vertex
-// horizontally in proportion to its depth - parallax, and therefore genuine
-// stereo, rather than the uniform shift that adding skew * clip.w would give.
-// Applied to the view-projection at VS registers 32-35. 0 leaves the block
-// exactly as the guest wrote it.
+// Per-eye stereo, applied to the view-projection at VS registers 32-35:
+//
+//   clip.x' = clip.x + eye_skew * clip.z + eye_shift * clip.w
+//
+// eye_skew displaces a vertex in proportion to its depth, which is the parallax
+// and the whole depth cue. eye_shift moves the projection centre, setting the
+// distance at which parallax is zero - the convergence plane. Together they are
+// the two halves of an off-axis frustum, and skew alone puts the entire world
+// behind the screen.
+//
+// Both zero leaves the block exactly as the guest wrote it.
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
-                                               float eye_skew = 0.0f);
+                                               float eye_skew = 0.0f,
+                                               float eye_shift = 0.0f);
 ConstantAllocation UploadPixelShaderConstants(u32 device_guest);
 
 // Rebuilt from live guest state every draw: sampler fetch constants and bool

@@ -214,7 +214,8 @@ public:
   // and mirrors it into device->viewport at D3DDevice byte offset 0x3058.
   static void SetDefaultViewport(D3DDevice *device, GuestTexture *surface);
   // Rebinds the vertex constants with a per-eye skew, for stereo's second view.
-  static void BindEyeVertexConstants(u32 device_guest, float eye_skew);
+  static void BindEyeVertexConstants(u32 device_guest, float eye_skew,
+                                     float eye_shift);
 
   static void FlushViewport();
 

@@ -188,6 +188,15 @@ REXCVAR_DEFINE_DOUBLE(bd_stereo_separation, 0.03, kCvarGroup,
                       "deepens the effect. Comfort varies, so this is a knob.")
     .range(0.0, 0.2);
 
+// The other half of an off-axis frustum. Separation alone puts the whole world
+// behind the screen, which fuses badly; this moves each eye's projection centre
+// so parallax is zero at a chosen distance and nearer things come forward of it.
+REXCVAR_DEFINE_DOUBLE(bd_stereo_convergence, 0.0, kCvarGroup,
+                      "Convergence for bd_stereo: shifts each eye's projection "
+                      "centre, setting the distance at which parallax is zero. "
+                      "0 puts the convergence plane at infinity.")
+    .range(-0.2, 0.2);
+
 REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
                     "Render the 3D scene twice per frame from the same camera. "
                     "Diagnostic only - the image is unchanged and the cost "

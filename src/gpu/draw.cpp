@@ -158,11 +158,12 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 // already uploaded and bound the unskewed block by this point, so the caller
 // must dirty vertexShaderConstants afterwards to put the next draw back on a
 // clean one.
-void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew) {
+void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
+                                   float eye_shift) {
   auto &s = state();
   if (!device_guest || !s.command_list)
     return;
-  auto alloc = UploadVertexShaderConstants(device_guest, eye_skew);
+  auto alloc = UploadVertexShaderConstants(device_guest, eye_skew, eye_shift);
   if (!alloc.size)
     return;
 #if defined(REBLUE_D3D12)

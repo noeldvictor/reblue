@@ -335,7 +335,8 @@ void PinScreenUVScaleReg(u8 *block) {
 }
 
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
-                                               float eye_skew) {
+                                               float eye_skew,
+                                               float eye_shift) {
   BD_CPU_ZONE("UploadVSConstants");
   auto &s = upload_state();
   if (!device_guest)
@@ -346,13 +347,21 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
   CopyByteSwap32FlushNaN(alloc.memory,
                          device_guest + offsetof(D3DDevice, vsFloatConstants),
                          kConstantBlockBytes);
-  if (eye_skew != 0.0f) {
-    // clip.x' = clip.x + skew * clip.z, i.e. column 0 += skew * column 2, which
-    // with four float4 registers per matrix is one element per register. After
-    // the byte swap, so this operates on host-order floats.
+  if (eye_skew != 0.0f || eye_shift != 0.0f) {
+    // The four registers are the four COLUMNS of the view-projection, not its
+    // rows. Read off a scene draw, register 35 is (0.063, -0.122, 0.991,
+    // -6.267): its xyz has unit length, so it is the camera's forward axis plus
+    // a distance, which is what clip.w must be. As rows the w coefficients
+    // would include a -485, which no perspective matrix has.
+    //
+    // So clip.x' = clip.x + skew * clip.z + shift * clip.w is register 32 +=
+    // skew * register 34 + shift * register 35, whole registers at a time.
+    // Taking one element from each register instead - which an assumption of
+    // row-major produces - mixes components and is why the convergence term
+    // sent the two eyes to different viewpoints.
     auto *m = reinterpret_cast<float *>(alloc.memory) + kViewProjRegister * 4;
-    for (int row = 0; row < 4; ++row)
-      m[row * 4 + 0] += eye_skew * m[row * 4 + 2];
+    for (int i = 0; i < 4; ++i)
+      m[i] += eye_skew * m[8 + i] + eye_shift * m[12 + i];
   }
   return alloc;
 }
