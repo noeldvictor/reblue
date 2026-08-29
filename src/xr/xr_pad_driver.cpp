@@ -13,11 +13,28 @@
 
 #include "core/logging.h"
 
+#include <chrono>
+
+#include <rex/cvar.h>
+
+#include "core/settings.h" // kCvarGroup
 #include "xr/xr_pad.h"
 
 namespace bd::xr {
 
 namespace {
+
+// Drives the game from the log, with nobody wearing the headset.
+//
+// Every VR bug so far has needed a person in the headset to see it, which
+// makes the loop minutes long and the report second-hand. This presses START
+// and then A on a fixed schedule, which is enough to get from the title screen
+// into the field, so a build can be deployed, screenshotted and measured
+// without leaving the terminal. Off unless asked for; it would fight a real
+// player.
+REXCVAR_DEFINE_BOOL(bd_xr_autoplay, false, kCvarGroup,
+                    "Synthesise pad presses to walk the game into a field "
+                    "scene unattended, for screenshots and profiling.");
 
 // One device, so its handle is a constant. 'XRPD'.
 constexpr rex::input::DeviceId kPadDevice =
@@ -41,6 +58,28 @@ i16 ToThumb(f32 v) {
 
 u8 ToTrigger(f32 v) {
   return static_cast<u8>(std::lround(std::clamp(v, 0.0f, 1.0f) * 255.0f));
+}
+
+// START once the game has had time to reach its title, then A on a slow
+// repeat. Blue Dragon's opening is START, then a confirm on the file menu,
+// then dialogue - all of which A advances. Held for a few frames because the
+// guest samples its pad at 30Hz and edge-detects.
+void ApplyAutoplay(PadState &pad) {
+  using Clock = std::chrono::steady_clock;
+  static Clock::time_point start{};
+  if (start.time_since_epoch().count() == 0)
+    start = Clock::now();
+  const double t = std::chrono::duration<double>(Clock::now() - start).count();
+
+  if (t < 6.0)
+    return; // let it finish booting
+  if (t < 6.4) {
+    pad.menu = true; // START
+    return;
+  }
+  // A for 200ms out of every 1.2s thereafter.
+  const double phase = std::fmod(t - 6.4, 1.2);
+  pad.a = phase < 0.2;
 }
 
 u16 ButtonsFrom(const PadState &pad) {
@@ -133,6 +172,9 @@ X_RESULT PadDriver::GetDeviceState(rex::input::DeviceId id,
     announced = true;
     BD_INFO("[xr] guest is polling the OpenXR pad");
   }
+
+  if (REXCVAR_GET(bd_xr_autoplay))
+    ApplyAutoplay(pad);
 
   if (out_state) {
     std::memset(out_state, 0, sizeof(*out_state));

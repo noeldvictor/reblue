@@ -5,6 +5,7 @@
  */
 #include "xr/xr_game_camera.h"
 
+#include <cmath>
 #include <cstring>
 
 #include "core/logging.h"
@@ -29,6 +30,16 @@ struct LatchedEye {
 };
 
 LatchedEye g_eye;
+
+// The frustum the guest is told to render with. Written once per frame by the
+// session, read by the projection hook on the guest's render thread.
+struct RenderFovState {
+  f32 halfVertical = 0.0f;
+  f32 aspect = 0.0f;
+  bool valid = false;
+};
+
+RenderFovState g_renderFov;
 
 // Reconstructs the camera-to-world transform the guest's view matrix inverts.
 // The rotation block is the transpose of the camera basis and the translation
@@ -66,6 +77,20 @@ void SyncTuning() {
 
 } // namespace
 
+void SetRenderFov(f32 halfVerticalRadians, f32 aspect) {
+  g_renderFov.halfVertical = halfVerticalRadians;
+  g_renderFov.aspect = aspect;
+  g_renderFov.valid = halfVerticalRadians > 0.0f && aspect > 0.0f;
+}
+
+bool RenderFov(f32 &halfVerticalRadians, f32 &aspect) {
+  if (!g_renderFov.valid || !ViewOverrideActive())
+    return false;
+  halfVerticalRadians = g_renderFov.halfVertical;
+  aspect = g_renderFov.aspect;
+  return true;
+}
+
 void SubmitEye(const Pose &openxrEyePose, const Fov &fov) {
   g_eye.pose = openxrEyePose;
   g_eye.fov = fov;
@@ -86,11 +111,58 @@ bool ComposeView(const f32 gameView[16], f32 out[16]) {
   if (!ViewOverrideActive())
     return false;
 
+  // The guest hands out a matrix full of NaN on some frames - a load or a
+  // camera cut, where its own struct is not yet populated. It draws nothing on
+  // those frames so it never notices. We would: the anchor is low-passed, and
+  // Lerp(NaN, x, t) is NaN, so a single poisoned frame sticks to the camera for
+  // the rest of the session and every frame after it renders black.
+  //
+  // So this is rejected before it reaches any retained state, not clamped
+  // after.
+  for (int i = 0; i < 16; ++i) {
+    if (std::isfinite(gameView[i]))
+      continue;
+    static bool told = false;
+    if (!told) {
+      told = true;
+      BD_INFO("[xr] guest view matrix was non-finite; passing the frame "
+              "through untouched. Expected during loads.");
+    }
+    return false;
+  }
+
   SyncTuning();
   Camera &camera = Camera::Get();
   const GameCamera game = GameCameraFromView(gameView);
   camera.SubmitGameCamera(game);
   const Mat4 view = camera.ComposeEye(g_eye.pose, g_eye.fov).view;
+
+  // A single non-finite element here blanks the entire frame - every vertex
+  // transforms to NaN and clips away - so the whole scene disappears with no
+  // error anywhere. Falling back to the guest's own matrix costs head tracking
+  // for that frame and keeps the game visible, which is a far better failure
+  // than a black headset.
+  for (int i = 0; i < 4; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      if (std::isfinite(view.m[i][j]))
+        continue;
+      static bool told = false;
+      if (!told) {
+        told = true;
+        const CameraTuning &t = camera.Tuning();
+        BD_ERROR("[xr] view went non-finite at m[{}][{}]; falling back to the "
+                 "guest camera. units/m={} worldScale={} dioramaH={} "
+                 "eye=({}, {}, {}) fov=({}, {}, {}, {}) game=({}, {}, {})",
+                 i, j, t.unitsPerMetre, t.worldScale, t.dioramaHeight,
+                 g_eye.pose.position.x, g_eye.pose.position.y,
+                 g_eye.pose.position.z, g_eye.fov.angleLeft,
+                 g_eye.fov.angleRight, g_eye.fov.angleUp, g_eye.fov.angleDown,
+                 game.position.x, game.position.y, game.position.z);
+      }
+      return false;
+    }
+  }
+
   WriteMat4(view, out);
 
   // Periodic rather than one-shot: a single line proves the seam is reached,

@@ -23,6 +23,7 @@
 
 #include "xr/xr_session.h"
 #include "xr/xr_game_camera.h"
+#include "xr/xr_settings.h"
 #endif
 
 #include "gpu/gpu_profiling.h"
@@ -594,13 +595,22 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
                            restore, 2);
 
   session.ReleaseSwapchainImage();
-  // 2 m wide at 2 m distance is roughly a 60-inch screen - big enough to read
-  // the HUD, close enough not to need head turning. Submit before anchoring:
-  // the anchor is placed at quadDistance_ along the view, and this is what
-  // sets it.
-  session.SubmitQuadLayer(2.0f, 2.0f * float(session.SwapchainHeight()) /
-                                    float(session.SwapchainWidth()), 2.0f);
-  session.AnchorQuad(g_xr_frame);
+
+  // Cinema is a screen hanging in the world. Every other mode is the world
+  // itself, which is a projection layer: the image becomes a window the
+  // compositor reprojects as the head moves, rather than a rectangle pinned in
+  // space. That difference is what "being in the world" actually is.
+  if (bd::xr::Settings::Get().Mode() == bd::xr::CameraMode::Cinema) {
+    // 2 m wide at 2 m distance is roughly a 60-inch screen - big enough to
+    // read the HUD, close enough not to need head turning. Submit before
+    // anchoring: the anchor is placed at quadDistance_ along the view, and
+    // this is what sets it.
+    session.SubmitQuadLayer(2.0f, 2.0f * float(session.SwapchainHeight()) /
+                                      float(session.SwapchainWidth()), 2.0f);
+    session.AnchorQuad(g_xr_frame);
+  } else {
+    session.SubmitProjectionLayer();
+  }
   ++g_xr_stats.submitted;
 }
 

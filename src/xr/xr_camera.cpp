@@ -106,7 +106,21 @@ Pose Camera::ComposeAnchor() const {
     break;
   }
 
-  if (!smoothedValid_) {
+  // Second line of defence, and worth having even though xr_game_camera now
+  // rejects a non-finite guest matrix upstream: this state is retained across
+  // frames through a low-pass, and Lerp(NaN, x, t) is NaN, so anything that
+  // ever gets NaN in here keeps it for the life of the session. Recovering by
+  // snapping is right - the alternative is a permanently black headset.
+  const bool finite = std::isfinite(target.x) && std::isfinite(target.y) &&
+                      std::isfinite(target.z);
+  const bool smoothedFinite =
+      std::isfinite(smoothedAnchor_.x) && std::isfinite(smoothedAnchor_.y) &&
+      std::isfinite(smoothedAnchor_.z);
+  if (!finite) {
+    target = smoothedFinite ? smoothedAnchor_ : Vec3{};
+  }
+
+  if (!smoothedValid_ || !smoothedFinite) {
     smoothedAnchor_ = target;
     smoothedValid_ = true;
   } else {

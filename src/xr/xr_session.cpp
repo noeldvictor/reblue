@@ -5,6 +5,8 @@
 #include "xr/xr_session.h"
 
 #include <cstdio>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <sstream>
@@ -22,6 +24,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "core/logging.h"
+#include "xr/xr_game_camera.h"
 #include "xr/xr_pad.h"
 
 namespace bd::xr {
@@ -81,6 +84,12 @@ struct Actions {
 };
 
 Actions g_act;
+
+// The head pose and frustum this frame's projection layer claims. Kept raw and
+// file-static for the same reason the actions are: no XR types in the header.
+XrPosef g_headPose{{0.0f, 0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 0.0f}};
+XrFovf g_layerFov{};
+bool g_projectionQueued = false;
 
 // The localized name is what a runtime shows in its own rebinding UI, and
 // xrCreateAction rejects an empty one, so both names are always supplied.
@@ -441,6 +450,39 @@ bool Session::BeginFrame(FrameState &out) {
     out.views[i].fov = {views[i].fov.angleLeft, views[i].fov.angleRight,
                         views[i].fov.angleUp, views[i].fov.angleDown};
   }
+
+  // The head, midway between the eyes. A mono projection layer drawn from
+  // either eye's own position would swing the whole world sideways every time
+  // the player turned their head, because that eye orbits the neck.
+  g_headPose = views[0].pose;
+  if (out.viewCount == 2) {
+    g_headPose.position.x = (views[0].pose.position.x + views[1].pose.position.x) * 0.5f;
+    g_headPose.position.y = (views[0].pose.position.y + views[1].pose.position.y) * 0.5f;
+    g_headPose.position.z = (views[0].pose.position.z + views[1].pose.position.z) * 0.5f;
+  }
+
+  // A symmetric frustum tall enough for the headset, then widened to the
+  // render target's aspect. Taking the vertical from the device and deriving
+  // the horizontal - rather than the other way round - is what keeps the image
+  // from being stretched: the guest renders one aspect and the layer has to
+  // claim that same one, or the compositor resamples a shape that was never
+  // drawn.
+  f32 halfV = 0.0f;
+  for (u32 i = 0; i < out.viewCount; ++i) {
+    halfV = std::max(halfV, std::fabs(views[i].fov.angleUp));
+    halfV = std::max(halfV, std::fabs(views[i].fov.angleDown));
+  }
+  const u32 w = swapchainWidth_ ? swapchainWidth_ : recommendedWidth_;
+  const u32 h = swapchainHeight_ ? swapchainHeight_ : recommendedHeight_;
+  if (halfV > 0.0f && w && h) {
+    const f32 aspect = static_cast<f32>(w) / static_cast<f32>(h);
+    const f32 halfH = std::atan(std::tan(halfV) * aspect);
+    g_layerFov.angleUp = halfV;
+    g_layerFov.angleDown = -halfV;
+    g_layerFov.angleRight = halfH;
+    g_layerFov.angleLeft = -halfH;
+    SetRenderFov(halfV, aspect);
+  }
   return true;
 }
 
@@ -448,15 +490,44 @@ void Session::EndFrame(const FrameState &state) {
   if (!frameBegun_ || !session_)
     return;
   frameBegun_ = false;
+  // Cleared at the end of the frame they were queued for, so a frame that
+  // queues nothing submits nothing rather than re-showing the last one.
+  const bool hadProjection = g_projectionQueued;
+  g_projectionQueued = false;
+  (void)hadProjection;
 
   // A quad layer when one was queued this frame, otherwise none. Submitting
   // zero layers is legal and keeps the runtime's frame pacing alive, which is
   // what stops the session from being torn down as unresponsive.
   XrCompositionLayerQuad quad{XR_TYPE_COMPOSITION_LAYER_QUAD};
+  XrCompositionLayerProjection projection{XR_TYPE_COMPOSITION_LAYER_PROJECTION};
+  XrCompositionLayerProjectionView projViews[2] = {
+      {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW},
+      {XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW}};
   const XrCompositionLayerBaseHeader *layers[1] = {nullptr};
   uint32_t layerCount = 0;
 
-  if (quadQueued_ && swapchain_) {
+  if (g_projectionQueued && swapchain_) {
+    // Both eyes get the same image, the same pose and the same frustum. That
+    // is what makes this mono - and it is also why it is comfortable: an image
+    // drawn for one eye and shown to both is a stereo mismatch, whereas an
+    // image drawn from the head and shown to both is simply flat.
+    for (u32 i = 0; i < 2; ++i) {
+      projViews[i].pose = g_headPose;
+      projViews[i].fov = g_layerFov;
+      projViews[i].subImage.swapchain = static_cast<XrSwapchain>(swapchain_);
+      projViews[i].subImage.imageRect.offset = {0, 0};
+      projViews[i].subImage.imageRect.extent = {
+          static_cast<int32_t>(swapchainWidth_),
+          static_cast<int32_t>(swapchainHeight_)};
+      projViews[i].subImage.imageArrayIndex = 0;
+    }
+    projection.space = AsSpace(appSpace_);
+    projection.viewCount = 2;
+    projection.views = projViews;
+    layers[0] = reinterpret_cast<const XrCompositionLayerBaseHeader *>(&projection);
+    layerCount = 1;
+  } else if (quadQueued_ && swapchain_) {
     quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
     quad.space = AsSpace(appSpace_);
     quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
@@ -610,6 +681,8 @@ void Session::SubmitQuadLayer(f32 widthMetres, f32 heightMetres,
   quadHeight_ = heightMetres;
   quadDistance_ = distanceMetres;
 }
+
+void Session::SubmitProjectionLayer() { g_projectionQueued = true; }
 
 void Session::AnchorQuad(const FrameState &state) {
   if (quadAnchored_ || !state.shouldRender || state.viewCount == 0)

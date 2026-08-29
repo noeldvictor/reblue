@@ -126,6 +126,16 @@ public:
   // Queues the quad for this frame's EndFrame. Size is in metres.
   void SubmitQuadLayer(f32 widthMetres, f32 heightMetres, f32 distanceMetres);
 
+  // Queues a projection layer instead: the image is treated as a window onto
+  // the world rather than a screen hanging in it, so the scene surrounds the
+  // player and the head drives the camera with six degrees of freedom.
+  //
+  // Mono for now - both eyes are handed the same image, drawn once from the
+  // head's own pose. That is genuinely immersive and genuinely not stereo:
+  // there is no depth between the eyes. Real stereo needs the guest's scene
+  // drawn twice, which is a renderer change; this needs only a different layer.
+  void SubmitProjectionLayer();
+
   // Places the screen in front of wherever the player was looking on the first
   // frame, once. Call after BeginFrame; does nothing thereafter.
   void AnchorQuad(const FrameState &state);

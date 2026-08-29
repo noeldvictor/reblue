@@ -24,6 +24,7 @@
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/settings.h"
+#include "xr/xr_game_camera.h"
 
 // screenW/H on VisualRender is BD's master dim: the scene RT base, the
 // post/bloom pyramid, the composite and the 2D basis all derive from it. The
@@ -129,6 +130,21 @@ void bdOutputResCompositeTexScaleHook(PPCRegister &r3, PPCRegister &r4) {
 // register rather than the camera leaves the globals BD reads back for its
 // own fov conversions at the ratio those were written for.
 void bdProjectionAspectHook(PPCRegister &fov_half, PPCRegister &aspect) {
+  // In VR the headset dictates the frustum, and it dictates it everywhere -
+  // ahead of the design-canvas guard below, which exists to leave cameras that
+  // carry their own aspect alone. A projection layer only looks right if the
+  // image was drawn with exactly the frustum the layer claims, so a sub-view
+  // rendering at its own aspect would tear the world.
+  {
+    f32 half_vertical = 0.0f;
+    f32 vr_aspect = 0.0f;
+    if (bd::xr::RenderFov(half_vertical, vr_aspect)) {
+      fov_half.f64 = half_vertical;
+      aspect.f64 = vr_aspect;
+      return;
+    }
+  }
+
   if (std::fabs(aspect.f64 - kDesignCanvasAspect) > kDesignCanvasAspectEpsilon)
     return;
 

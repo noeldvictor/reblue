@@ -46,4 +46,18 @@ bool ComposeView(const f32 gameView[16], f32 out[16]);
 // false when there is no latched eye.
 bool ComposeProjection(f32 out[16]);
 
+// The field of view the guest must render with, pushed in by the XR session.
+//
+// A projection layer only looks right if the image was drawn with exactly the
+// frustum the layer claims it was drawn with. Rather than rewrite the guest's
+// projection matrix wholesale - which would fight every one of the four places
+// Blue Dragon builds one - the session works out a symmetric frustum matching
+// the headset, and the existing bdProjectionAspectHook substitutes its half
+// angle and aspect. Same seam bd_fov_offset already uses.
+void SetRenderFov(f32 halfVerticalRadians, f32 aspect);
+
+// False when VR is not driving the projection, in which case the guest keeps
+// whatever it was going to use.
+bool RenderFov(f32 &halfVerticalRadians, f32 &aspect);
+
 } // namespace bd::xr
