@@ -198,13 +198,6 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
 // Zeroes the visibility result the guest is about to compare against 0, which
 // sends it down its own "not visible" path and skips the draw. Nothing is
 // redirected and no return address is needed.
-// The sibling traversal's version: same decision, but the centre arrives in r4.
-// Shares g_cull_this_node with the first path because the hook that consumes it
-// is the same function, and the two traversals never interleave on one thread.
-void bdSceneCullBiasHook2(PPCRegister &f1, PPCRegister &r4) {
-  bdSceneCullBiasHook(f1, r4);
-}
-
 void bdSceneCullDistanceHook(PPCRegister &r3) {
   if (g_cull_this_node) {
     r3.u64 = 0;

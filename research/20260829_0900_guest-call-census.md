@@ -294,3 +294,30 @@ objects, or a second pass over the same tree.
 The general lesson is the one this file keeps recording in different forms: a diagnostic that says
 "no effect" is not evidence the mechanism is broken. Here the mechanism was provably working and
 the population it acted on was the wrong one.
+
+## The second path's addresses were wrong, and hung the guest
+
+Hooking `sub_82282608` used addresses counted backwards from `loc_82282780`, assuming four bytes an
+instruction from the emitted comment listing:
+
+```
+bl 0x82392EC8   -> 0x8228275C     (guessed)
+cmpwi r3,0      -> 0x82282760     (guessed)
+```
+
+**Both are wrong.** With those hooks in, the app launches, displays, stays resident and never
+writes a log line at all - it hangs before logging init rather than crashing, so there is no signal
+in logcat either. Removing them restored it immediately.
+
+Counting instructions backwards from a label works only if every line in the comment listing is one
+instruction and none were folded or reordered by the recompiler. The first path's addresses were
+right because they were checked against the `loc_` labels on *both* sides of the block; this one was
+counted from one side only.
+
+**The way to get these right is to read the address off the generated code, not to derive it.** The
+recompiler emits `// bl 0x...` comments and `loc_XXXXXXXX:` labels, and any hook address should be
+confirmed against a label that brackets it, or taken from `config/functions.toml` where the function
+is already named.
+
+So the second path is still unhooked and the distance cull still only covers one of the two callers
+of `bdSceneNodeDrawSingle`. Its real effect remains unmeasured.
