@@ -245,3 +245,62 @@ Reverted. Separation-only stereo stands, because that one was looked at and was 
 Third time in this file that a plausible change was killed by a screenshot: doubling every draw,
 doubling by target size, and now this. None would have been caught by a draw count, a log line, or a
 clean build.
+
+## What is actually at VS register 32, and why the stereo is a prototype
+
+The convergence failure said the matrix layout was not what the skew assumed, so the matrix was
+dumped rather than reasoned about: sixteen floats out of the uploaded block at
+`kViewProjRegister`, printed once per run.
+
+**First attempt, sampled blind at the 2000th draw:**
+
+```
+c32 = [ 1.0000  0.0000  0.0000  0.0000]
+c33 = [ 0.0000  1.0000  0.0000  0.0000]
+c34 = [ 0.0000  0.0000  1.0000  0.0000]
+c35 = [ 0.0000  0.0000  0.0000  1.0000]
+```
+
+The identity. Many draws never write this block, and a blind sample landed on one - the same class
+of mistake as sampling MSAA at the title screen.
+
+**Skipping the identity:**
+
+```
+c32 = [ 0.0410  0.0000 -0.0489 -0.0000]
+c33 = [-0.0375  0.0410 -0.0314 -0.0410]
+c34 = [-0.0001 -0.0001 -0.0001  0.6670]
+c35 = [ 0.0000  0.0000  0.0000  1.0000]
+```
+
+**This is not a view-projection.** A perspective matrix cannot have `[0 0 0 1]` as its last row -
+that is the signature of an affine transform - and the uniform ~0.041 scale (about 1/24) does not
+belong to a camera either.
+
+So `g_mViewProj` is the name XenosRecomp took from the shader's constant table, and BD aliases that
+register across different uses; what actually sits there varies per draw, and for many draws it is
+the identity.
+
+### The consequence
+
+**The working stereo is empirical, not principled.** `column 0 += separation * column 2` on an
+identity matrix sets element [2][0] to `separation`, which is a shear, and shearing whatever
+transform happens to occupy those registers produced depth-ordered parallax that looks right on
+screen. It is a prototype that happens to work, not an implementation of a per-eye frustum, and it
+should be described that way.
+
+It also explains the convergence failure exactly: `column 0 += convergence * column 3` on a matrix
+whose last column is `(0, -0.041, 0.667, 1)` is not a projection-centre shift, it is arbitrary
+corruption - which is why 0.004 was enough to send the two eyes to different viewpoints.
+
+### Where a correct implementation goes
+
+Not in the constant block. The per-eye view belongs where the guest computes its camera:
+`bdCameraViewSetMatrices` (`0x82135228`), which calls two helpers with `r5 = r31+84` and
+`r5 = r31+148` - two 64-byte destinations, 16 floats each, i.e. the view and the projection as
+separate matrices. Hooking there gives both in a known form, and `xr_math` already has the correct
+off-centre per-eye projection with 49 passing unit tests behind it.
+
+That is a real piece of work rather than a one-line skew, and it is what "people feel in the world"
+actually requires - the current prototype gives a depth cue with geometry that is not tied to any
+interpupillary distance, head pose, or frustum.
