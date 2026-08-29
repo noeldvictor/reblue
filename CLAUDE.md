@@ -516,6 +516,26 @@ See `research/20260828_1900_vr-camera-and-input.md` for the detail, including th
 (`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
 controllers are invisible to SDL.
 
+### The bottleneck is not VR
+
+**Measured, VR switched off entirely**: the same field scene costs 2925 draws, 108.9ms on the GPU
+fence, 183ms a frame - identical within noise to VR on. **Blue Dragon runs at 5.5 fps on a Quest 2
+with the flat renderer.** The session, the layer, the camera composition and the pad cost
+essentially nothing. The port is slow; VR was never the reason.
+
+And the GPU half is **insensitive to resolution**: 720p and 360p both cost ~110ms. So it is not
+fill, not blend, not framebuffer bandwidth - which eliminates every quality setting, and foveated
+rendering with them, since that only reduces shading rate.
+
+What is left is ~2925 draws a frame on a tile-based renderer, which points at the **binning pass** -
+a tiler runs all geometry through vertex processing before shading, and that scales with draw calls
+and vertex count, not pixels. Not yet proven: `gpu_total_ms` reads 3.5ms against a 110ms fence, but
+that column is unreliable at this draw count (one timestamp per draw into a 512-entry pool). The
+next step is `ovrgpuprofiler` or Snapdragon Profiler, not another guess.
+
+See `research/20260828_2330_the-real-bottleneck.md` for the eliminations, and note that
+`src/xr/xr_cull.cpp` is **dead code** - written, unit-tested, never connected to anything.
+
 ### The Quest frame budget
 
 **The GPU is 97% idle.** At the Android defaults a frame is 32ms, of which 1ms is the GPU fence and

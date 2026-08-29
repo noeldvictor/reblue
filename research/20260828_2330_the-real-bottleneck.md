@@ -1,0 +1,106 @@
+# Research: the bottleneck is not VR, and not the things that were optimised
+
+Date: 2026-08-28 23:30
+Topic: what a field scene actually costs on a Quest 2, measured with `bd_perf_csv` on device.
+
+Gameplay runs at 5.5 fps. This note records what that is *not*, because five separate hypotheses
+were tested and eliminated in one session, and the answer is uncomfortable enough to be worth
+writing down precisely.
+
+---
+
+## The measurement
+
+`bd_perf_csv` needs no rebuild - set it in `args.txt`, relaunch, pull the CSV. A field scene, VR on:
+
+```
+dt_ms 182.6 | fence_ms 110.0 | other_ms 72.2
+draws 2957  | pso_switches 1121 | fb_binds 23 | barrier_calls 82
+```
+
+Two halves: **~110ms waiting on the GPU fence, ~62-72ms of CPU** (guest simulation plus draw
+recording). The GPU half is the larger one.
+
+## What it is not
+
+Each of these was measured on device, one variable at a time, with `args.txt` and no rebuild:
+
+| Change | fence | Verdict |
+| --- | --- | --- |
+| baseline, 720p | ~110ms | — |
+| MSAA 4x off | ~110ms | no effect |
+| shadow map 1024 -> 512, shadow distance 1.0 | ~108-112ms | **no effect** |
+| reflection resolution quartered | ~108-112ms | **no effect** |
+| render height 720 -> **360** | ~108-110ms | **no effect** |
+| **VR disabled entirely, flat renderer** | **~109ms** | **no effect** |
+
+The last two are the important ones.
+
+**Resolution does not matter.** Halving the render height changes nothing, so the GPU is not
+fill-bound, not blend-bound, and not bandwidth-bound on the framebuffer. That eliminates every
+setting in the quality menu and, notably, foveated rendering - which only reduces shading rate, and
+shading is not what is costing the time.
+
+**VR does not matter.** With `bd_vr_enabled false`, the flat renderer, no OpenXR session, no
+projection layer and no camera override, the same scene costs **2925 draws, 108.9ms on the fence,
+183ms a frame**. Identical within noise.
+
+So: **Blue Dragon runs at 5.5 fps on a Quest 2 with VR switched off.** The VR work - the session,
+the layer, the camera composition, the pad - costs essentially nothing. The port is slow, and VR was
+never the reason.
+
+## What is left
+
+A GPU cost that is insensitive to resolution, with ~2925 draws per frame, on a tile-based deferred
+renderer. That shape points at the **binning pass**: a tiler runs all geometry through vertex
+processing and bins it into tiles *before* any shading, and that work scales with draw calls and
+vertex count, not with pixels. It is exactly the cost that would not move when the resolution is
+halved.
+
+2925 draws a frame is a lot for an Adreno 650. It was fine on a Xenos, which had a dedicated
+hardware command processor and no binning pass to speak of.
+
+Supporting numbers from the same frame: **1121 PSO switches** for 2957 draws, so the pipeline dirty
+gate fires on 38% of draws; 23 framebuffer binds; 82 barrier calls.
+
+**This is not yet proven.** `gpu_total_ms` in the CSV reads 3.5ms, which contradicts a 110ms fence -
+but that column is unreliable here, because `MarkDraw` writes a timestamp per draw into a 512-entry
+pool and 2957 draws saturates it long before the frame ends. The next step is a GPU profiler that
+can attribute properly (`ovrgpuprofiler` on Quest, or Snapdragon Profiler), not another guess.
+
+## Corrections this session forced
+
+Worth recording together, because the pattern is the same each time - a plausible mechanism,
+measured, and wrong:
+
+- **`non_argument_as_local`** cut context accesses 36% and **miscompiles the guest**. The game dies
+  during startup. Reverted. A static metric said nothing about correctness.
+- **The constant byte-swap** was predicted to be the top CPU cost (8 KiB per draw into
+  write-combine, ~24 MB a frame). Hand-vectorised with NEON, verified bit-identical on the Quest's
+  own CPU - **no measured gain**, almost certainly because clang at `-O3` had already
+  auto-vectorised the loop.
+- **MSAA** was dismissed as free on the strength of a title-screen measurement. It is free in a
+  field scene too, but for a different reason than assumed, and the title screen should never have
+  been used as evidence.
+- **LSE atomics, fp16, dotprod, FPSCR flush-mode, indirect dispatch** - all eliminated by counting
+  instructions rather than by testing.
+
+## Also found
+
+**`src/xr/xr_cull.cpp` is dead code.** Nothing outside the file references `CullVolume` or
+`bdCameraViewFrustumTest`. The combined two-eye cull volume was written, unit-tested, and never
+connected to anything. It is not causing the draw count - the flat renderer submits the same 2925
+draws - but if draw-call reduction is the answer, that file is where the VR half of it already
+lives.
+
+## What to do next
+
+1. **Attribute the GPU time properly.** `ovrgpuprofiler -r` on the Quest, or Snapdragon Profiler.
+   Everything above narrows the search; none of it identifies the instruction.
+2. **Count the geometry, not just the draws.** If binning is the cost, vertex count per frame is the
+   number that matters and it is not currently recorded.
+3. **Draw-call reduction is the likely lever** - more aggressive frustum culling through
+   `bdCameraViewFrustumTest` (`0x82135030`), distance culling, or LOD. All of it is guest-side
+   behaviour, which is why the renderer settings could not touch it.
+4. **Stop testing hypotheses one rebuild at a time.** Every eliminated cause above cost a deploy;
+   the profiler answers the question directly.
