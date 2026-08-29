@@ -122,3 +122,42 @@ both scenes it has been run in.
 `bd_cull_bias` is the first attempt at that, hooked before the visibility test in
 `bdSceneNodeCullTraverse` so the guest culls its own nodes more aggressively without any control
 flow being redirected.
+
+## Cull bias: mechanically working, win inside noise
+
+```
+configuration                                   frame    fence     else    fps   draws
+render_scale=25, reflections=false             71.4ms    0.1ms   62.9ms   14.0   3041
+  + cull_bias=0.6                              64.2ms    0.1ms   55.7ms   15.6   2931
+  + cull_bias=0.35                             66.4ms    0.2ms   57.9ms   15.1   2735
+```
+
+The draw count falls with the bias - 3041, 2931, 2735 - so the hook is working: shrinking the
+bounding radius before `bdSceneNodeCullTraverse`'s visibility test does make the guest cull its own
+nodes and skip their draws.
+
+The CPU win is **11%**, which is inside the +/-30% cross-restart band this file keeps insisting on,
+so it is directional rather than proven. Roughly proportional to the draws removed, which is at
+least consistent with node submission being a large share of the CPU.
+
+**0.35 is not better than 0.6.** It removes another 200 draws and the frame does not improve, so the
+extra nodes it culls are cheap ones - small or simple - while the cost is concentrated somewhere the
+bias does not distinguish. A radius bias culls by *size*, and what matters is presumably *what is in
+the node*, so this is the wrong axis to keep pushing.
+
+**Best measured configuration so far: 15.6 fps** (`render_scale=25, reflections=false,
+cull_bias=0.6`), against a 5.9 fps baseline. **2.6x.**
+
+## Where the port stands after a day on the device
+
+| | |
+| --- | --- |
+| baseline, as it was this morning | 5.9 fps |
+| best now | **15.6 fps** |
+| GPU | **solved** - the fence is 0.1ms and can be traded for image quality at will |
+| CPU | ~56ms, and it is the entire frame |
+| 72 fps needs | 13.9ms |
+
+The GPU half is finished as an engineering problem. Everything from here is the ~56ms of CPU, and
+the two things that have moved it are draw count (a little) and nothing else yet. The census points
+at `bdSceneNodeDrawSingle`; the bias experiment says size is the wrong way to select what to cut.
