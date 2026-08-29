@@ -583,23 +583,23 @@ table first, because it is the part that gets stale.
 | Title screen at 30 fps | Works |
 | **In-game frame rate** | **4-8 fps, and ~180ms of it is CPU** |
 | Mono projection layer - the "in the world" mode | Works, captured and looked at |
-| **Character-anchored camera modes** | **Do not work** |
+| Character-anchored camera modes | Anchored off the follow camera; unit-tested, untuned |
 | Stereo, per-eye render | **Works.** Crossed disparity, correctly signed, 24.5 fps |
 | Cel shading, tourist mode | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
 
 Three of those rows need saying plainly rather than being read past:
 
-- **`SubmitCharacter()` is never called**, still, but not for the reason this file gave for weeks.
-  `src/xr/xr_player_anchor.cpp` exists, is compiled, and hangs off
-  `bdPlayerFieldMovementUpdate` (0x82207858) - and that function **never fires**, even with the
-  character verifiably walking. `generated/` has one call site for it, in `bdPlayerFieldUpdateMain`.
-  The next seam to try is `bdFieldCameraSetupFollow` (0x821B1A58). Until then `CharacterAnchor`
-  stays invalid and `ThirdPerson` / `FirstPerson` fall back to the game's own camera position, so
-  the character-anchored modes do not do what their names say. See
-  `research/20260829_1420_autoplay-walks-and-the-anchor-hook-is-dead.md` for everything already
-  ruled out - the file being compiled, the hook being registered, `args.txt` being read, and the
-  byte-swap being right - so none of it gets re-checked.
+- **The anchored camera modes now have an anchor**, derived from the game's own follow camera
+  (`CharacterFromFollowCamera` in `xr_camera.cpp`, fed from `ComposeView`). Blue Dragon's field
+  camera sits behind the party leader and looks at them, so the leader is on the camera's forward
+  axis at the follow distance and the camera's yaw is their facing - approximate, but built on data
+  that provably updates every frame. Tuned by `bd_vr_anchor_distance` (0 restores the old fall-back)
+  and `bd_vr_anchor_eye_height`; **the defaults are estimates and want one pass of tuning against a
+  capture.** The direct route still does not work - `xr_player_anchor.cpp` hooks
+  `bdPlayerFieldMovementUpdate` and that guest function never fires even with the character walking;
+  see `research/20260829_1420_autoplay-walks-and-the-anchor-hook-is-dead.md` for what is already
+  ruled out.
 - **The projection layer produces an image**, and there is now a capture of it to point at. This
   entry said the opposite for weeks on the strength of one black grab taken before a NaN fix.
 - **30 fps is the title screen.** Gameplay is 4-8 fps.

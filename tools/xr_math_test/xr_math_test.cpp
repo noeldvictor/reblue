@@ -532,6 +532,50 @@ void TestNaNRecovery() {
   Check(recovered, "the camera recovers on the next good frame");
 }
 
+// The anchor derivation. Every one of these is a convention that is invisible
+// in a symmetric pose, which is the class of bug this file exists to catch.
+void TestFollowCameraAnchor() {
+  using namespace bd::xr;
+
+  // Camera behind the leader, looking along +Z, 1.5m up in 100-units-per-metre
+  // game units.
+  GameCamera game;
+  game.position = {0.0f, 150.0f, -300.0f};
+  game.forward = {0.0f, 0.0f, 1.0f};
+  game.up = {0.0f, 1.0f, 0.0f};
+
+  const CharacterAnchor a = CharacterFromFollowCamera(game, 300.0f, 150.0f);
+  Check(a.valid, "a follow camera yields a valid anchor");
+  // Leader is one follow distance along forward, and the feet sit eyeHeight
+  // below the look-at point - so on the ground at the origin.
+  Check(Near(a.position.x, 0.0f) && Near(a.position.y, 0.0f) &&
+            Near(a.position.z, 0.0f),
+        "the leader's feet land on the ground under the look-at point");
+  Check(Near(a.eyeHeight, 150.0f), "eye height is carried through");
+  Check(Near(a.facingYaw, 0.0f), "forward +Z is yaw zero");
+
+  // Off-axis, because a symmetric case cannot see a sign error. Camera looking
+  // along +X means the leader faces +X, which is yaw +pi/2 under the same
+  // convention YawOf uses.
+  game.position = {0.0f, 150.0f, 0.0f};
+  game.forward = {1.0f, 0.0f, 0.0f};
+  const CharacterAnchor b = CharacterFromFollowCamera(game, 300.0f, 150.0f);
+  Check(Near(b.position.x, 300.0f), "the leader is along the camera's forward");
+  Check(Near(b.facingYaw, 1.5707964f), "+X forward is yaw +pi/2");
+
+  // FirstPerson puts the eye at position.y + eyeHeight; that must land back on
+  // the camera's look-at height, or the player's head sits in the floor.
+  Check(Near(b.position.y + b.eyeHeight, 150.0f),
+        "eye height returns to the look-at point");
+
+  // The documented opt-out, and the NaN guard.
+  Check(!CharacterFromFollowCamera(game, 0.0f, 150.0f).valid,
+        "distance 0 opts out");
+  game.forward = {std::nanf(""), 0.0f, 1.0f};
+  Check(!CharacterFromFollowCamera(game, 300.0f, 150.0f).valid,
+        "a non-finite camera yields no anchor");
+}
+
 } // namespace
 
 int main() {
@@ -542,6 +586,7 @@ int main() {
   TestYaw();
   TestQuatBasics();
   TestCameraModes();
+  TestFollowCameraAnchor();
   TestWorldScale();
   TestRecentreAndTurn();
   TestCullVolume();

@@ -33,6 +33,28 @@ Camera &Camera::Get() {
 
 void Camera::SubmitGameCamera(const GameCamera &cam) { gameCamera_ = cam; }
 
+CharacterAnchor CharacterFromFollowCamera(const GameCamera &game, f32 distance,
+                                          f32 eyeHeight) {
+  CharacterAnchor anchor;
+  if (!(distance > 0.0f))
+    return anchor; // invalid; caller falls back to the game camera
+
+  const Vec3 look = game.position + game.forward * distance;
+  if (!std::isfinite(look.x) || !std::isfinite(look.y) ||
+      !std::isfinite(look.z))
+    return anchor;
+
+  // position is the feet and the camera looks at about eye level, so drop by
+  // the height the anchor's consumers then add back - FirstPerson puts the eye
+  // at position.y + eyeHeight, which lands exactly on the look-at point.
+  anchor.position = {look.x, look.y - eyeHeight, look.z};
+  anchor.eyeHeight = eyeHeight;
+  // Same convention as YawOf in xr_math.h: forward (0,0,1) is yaw zero.
+  anchor.facingYaw = std::atan2(game.forward.x, game.forward.z);
+  anchor.valid = true;
+  return anchor;
+}
+
 void Camera::SubmitCharacter(const CharacterAnchor &anchor) {
   character_ = anchor;
 }

@@ -12,6 +12,9 @@
 #include "xr/xr_camera.h"
 #include "xr/xr_settings.h"
 
+REXCVAR_DECLARE(double, bd_vr_anchor_distance);
+REXCVAR_DECLARE(double, bd_vr_anchor_eye_height);
+
 namespace bd::xr {
 
 namespace {
@@ -75,6 +78,34 @@ void SyncTuning() {
   }
 }
 
+// Derives the party leader's transform from the game's own follow camera, and
+// feeds it to the anchored camera modes.
+//
+// The direct route - hooking the player object and reading its position - is
+// written (src/xr/xr_player_anchor.cpp) and does not work: the guest never
+// calls bdPlayerFieldMovementUpdate, even with the character verifiably
+// walking. See research/20260829_1420_autoplay-walks-and-the-anchor-hook-is-dead.md.
+//
+// This works instead because Blue Dragon's field camera is a follow camera: it
+// sits behind the party leader and looks at them, so the leader is on the
+// camera's forward axis at roughly the follow distance, and the camera's yaw is
+// the leader's facing. That is approximate, and it is derived from data that
+// provably updates every frame - the camera was watched tracing the circle that
+// autoplay walks.
+//
+// No feedback risk: the hook hands the guest a scratch copy of the view matrix
+// and the guest keeps its own camera, so nothing computed here can reach the
+// follow-camera controller.
+void SubmitCharacterFromGameCamera(const GameCamera &game) {
+  const CharacterAnchor anchor = CharacterFromFollowCamera(
+      game, f32(REXCVAR_GET(bd_vr_anchor_distance)),
+      f32(REXCVAR_GET(bd_vr_anchor_eye_height)));
+  // An invalid anchor is left unsubmitted rather than submitted-as-invalid, so
+  // a bad frame during a load keeps the last good one instead of dropping the
+  // camera back to the game's for one frame and jolting.
+  if (anchor.valid)
+    Camera::Get().SubmitCharacter(anchor);
+}
 } // namespace
 
 void SetRenderFov(f32 halfVerticalRadians, f32 aspect) {
@@ -135,6 +166,7 @@ bool ComposeView(const f32 gameView[16], f32 out[16]) {
   Camera &camera = Camera::Get();
   const GameCamera game = GameCameraFromView(gameView);
   camera.SubmitGameCamera(game);
+  SubmitCharacterFromGameCamera(game);
   const Mat4 view = camera.ComposeEye(g_eye.pose, g_eye.fov).view;
 
   // A single non-finite element here blanks the entire frame - every vertex

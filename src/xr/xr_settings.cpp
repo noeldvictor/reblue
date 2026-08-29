@@ -36,6 +36,30 @@ REXCVAR_DEFINE_BOOL(bd_vr_enabled, false, kCvarGroup,
 // cannot hold 13.9ms at 72Hz is dropped to 27.8 or 41.7. Asking for 60Hz makes
 // the tiers 16.7/33.3/50 and lets a ~20ms frame land on 33.3ms - 30fps, which
 // is what Blue Dragon originally ran at. 0 leaves the runtime alone.
+// The party leader's position, derived from the game's own follow camera.
+//
+// The direct route - hooking the player object - is written and does not fire
+// (see xr_player_anchor.cpp), so ThirdPerson and FirstPerson had no anchor at
+// all and silently fell back to the game camera. Blue Dragon's field camera
+// sits behind the leader and looks at them, so the leader is on the camera's
+// forward axis: position = camera + forward * distance. Approximate, and built
+// on data that provably updates every frame.
+//
+// Distance is in game units, where the field camera sits about 150 above the
+// ground - so roughly 100 units to the metre. 0 disables the derivation and
+// restores the old fall-back behaviour.
+REXCVAR_DEFINE_DOUBLE(bd_vr_anchor_distance, 300.0, kCvarGroup,
+                      "Game units from the follow camera to the party leader, "
+                      "used to anchor the third- and first-person VR camera "
+                      "modes. 0 falls back to the game camera.")
+    .range(0.0, 5000.0);
+
+REXCVAR_DEFINE_DOUBLE(bd_vr_anchor_eye_height, 150.0, kCvarGroup,
+                      "Height of the leader's eyes above their feet, in game "
+                      "units. The follow camera looks at about eye level, so "
+                      "this is how far down the anchor's origin sits.")
+    .range(0.0, 1000.0);
+
 REXCVAR_DEFINE_DOUBLE(bd_xr_refresh_rate, 0.0, kCvarGroup,
                       "Display refresh rate to request, in Hz. 0 leaves it to "
                       "the runtime. The nearest supported rate at or below the "

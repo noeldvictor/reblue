@@ -56,6 +56,23 @@ struct CharacterAnchor {
   bool valid = false;
 };
 
+// Derives the party leader's transform from the game's own follow camera.
+//
+// Blue Dragon's field camera sits behind the leader and looks at them, so the
+// leader lies on the camera's forward axis at roughly the follow distance and
+// the camera's yaw is the leader's facing. That is the only source available:
+// the direct route, hooking the player object, is written and never fires (see
+// src/xr/xr_player_anchor.cpp), which is why the anchored modes silently fell
+// back to the game camera for so long.
+//
+// Pure and dependency-free on purpose, so tools/xr_math_test can check the
+// convention - getting the yaw or the height sign wrong here is invisible in a
+// symmetric test pose and has cost this port three separate bugs.
+//
+// distance <= 0 returns an invalid anchor, which is the documented opt-out.
+CharacterAnchor CharacterFromFollowCamera(const GameCamera &game, f32 distance,
+                                          f32 eyeHeight);
+
 // One eye's worth of output, ready for the hook to byte-swap into guest memory.
 struct EyeMatrices {
   Mat4 view;
