@@ -225,6 +225,24 @@ REXCVAR_DEFINE_DOUBLE(bd_capture_after_s, 0.0, kCvarGroup,
                       "frame.")
     .range(0.0, 100000.0);
 
+// Mirror the VR image into the desktop window.
+//
+// Off on Android and it must stay that way: presenting the Android surface in
+// VR costs 124ms a frame, which is the single largest win this port ever made
+// (see EnsureOffscreen). Nobody looks at that surface on a headset anyway.
+//
+// On the desktop it is the difference between a simulator run you can watch and
+// a black window - the game renders to an offscreen target in VR and never
+// presents, so without this the window shows nothing and looks broken.
+#if defined(__ANDROID__)
+REXCVAR_DEFINE_BOOL(bd_xr_mirror, false, kCvarGroup,
+#else
+REXCVAR_DEFINE_BOOL(bd_xr_mirror, true, kCvarGroup,
+#endif
+                    "Mirror the VR image into the flat window. Costs a full "
+                    "present per frame, so it is off on Android where nothing "
+                    "displays that surface.");
+
 REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");

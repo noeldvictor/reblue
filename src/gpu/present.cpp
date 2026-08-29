@@ -44,6 +44,7 @@
 
 REXCVAR_DECLARE(bool, bd_cel_shading);
 REXCVAR_DECLARE(double, bd_capture_after_s);
+REXCVAR_DECLARE(bool, bd_xr_mirror);
 
 namespace bd::gpu {
 
@@ -824,6 +825,7 @@ void Video::Present(GuestTexture *frontBuffer) {
   const bool headset_owns_output = XrCompositorPacing();
 
   u32 texture_index = 0;
+  bool mirroring = false;
   plume::RenderTexture *back = nullptr;
   plume::RenderFramebuffer *back_fb = nullptr;
 
@@ -843,6 +845,14 @@ void Video::Present(GuestTexture *frontBuffer) {
     }
     back = g_offscreen.get();
     back_fb = g_offscreen_fb.get();
+    // Acquire the flat swapchain too when mirroring, so the offscreen image can
+    // be copied into it below. Failing to acquire is not fatal - the headset
+    // still gets its frame, the window just stays stale.
+    if (REXCVAR_GET(bd_xr_mirror)) {
+      mirroring = s.swap_chain->acquireTexture(
+          s.acquire_semaphores[s.frame.load(std::memory_order_relaxed)].get(),
+          &texture_index);
+    }
   } else {
     BD_CPU_ZONE("AcquireTexture");
     const auto t0 = Clock::now();
@@ -884,6 +894,33 @@ void Video::Present(GuestTexture *frontBuffer) {
   RecordXrQuad(s, back);
 #endif
 
+  // Mirror into the flat swapchain. After the XR copy, so the window shows
+  // exactly what the headset was handed.
+  if (mirroring) {
+    plume::RenderTexture *front = s.swap_chain->getTexture(texture_index);
+    if (front) {
+      const plume::RenderTextureBarrier to_copy[] = {
+          plume::RenderTextureBarrier(front,
+                                      plume::RenderTextureLayout::COPY_DEST),
+          plume::RenderTextureBarrier(back,
+                                      plume::RenderTextureLayout::COPY_SOURCE),
+      };
+      s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0,
+                               to_copy, 2);
+      s.command_list->copyTexture(front, back);
+      const plume::RenderTextureBarrier restore[] = {
+          plume::RenderTextureBarrier(front,
+                                      plume::RenderTextureLayout::PRESENT),
+          plume::RenderTextureBarrier(back,
+                                      plume::RenderTextureLayout::COLOR_WRITE),
+      };
+      s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
+                               restore, 2);
+    } else {
+      mirroring = false;
+    }
+  }
+
   // Recorded after the XR copy, so what lands in the file is exactly the image
   // the compositor was handed, not an earlier stage of it.
   // A two-layer scene target carries both eyes, so capture that rather than the
@@ -915,8 +952,11 @@ void Video::Present(GuestTexture *frontBuffer) {
   // Nothing was acquired in VR, so the acquire semaphore will never signal and
   // waiting on it would deadlock on the first frame. Nothing is presented
   // either, so there is no one to signal.
-  const u32 wait_count = headset_owns_output ? 0u : 1u;
-  const u32 signal_count = headset_owns_output ? 0u : 1u;
+  // Mirroring acquires and presents, so it needs the same semaphore pairing a
+  // flat frame does - without it the present races the copy.
+  const bool uses_swapchain = !headset_owns_output || mirroring;
+  const u32 wait_count = uses_swapchain ? 1u : 0u;
+  const u32 signal_count = uses_swapchain ? 1u : 0u;
   // NOT the frame just submitted: AdvanceAndWaitReused waits the slot about to
   // be reused, one frame old. That gap is the CPU/GPU overlap.
   {
@@ -935,7 +975,7 @@ void Video::Present(GuestTexture *frontBuffer) {
   }
   s.command_list_submitted[cur] = true;
   ApplyVsync(s);
-  if (!headset_owns_output) {
+  if (uses_swapchain) {
     BD_CPU_ZONE("PresentSwap");
     const auto t0 = Clock::now();
     // A removed device fails Present first, and the fence wait below still
