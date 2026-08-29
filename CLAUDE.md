@@ -708,6 +708,38 @@ Best mono is **7.8 fps**, best stereo **6.1 fps**, against 13.9ms for 72 fps. Fo
 dismissed on the since-disproved reading that the frame was not fill-bound, and should be
 reassessed.
 
+### The CPU floor, attributed
+
+At `bd_render_scale=25` the GPU fence is **0.1ms** and the frame is 71ms, so the CPU is the entire
+port. Measured on device at that configuration:
+
+| | of ~56ms |
+| --- | --- |
+| our draw recording | ~13ms (mutex 0.4, bindFB 2.0, flushState 10.5) |
+| guest code | **~43ms**, overwhelmingly one function |
+
+`bd_guest_census` counts calls into named guest functions per frame. On device:
+
+```
+bdSceneNodeDrawSingle   2084 calls   16130160 bytes of guest code
+bdAnimBoneEvaluate       126 calls     706608
+bdAnimationUpdate        112 calls     203840
+everything else          0-3 calls    negligible
+```
+
+**23x the next consumer**, where the desktop build showed 1.9x - so tune this on the device, not on
+the desktop. And the scene is **about a thousand individually placed objects**, not instanced
+geometry: 2083 calls take 1270 distinct first arguments. So the fix is removing objects, and the
+axis is distance.
+
+Two culling knobs exist, both hooked into `bdSceneNodeCullTraverse` (`0x82282490`) so the guest
+skips the draw on its own path with no control flow redirected:
+
+| cvar | how it selects | measured |
+| --- | --- | --- |
+| `bd_cull_distance` | view-space distance; the centre at `r3` is view space with the camera at the origin, so it is a plain length | the intended lever |
+| `bd_cull_bias` | bounding radius | 11% CPU, inside noise - it culls small objects and the cost is per object |
+
 ### The three fill levers
 
 All three scale a surface the guest asks for, on the seam `bd_supersampling` already uses, so the
