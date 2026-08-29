@@ -22,6 +22,7 @@ includes = [
   "config/hooks/pso_predictor.toml",
   "config/hooks/render_tweaks.toml",
   "config/hooks/save.toml",
+  "config/hooks/stereo.toml",
   "config/hooks/title_menu.toml",
   "config/hooks/tutorials.toml",
 ]

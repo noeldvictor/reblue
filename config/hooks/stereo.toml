@@ -1,0 +1,28 @@
+# Rendering the guest's scene more than once per frame (bodies in
+# src/xr/xr_stereo.cpp).
+#
+# bdCameraRender (0x82142D30) is the per-view scene render. Its two call sites
+# were found by reading the recompiled source rather than a disassembler -
+# generated/reblue_recomp.34.cpp around line 12235 - where the surrounding
+# block is an if/else that renders the same camera (r31) either side:
+#
+#   mr r3,r31 ; bl 0x82142d30   <- 0x822D3C34, the branch that also runs
+#                                  sub_82173DF8 before and after
+#   ...
+#   loc_822D3C4C:
+#   mr r3,r31 ; bl 0x82142d30   <- 0x822D3C50, the plain branch
+#
+# Hooked after the instruction, so the first render has completed and the guest
+# state it left behind is what the second one starts from.
+
+[[midasm_hook]]
+address = 0x822D3C34
+name = "bdStereoSecondViewHook"
+registers = ["r31"]
+after_instruction = true
+
+[[midasm_hook]]
+address = 0x822D3C50
+name = "bdStereoSecondViewHook"
+registers = ["r31"]
+after_instruction = true

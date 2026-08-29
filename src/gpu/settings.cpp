@@ -151,6 +151,15 @@ REXCVAR_DEFINE_INT32(bd_render_scale, 100, kCvarGroup,
 // draws: the frame is fill-bound, so the fragments are the cost and the draws
 // are free. Keeping the pass alive keeps every guest-side invariant that hangs
 // off its texture intact.
+// Groundwork for stereo, not stereo. Renders the guest's scene a second time
+// from the same camera, which is visually wrong on purpose: it answers whether a
+// second full scene render per frame is possible at all, and what it costs,
+// before any per-eye matrices or targets are introduced.
+REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
+                    "Render the 3D scene twice per frame from the same camera. "
+                    "Diagnostic only - the image is unchanged and the cost "
+                    "doubles. Measures whether stereo is reachable.");
+
 REXCVAR_DEFINE_BOOL(bd_shadows, true, kCvarGroup,
                     "Sun shadows. Off renders the shadow map at 64x64, which "
                     "costs nothing. Requires restart.")
