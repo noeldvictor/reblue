@@ -33,9 +33,11 @@ can wander around and look at it instead of fighting things.
 
 ## What this fork is trying to do
 
-Roughly in priority order. **It boots into VR on a Quest 2, takes controller input, and a new game
-starts.** It is not playable: gameplay runs at 4-8 fps, and what you see is still a flat screen
-hanging in space rather than a world around you. A clone needs two things before it can
+Roughly in priority order. **Blue Dragon renders in stereo 3D on a Quest 2, with head tracking and
+Touch controllers, and a new game starts.** Stereo has real depth - measured off a captured frame as
+crossed disparity, near geometry separating 16px more than distant. It runs at 24.5 fps against the
+game's native 30, so it is not comfortable yet, and nobody has worn it for long enough to say more
+than that. A clone needs two things before it can
 build — the ReXGlue SDK (a public release) and `default.xex` from your own disc, which
 `tools/extract_xex.py` lifts out of an ISO in under a second without copying it.
 
@@ -43,21 +45,21 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | --- | --- | --- |
 | **VR with 6DOF head tracking** | Foundations built and tested | Head drives the camera, controller drives the character. |
 | — camera maths | **Done, 49 checks passing** | Handedness, per-eye projection, all four camera modes, world scale, recentre, stereo culling volume. Compiles and runs standalone. |
-| — third-person, head-anchored orbit | Composition done | Default mode. The game's own follow camera still needs suppressing. |
+| — third-person, head-anchored orbit | Composition done, anchor derived | Default mode. The party leader's position comes from the game's own follow camera - the leader sits on its forward axis at the follow distance. `bd_vr_anchor_distance` tunes it; the defaults are estimates and want one pass on hardware. |
 | — first person | Composition done | Animations are authored third-person, so expect a novelty. |
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
 | — OpenXR session | **Working on a Quest 2** | Instance, session, reference space, swapchain, frame loop. The plume seam compiles and runs. |
 | — head pose driving the game camera | **Working** | Composed onto the game's own view matrix at `bdBuildViewMatrix`, the same seam frame interpolation uses. One frame of latency, by construction. |
-| — stereo rendering | **Renders, on desktop** | `bd_stereo`. Every scene draw is submitted twice into left/right viewports with per-eye constants, giving real parallax and a convergence control. Making the *guest* render twice was tried and does not work - it yields +21% draws, not a second scene, because the render list is built once per frame above every seam. Not yet run on a headset, and not yet per-eye OpenXR views. |
+| — stereo rendering | **Working, with real depth** | `bd_stereo`. Every scene draw is submitted twice into left/right viewports with per-eye constants, and the two halves reach the compositor as per-eye `imageRect`s. Verified from a device capture: far +21px, near +5px, **near - far = -16px** - crossed and correctly signed. `tools/stereo_check.py` re-runs that check in one command. The eye offset must be a *constant* added to `clip.x`; the original `separation * clip.z` divides out to a flat sideways slide with no depth at all, which is what shipped for three sessions. |
 | **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 140 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. |
 | — shaders | **Solved** | 142 cache entries. They live in `pack/!necessity.ipk`, zlib-compressed, which is why raw scans found nothing. `tools/extract_ipk.py` unpacks them. |
 | — APK | **Installs and runs on a Quest 2** | `tools/build_apk.sh`, 62 MB. Six steps, no Gradle. |
-| — game data on device | **Done** | 3.2 GB extracted from disc 1 with `tools/extract_game_data.py`, driven by re:Blue's own install manifest. The VFS mounts 1274 archives / 70008 records. |
+| — game data on device | **Done** | Extracted with `tools/extract_game_data.py --all`, straight off an adb-connected device without copying the ISOs. **Use `--all`**: the install manifest names no locale files, so a manifest-only extraction boots, shows its title screen, and dies the moment a new game starts. The VFS mounts 1673 archives / 119346 records with `--all`; those two numbers are the quickest check that an install is complete. |
 | — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
-| **Quest 2 VR** | **Renders in VR** | Blue Dragon hangs in space in front of you as a world-locked screen, in stereo, at a readable size. Not yet *stereo 3D*: the game renders once, from one eye, so it is a cinema screen rather than a world you are inside. |
+| **Quest 2 VR** | **Stereo 3D, in a projection layer** | The scene is drawn once per eye with a real eye offset, so it has depth rather than being a screen hanging in front of you. |
 | — performance, title screen | **30 fps, the game's native rate** | Was 6.7. The renderer was drawing a 1280x720 game at the 3664x1920 headset panel resolution, and the flat Android present - a surface a headset never shows - cost 124ms of every 150ms frame. |
-| — performance, in game | **4-8 fps** | The honest headline, and now understood. A ~210ms frame is ~141ms GPU and ~62ms CPU. **The GPU half is fill-bound**: clipping the scissor to 25% takes the fence from 141ms to 0.1ms *while the draw count rises*, so fragments are the entire GPU cost and draws are free. `bd_render_scale=50` quarters them and `bd_reflections=false` removes a whole scene re-render; both verified. The ~62ms CPU floor is untouched and caps the port near 14 fps on its own. |
-| — mono projection layer | **Built, never seen render** | Replaces the floating quad so the world surrounds you instead of hanging in front of you. Committed; the one capture of it was black, a NaN was fixed after that, and the headset went offline before a retest. |
+| — performance, in game | **28.9 fps mono, 24.5 stereo** | Was 5.9. **The GPU half is fill-bound**: clipping the scissor to 25% takes the fence from 141ms to 0.1ms *while the draw count rises*, so fragments are the entire GPU cost and draws are free. Best mono config is `bd_render_scale=25`, `bd_reflections=false`, `bd_cull_distance=350` at 60Hz - the game's native rate. Stereo costs a pacing tier: the CPU barely moves (19.0 -> 20.2ms) but the frame goes 34.6 -> 50.0ms, so the cost is GPU work that the fence never shows. Trimming fill reaches 40.8ms. Getting stereo into the 33.3ms tier is the next job. |
+| — projection layer | **Working, captured** | Replaces the floating quad so the world surrounds you. Confirmed by capturing the frame handed to the compositor and looking at it. |
 | — character-anchored camera | **Does not work** | `SubmitCharacter()` is never called, so third-person and first-person quietly fall back to the game's own camera. |
 | — controllers | **Working** | Touch controllers are not Android gamepads — they exist only as OpenXR actions, which is why SDL reported no pad and `adb input keyevent` did nothing. 13 actions, Touch bindings, presented to the guest as a 360 pad. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
@@ -74,8 +76,10 @@ All reach the game through `args.txt` beside the game data on Android, or the pr
 | `bd_render_scale` | Scene at N% per axis. 50 quarters the fragment cost. **Verified.** |
 | `bd_reflections` | Off pins the planar reflection, which re-renders the scene, to its floor. **Verified.** |
 | `bd_shadows` | Off renders the sun shadow map at 64x64. Unverified - the draw census cannot see a depth-only target. |
-| `bd_stereo` | Submits every scene draw twice, one viewport per eye. |
-| `bd_stereo_separation` / `bd_stereo_convergence` | Eye offset and the distance at which parallax is zero. |
+| `bd_stereo` | Submits every scene draw twice, one viewport per eye. This is what gives depth. |
+| `bd_stereo_separation` / `bd_stereo_convergence` | Eye offset and the distance at which parallax is zero. Check the result with `tools/stereo_check.py`. |
+| `bd_capture_after_s` | Writes the composited frame to `logs/capture/` N seconds in. The only way to see what a headset is actually being shown. |
+| `bd_vr_anchor_distance` | Game units from the follow camera to the party leader, for the anchored camera modes. |
 | `bd_tourist_mode` | Full HP and MP while walking the field. |
 | `bd_debug_fill_scale` | Diagnostic. Shrinks the scissor without touching the viewport, so only the fragment count moves. This is what proved the frame fill-bound. |
 
@@ -91,11 +95,22 @@ point at those. `noeldvictor/XenosRecomp` is forked and repointed too, unmodifie
 the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version
 plus the codebase notes. [research/](research/) is the dated log of what was found and when.
 
-The approach, in one line: **build the VR camera on the desktop against a simulated Quest, and only
-go near real hardware for comfort, performance, and driver bugs.** Meta XR Simulator presents a
-virtual headset as an OpenXR runtime on the PC, so the same code path runs in the simulator, over
-Link, and on-device — chosen by an environment variable rather than a rebuild. That keeps the loop
-at edit-build-run instead of edit-build-deploy-headset-swear.
+The approach, in one line: **make the machine answer the question instead of guessing, because the
+device loop turned out to be about 60 seconds anyway.** That was not the original plan - the plan was
+to build the camera on a desktop against Meta XR Simulator and go near hardware only for comfort and
+driver bugs - and it is not what happened. The whole port was built on-device with printf.
+
+What made that work was instrumentation rather than tooling. Every hard bug here was found by adding
+one line of output and reading it, and the ones that took longest were the ones reasoned about
+instead: stereo was diagnosed wrongly four times in a day, and each wrong answer fell to one new
+number. Three things carry that load now, and all three run with nobody in the headset:
+
+- `bd_capture_after_s` writes the frame the compositor is handed to disk. Quest's own screenshot
+  intents do nothing on this Horizon build and `adb screencap` cannot see compositor layers, so
+  before this every VR claim rested on a log line.
+- `tools/stereo_check.py` turns "does stereo have depth" into one command, and is checked against the
+  three real captures that produced its three verdicts.
+- Vulkan validation layers, packaged via `EXTRA_LIBS` in `tools/build_apk.sh`.
 
 ## Table of Contents
 
