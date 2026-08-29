@@ -75,3 +75,49 @@ three minutes.
 a Quest frame already carrying a ~62ms CPU floor of which ~14ms is draw recording, stereo is not
 free on the CPU side either, which is an argument for getting the fill and CPU work landed before
 stereo rather than after.
+
+## Second experiment: re-entering the whole view driver
+
+`sub_822D3598` is the view driver holding both `bdCameraRender` call sites, and its prologue is
+`mr r31,r3` - so the argument it was handed is the same pointer it passes on as the camera, and the
+hook already has it. That makes re-entering the *driver* a one-line change from re-entering the
+render, and it repeats whatever per-view setup sits above the render.
+
+Host code can call a recompiled function directly: `generated/reblue_funcs.h` declares every
+`sub_`, and `rex::ppc::detail::current_ctx()` / `current_base()` supply the two arguments from
+inside a midasm hook that only receives `PPCRegister&`.
+
+| seam | draws/frame | verts/frame | scene target draws |
+| --- | --- | --- | --- |
+| off | 826 | 213,410 | 171 |
+| `bdCameraRender` (0x82142D30) | 965 (+15%) | 259,886 | 197 (+12%) |
+| **`sub_822D3598`, the whole view driver** | **997 (+21%)** | **260,014 (+22%)** | **213 (+25%)** |
+
+Still no crash at either level, and still nothing like a doubling. Re-entering higher up recovers
+more, which points the right way, but the shortfall is the same shape: **the render list is built
+once per frame, above both seams**, and replaying either only redraws whatever is still standing.
+
+Chasing it further up means `bdRenderViewInsertObject` (`0x8213BF98`),
+`bdRenderSortBucketsInit` (`0x8213D3A0`) and the scene traversal that feeds them - i.e. re-running
+visibility and sorting for the whole scene, a second time, on the CPU.
+
+## The conclusion, which is a design one
+
+**Stereo here should not re-run the guest.** Two experiments say the guest's submission path is not
+re-entrant in a useful way, and the only way to force it is to redo scene traversal and sorting per
+eye - on a frame that already carries a ~62ms CPU floor with ~14ms of draw recording in it. That
+buys a second eye by making the CPU problem worse, which is the wrong trade on a device that is
+GPU-fill-bound and CPU-capped at once.
+
+The alternative is the one the host is already positioned for: **record the scene pass once and
+submit it twice with different per-eye constants.** The renderer already owns its final target (the
+offscreen path in `present.cpp`, added for the quad layer, and explicitly noted there as what stereo
+would need), it already uploads view and projection constants per draw, and the per-eye matrices
+already exist in `xr_math`/`xr_camera`. That path doubles GPU fill and leaves the guest, the
+traversal, the sort and the draw recording untouched - one guest frame, two views.
+
+It also composes with the fill work rather than fighting it: at `bd_render_scale=50` each eye costs
+a quarter of a full-resolution view, so two eyes land at half the fragments of today's mono frame.
+
+**Do not implement stereo by calling guest functions twice.** That is the finding, and it is worth
+more than the +25% was.
