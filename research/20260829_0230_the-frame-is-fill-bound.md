@@ -188,3 +188,23 @@ there is no reason to remove them.
 
 All three compile. **None have been run** - the Quest left USB before any of it could be deployed,
 and the only device now attached is a Thor with neither the app nor the game data on it.
+
+## Why bd_shadows read as "no change"
+
+Every target the per-surface census records in a desktop field scene is a 16:9 chain:
+
+```
+1920x1080  1280x720  960x540  640x360  480x270  320x180  240x135  160x90  120x67  80x45
+```
+
+**No square target appears at all** - no 1024x1024, no 4096x4096. `NoteDrawTarget` is called from the
+draw hook with `s.render_target`, the colour target, so a depth-only shadow map is invisible to it
+by construction.
+
+So `bd_shadows = false` showing no change in the census is **not evidence that the flag does
+nothing**. The probe cannot see the pass the flag acts on. Verifying it needs either a census hook
+on the depth target, or a GPU timing comparison, and until then the flag should be described as
+unverified rather than ineffective.
+
+This is the same class of mistake as the `bd_debug_max_draws` reading: a measurement that cannot
+distinguish the hypothesis from its negation, taken as a result.
