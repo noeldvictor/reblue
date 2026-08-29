@@ -28,6 +28,13 @@ std::atomic<f64> g_stat_fps{0.0};
 std::atomic<f64> g_stat_gpu_wait_ms{0.0};
 std::atomic<f64> g_stat_logic_tps{0.0};
 std::atomic<u32> g_draw_count{0};
+// Vertices/indices submitted this frame. A frame is draw-bound at ~60us of GPU
+// per draw, and this is what separates "vertex processing is slow" from
+// "per-draw overhead is slow" - they have completely different fixes.
+std::atomic<u64> g_vert_count{0};
+std::atomic<u64> g_ph_lock{0};
+std::atomic<u64> g_ph_fb{0};
+std::atomic<u64> g_ph_state{0};
 std::atomic<u32> g_stat_draws{0};
 std::atomic<u32> g_barrier_call_count{0};
 std::atomic<u32> g_barrier_count{0};
@@ -92,7 +99,31 @@ void UpdateFrameStats() {
   last = now;
   g_stat_frame_count.fetch_add(1, std::memory_order_relaxed);
   const u32 draws = g_draw_count.exchange(0, std::memory_order_relaxed);
+  const u64 verts = g_vert_count.exchange(0, std::memory_order_relaxed);
   g_stat_draws.store(draws, std::memory_order_relaxed);
+  // Every ~5s, not per frame: this is a diagnostic for the draw-bound frame,
+  // and the interesting quantity is the average, not any single frame.
+  {
+    static u32 ticks = 0;
+    static u64 acc_v = 0;
+    static u64 acc_d = 0;
+    acc_v += verts;
+    acc_d += draws;
+    if (++ticks >= 150) {
+      const u64 lk = g_ph_lock.exchange(0, std::memory_order_relaxed);
+      const u64 fb = g_ph_fb.exchange(0, std::memory_order_relaxed);
+      const u64 st = g_ph_state.exchange(0, std::memory_order_relaxed);
+      BD_INFO("[perf] {} draws/frame, {} verts/frame, {:.0f} verts/draw | "
+              "per frame: mutex {:.1f}ms, bindFB {:.1f}ms, flushState {:.1f}ms",
+              acc_d / ticks, acc_v / ticks,
+              acc_d ? double(acc_v) / double(acc_d) : 0.0,
+              double(lk) / 1e6 / ticks, double(fb) / 1e6 / ticks,
+              double(st) / 1e6 / ticks);
+      ticks = 0;
+      acc_v = 0;
+      acc_d = 0;
+    }
+  }
   g_last.draws = draws;
   g_last.barrier_calls =
       g_barrier_call_count.exchange(0, std::memory_order_relaxed);
@@ -111,6 +142,22 @@ void UpdateFrameStats() {
 }
 
 void NoteDraw() { g_draw_count.fetch_add(1, std::memory_order_relaxed); }
+
+void NoteDrawVertices(u32 count) {
+  g_vert_count.fetch_add(count, std::memory_order_relaxed);
+}
+
+u64 DrawPhaseNow() {
+  return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                 std::chrono::steady_clock::now().time_since_epoch())
+                 .count());
+}
+
+void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state) {
+  g_ph_lock.fetch_add(locked - enter, std::memory_order_relaxed);
+  g_ph_fb.fetch_add(fb - locked, std::memory_order_relaxed);
+  g_ph_state.fetch_add(state - fb, std::memory_order_relaxed);
+}
 
 u32 DrawsThisFrame() {
   return g_draw_count.load(std::memory_order_relaxed);

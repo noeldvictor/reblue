@@ -118,6 +118,48 @@ independent, which is why every quality setting failed to move it.
 That per-draw constant is now the whole problem. Everything else measured in this note is a
 consequence of it.
 
+## The frame, fully attributed
+
+Vertex counting and per-phase timers in `DispatchDraw`, both permanent, reported every ~5s:
+
+```
+2848 draws/frame, 398959 verts/frame, 140 verts/draw
+per frame: mutex 0.5ms, bindFB 1.8ms, flushState 11.8ms
+frame 159.2ms = fence 89.8 + elsewhere 60.7
+```
+
+Which resolves the frame into three parts:
+
+| | cost | note |
+| --- | --- | --- |
+| GPU (`fence`) | **~90ms** | 2848 draws of 140 vertices each |
+| Guest simulation | **~46ms** | `elsewhere` minus the measured draw phases - recompiled PowerPC |
+| Draw recording | ~14ms | mutex 0.5 + bindFB 1.8 + flushState 11.8 |
+
+**Only 400K vertices a frame, at 140 vertices per draw.** That is nothing for an Adreno 650 - it is
+not a geometry problem. The GPU is spending **~32 microseconds per draw** on draws that move 140
+vertices, which is one to two orders of magnitude more than such a draw should cost.
+
+### Three renderer hypotheses killed by measurement
+
+All three came from a careful reading of the draw path and all three were wrong:
+
+- **Mutex contention: 0.5ms a frame.** The renderer mutex is taken per draw and per state-setting
+  hook, plausibly 10-30 times a draw, and it costs essentially nothing. Not worth converting to
+  atomics.
+- **`BindDrawFramebufferLocked`: 1.8ms a frame**, including the 16-slot `TransitionResolveSources`
+  scan that runs before the cache-hit early-out. Also worth noting that moving that scan after the
+  early-out - which looked like free wins - would be a **correctness bug**: it reads `s.textures`,
+  which changes per draw independently of the framebuffer.
+- **The 8 KiB constant byte-swap** had already been eliminated separately by vectorising it for no
+  gain.
+
+`FlushRenderStateLocked` at ~12ms is the only renderer CPU cost worth anything, and eliminating it
+entirely would buy 12ms of a 159ms frame.
+
+**So the renderer's CPU path is not the problem, and neither is geometry.** The problem is ~32us of
+GPU time per trivial draw, plus ~46ms of guest simulation.
+
 ## What to do next
 
 1. **Find what costs 60µs in a single draw.** This is the question now, and it is narrow. Candidates

@@ -50,6 +50,17 @@ void UpdateFrameStats();
 // Per draw call.
 void NoteDraw();
 
+// Vertices or indices a draw submits. Separates vertex-processing cost from
+// per-draw overhead, which is the open question on a draw-bound frame.
+void NoteDrawVertices(u32 count);
+
+// Per-draw CPU attribution. DrawPhaseNow is a monotonic nanosecond stamp;
+// NoteDrawPhases accumulates the three phases of DispatchDraw - waiting on the
+// renderer mutex, binding the framebuffer, and flushing render state - into
+// per-frame totals reported alongside the draw count.
+u64 DrawPhaseNow();
+void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state);
+
 // Draws recorded so far this frame. Reset with the rest of the counters at
 // frame end; used by the bd_debug_max_draws diagnostic.
 u32 DrawsThisFrame();

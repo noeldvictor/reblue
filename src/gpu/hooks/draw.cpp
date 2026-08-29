@@ -102,6 +102,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   BD_CPU_ZONE_DYN(zone_name);
 #endif
   bd::gpu::NoteDraw();
+  bd::gpu::NoteDrawVertices(args.vertexOrIndexCount);
 
   // Diagnostic, off by default. A field scene submits ~2925 draws and spends
   // ~110ms on the GPU fence, and that cost does not move when the render
@@ -119,11 +120,21 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       return;
   }
 
+  // A field scene costs ~25us of CPU per draw across ~2850 draws, and guessing
+  // which phase owns it has been wrong twice. These four counters attribute it
+  // directly: clock_gettime is ~25ns, so ~100us a frame to measure 70ms, and
+  // they are summed per frame rather than logged per draw.
+  //
+  // Kept permanently rather than deleted after use - this is the number that
+  // decides every renderer optimisation, and it was expensive to not have.
+  const auto t_enter = bd::gpu::DrawPhaseNow();
+
   // One lock across the whole recording sequence: loader threads record texture
   // uploads and Present records under the same mutex, and the per-frame command
   // list they all write is single-producer.
   auto &s = bd::gpu::state();
   std::unique_lock<std::mutex> lock(s.mutex);
+  const auto t_locked = bd::gpu::DrawPhaseNow();
   bd::gpu::Video::OpenCommandListLocked();
 
   // PSO key includes topology, so set it before any flush.
@@ -134,9 +145,12 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   if (!bd::gpu::Video::BindDrawFramebufferLocked()) {
     return;
   }
+  const auto t_fb = bd::gpu::DrawPhaseNow();
   if (!bd::gpu::Video::FlushRenderStateLocked(device_guest)) {
     return; // FlushRenderState logs its own reason
   }
+  const auto t_state = bd::gpu::DrawPhaseNow();
+  bd::gpu::NoteDrawPhases(t_enter, t_locked, t_fb, t_state);
 
   auto *cmd_list = s.command_list;
   if (!cmd_list)
