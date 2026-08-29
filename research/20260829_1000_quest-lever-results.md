@@ -314,3 +314,46 @@ worked.
 
 The cull is blunt at 350 - things pop in - so the honest next step is a gentler distance curve, or
 per-node cost, now that there is real headroom inside the tier to spend on quality.
+
+## Correction: "the GPU is solved" is true at quarter scale and nowhere else
+
+Spending the tier's headroom on resolution does not work, and the reason corrects a claim made
+several times above.
+
+```
+refresh 60, cull 350, render_scale=100
+  frame 66.8ms = xrWait 48.4 + fence 0.1 + elsewhere 17.8
+
+refresh 60, cull 400, render_scale=75
+  frame 50.5ms = xrWait 23.5 + fence 0.2 + elsewhere 26.3
+```
+
+At full scale the app does ~18.5ms of *measured* work and is paced at 60/4. Nothing in the
+breakdown accounts for the other 48ms - `fence` reads 0.1ms.
+
+**Because `fence` does not measure the GPU.** It measures the CPU waiting on a fence, and when the
+CPU is far enough ahead there is nothing to wait for. The compositor still sees a frame that arrives
+late and paces down accordingly. CLAUDE.md already records this - "a near-zero GPU fence does not
+mean the GPU is idle, it means the GPU was not the last thing waited on" - and it was still read as
+headroom.
+
+So the earlier statement that the GPU half is "solved, and can be traded for image quality at will"
+is wrong as written. It is solved **at `render_scale=25`**. The fill cost is still there at higher
+scales; it is simply invisible in the column being read, and it surfaces as the compositor dropping
+a tier.
+
+### The best known configuration
+
+```
+bd_xr_refresh_rate  60
+bd_render_scale     25
+bd_reflections      false
+bd_cull_distance    350
+```
+
+**28.9 fps**, frame 34.6ms in the 60/2 tier, CPU 19.0ms. That is Blue Dragon's native rate.
+
+Raising quality from here needs the *real* GPU cost measured, not inferred from `fence` - which
+means a GPU timestamp around the scene pass, or the scissor trick from
+`20260829_0230_the-frame-is-fill-bound.md` applied at each candidate scale. Guessing from `fence`
+will keep saying resolution is free right up until the compositor halves the frame rate.
