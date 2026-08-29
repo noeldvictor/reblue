@@ -152,6 +152,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   const auto t_state = bd::gpu::DrawPhaseNow();
   bd::gpu::NoteDrawPhases(t_enter, t_locked, t_fb, t_state);
 
+  // Which target is this draw hitting, and how big is it? The GPU counters say
+  // ~167M fragments a frame across ~2822 draws - about 59,000 fragments per
+  // draw from 131 vertices - and that total does not move when the scene
+  // resolution is halved. So the pixels are going somewhere whose size ignores
+  // bd_max_render_height, and this says where rather than inferring it.
+  if (s.render_target)
+    bd::gpu::NoteDrawTarget(s.render_target->width, s.render_target->height);
+
   auto *cmd_list = s.command_list;
   if (!cmd_list)
     return;

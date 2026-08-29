@@ -19,6 +19,8 @@
 
 #include "gpu/shaders/shader_constants.h"
 
+REXCVAR_DECLARE(i32, bd_debug_fill_scale);
+
 namespace bd::gpu {
 
 // ALPHAREF mirror for SharedConstants. Set by the bdSetRenderState hook (arg
@@ -221,10 +223,22 @@ void Video::FlushViewport() {
 
   if (s.dirtyStates.scissorRect) {
     // Scissor always tracks the viewport extent.
+    float sw = s.viewport.width;
+    float sh = s.viewport.height;
+    // Diagnostic: clip fragments without touching anything else. The viewport
+    // is left alone deliberately, so vertex work, draw count, pipeline state
+    // and binning input are bit-identical and only the fragment count moves.
+    // Every earlier attempt to measure fill by lowering the output resolution
+    // was void - it resized a surface taking 21 draws while the scene surface
+    // taking 2434 stayed pinned at the 1280x720 design canvas.
+    if (const i32 pct = REXCVAR_GET(bd_debug_fill_scale); pct < 100) {
+      sw = sw * float(pct) / 100.0f;
+      sh = sh * float(pct) / 100.0f;
+    }
     plume::RenderRect rc{static_cast<i32>(s.viewport.x),
                          static_cast<i32>(s.viewport.y),
-                         static_cast<i32>(s.viewport.x + s.viewport.width),
-                         static_cast<i32>(s.viewport.y + s.viewport.height)};
+                         static_cast<i32>(s.viewport.x + sw),
+                         static_cast<i32>(s.viewport.y + sh)};
     s.command_list->setScissors(&rc, 1);
     s.dirtyStates.scissorRect = false;
   }

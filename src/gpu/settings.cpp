@@ -124,6 +124,14 @@ REXCVAR_DEFINE_INT32(bd_debug_max_draws, 0, kCvarGroup,
                      "Diagnostic only - the frame renders wrong.")
     .range(0, 100000);
 
+REXCVAR_DEFINE_INT32(bd_debug_fill_scale, 100, kCvarGroup,
+                     "Shrink the scissor to N percent of the viewport in each "
+                     "axis, clipping fragments while leaving geometry, draw "
+                     "count and every pipeline state identical. Diagnostic "
+                     "only - the frame renders into a corner. Isolates "
+                     "fragment cost from everything else.")
+    .range(10, 100);
+
 REXCVAR_DEFINE_INT32(bd_msaa, 4, kCvarGroup,
                      "MSAA sample count for the 3D scene: 0 = off, 2, 4, 8. "
                      "Clamped to device support, ignored while "

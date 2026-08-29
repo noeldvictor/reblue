@@ -61,6 +61,10 @@ void NoteDrawVertices(u32 count);
 // Frames counted so far, for diagnostics that need to reset per frame.
 u32 FrameStatFrameCount();
 
+// Records the bound render target's size for a draw, so the per-frame report
+// can say which surfaces the draws are actually going to.
+void NoteDrawTarget(u32 width, u32 height);
+
 u64 DrawPhaseNow();
 void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state);
 

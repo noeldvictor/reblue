@@ -7,8 +7,10 @@
  */
 #include "gpu/frame_stats.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <mutex>
 
 #include <rex/system/kernel_state.h>
 #include <rex/system/xmemory.h>
@@ -35,6 +37,14 @@ std::atomic<u64> g_vert_count{0};
 std::atomic<u64> g_ph_lock{0};
 std::atomic<u64> g_ph_fb{0};
 std::atomic<u64> g_ph_state{0};
+
+// Draw counts and pixel area per distinct render target size. Small fixed
+// table rather than a map: this is on the per-draw path.
+struct TargetTally {
+  u32 w = 0, h = 0, draws = 0;
+};
+std::mutex g_target_mutex;
+TargetTally g_targets[12];
 std::atomic<u32> g_stat_draws{0};
 std::atomic<u32> g_barrier_call_count{0};
 std::atomic<u32> g_barrier_count{0};
@@ -119,6 +129,27 @@ void UpdateFrameStats() {
               acc_d ? double(acc_v) / double(acc_d) : 0.0,
               double(lk) / 1e6 / ticks, double(fb) / 1e6 / ticks,
               double(st) / 1e6 / ticks);
+      {
+        // Sorted by pixel volume, because the question is which surface is
+        // eating the fill rate, not which is drawn to most often.
+        std::lock_guard<std::mutex> tl(g_target_mutex);
+        TargetTally sorted[12];
+        std::copy(std::begin(g_targets), std::end(g_targets), std::begin(sorted));
+        std::sort(std::begin(sorted), std::end(sorted),
+                  [](const TargetTally &a, const TargetTally &b) {
+                    return u64(a.w) * a.h * a.draws > u64(b.w) * b.h * b.draws;
+                  });
+        for (const auto &t : sorted) {
+          if (!t.draws)
+            continue;
+          BD_INFO("[perf]   target {}x{}: {} draws/frame, {} Mpix/frame if "
+                  "each covered it once",
+                  t.w, t.h, t.draws / ticks,
+                  (u64(t.w) * t.h * (t.draws / std::max(ticks, 1u))) / 1000000);
+        }
+        for (auto &t : g_targets)
+          t = TargetTally{};
+      }
       ticks = 0;
       acc_v = 0;
       acc_d = 0;
@@ -149,6 +180,24 @@ void NoteDrawVertices(u32 count) {
 
 u32 FrameStatFrameCount() {
   return g_stat_frame_count.load(std::memory_order_relaxed);
+}
+
+void NoteDrawTarget(u32 width, u32 height) {
+  if (!width || !height)
+    return;
+  std::lock_guard<std::mutex> lock(g_target_mutex);
+  for (auto &t : g_targets) {
+    if (t.draws && t.w == width && t.h == height) {
+      ++t.draws;
+      return;
+    }
+    if (!t.draws) {
+      t.w = width;
+      t.h = height;
+      t.draws = 1;
+      return;
+    }
+  }
 }
 
 u64 DrawPhaseNow() {
