@@ -677,6 +677,37 @@ to entry-initialised statics was implemented and **changed the compiled SPIR-V b
 already CSEs them. Measured by rebuilding the shader cache and comparing size, no device needed.
 Reverted. The same idea was separately tried and reverted for vertex shaders.
 
+### Measured on a Quest, 2026-08-29
+
+`python tools/bench_quest.py all`, which is the first thing to run and builds nothing:
+
+```
+configuration                            frame    fence     else    fps   draws
+baseline                               170.1ms  108.6ms   53.2ms    5.9    2834
+render_scale=50, reflections=false     129.0ms   68.7ms   52.0ms    7.8    2761
+  + shadows=false                      129.4ms   65.4ms   55.6ms    7.7    2777
+  + stereo (sep 0.06, conv 0.03)       164.3ms   91.5ms   63.9ms    6.1    2766
+```
+
+Four things this settles:
+
+- **The fill levers transfer.** 37% off the GPU fence and 5.9 -> 7.8 fps, outside the +/-30% band.
+  The desktop verification loop was worth building.
+- **`bd_shadows` is not a lever.** 65.4ms against 68.7ms is inside noise. It reached the device
+  unverified because the census hooks the colour target and cannot see a depth-only pass, and it has
+  now measured as approximately nothing.
+- **The CPU floor is real computation, not back-pressure.** 43ms of GPU time was freed and
+  `elsewhere` moved 53.2ms to 52.0ms. It caps the port near **19 fps** on its own, so the
+  node-submission cost has to be attacked directly and culling is worth building.
+- **Stereo runs on the headset and costs what it should**: a second view of a half-scale scene plus
+  ~8ms of doubled draw recording. **Stereo at half scale is cheaper than mono at full scale** -
+  91.5ms of fence against the baseline's 108.6ms - which is what `bd_render_scale` is for. Not yet
+  looked at through the lenses.
+
+Best mono is **7.8 fps**, best stereo **6.1 fps**, against 13.9ms for 72 fps. Foveated rendering was
+dismissed on the since-disproved reading that the frame was not fill-bound, and should be
+reassessed.
+
 ### The three fill levers
 
 All three scale a surface the guest asks for, on the seam `bd_supersampling` already uses, so the
