@@ -664,6 +664,26 @@ It now walks a slow circle. Two things follow, and both bite:
   count before believing any number: a field scene is ~500-600 draws, a menu is 18. This is the
   first concrete reason to want tourist mode's encounter suppression as a *measurement tool*.
 
+### Vulkan validation layers run on device, and should be used before guessing
+
+There are none in the NDK. Fetch the Khronos Android build from the Vulkan-ValidationLayers
+releases and package it - Android only loads layers from the app's own lib directory, which is what
+`EXTRA_LIBS` in `tools/build_apk.sh` is for (also the route for a replacement Turnip driver).
+
+```sh
+EXTRA_LIBS=/path/to/libVkLayer_khronos_validation.so bash tools/build_apk.sh
+adb shell settings put global enable_gpu_debug_layers 1
+adb shell settings put global gpu_debug_app com.reblue
+adb shell settings put global gpu_debug_layers VK_LAYER_KHRONOS_validation
+adb shell settings put global gpu_debug_layer_app com.reblue
+```
+
+**Turn it off again** (`enable_gpu_debug_layers 0`) - it is slow enough to change what a frame time
+means. It settled the multiview question in one run after three sessions of inference, and it
+immediately surfaced an unrelated live bug: `Int64` is declared by every shader (the constant path
+uses `vk::RawBufferLoad` at a `uint64_t` address) while `shaderInt64` is not enabled, which makes
+the renderer's hottest path formally undefined on this device.
+
 ### Measurement precision: +/-30% across restarts. Read this before trusting an A/B.
 
 Within a single run the frame is stable to about 3% (200.5-207.1ms observed). **Across restarts it
@@ -1014,19 +1034,19 @@ Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and 
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
 game composites into a headset at its native frame rate with working controllers. What is left:
 
-1. **Stereo - and the remaining work is now a specific number, not "not started".** Both eyes
-   render; a capture proves it. What they do not carry is depth. Per-band SAD matching across a
-   captured frame gives **+59px at the sky and +57px at the near ground** - two pixels across the
-   scene's whole depth range, where real stereo would be tens to hundreds. That is one image shifted
-   sideways.
+1. **Stereo - the scene renders both eyes; the post-process chain flattens it.** This has been
+   wrong twice, so it is worth stating what is measured. Validation layers on device raise **no**
+   multiview, view-mask or render-pass-compatibility error, the scene targets are two-layer with
+   `viewMask 3`, and `vkCmdBeginRenderPass` uses that pass. The scene renders in stereo.
 
-   The maths is right and the shader is right. `oPos.x += eyeSign * (g_StereoSeparation * oPos.z -
-   g_StereoConvergence * oPos.w)` scales with `oPos.z`, which is parallax rather than a slide. But
-   it runs only in a multiview pipeline, and the log says **12 multiview against 201 mono** - the
-   scene geometry is drawn by the other 201, so the skew never touches it. **So the next piece of
-   work is why 94% of pipelines are still mono**, not the camera maths and not the shader. The
-   camera modes are composed and delivered every frame already, so the 6DOF plumbing is live and
-   waiting. See `research/20260829_1500_looking-at-the-frame.md`.
+   What is mono is everything after it: the framebuffer log shows scene passes at `rtLayers=2
+   viewMask=3` and post passes at `rtLayers=1 viewMask=0`. A mono pass writes layer 0 only, so the
+   image that reaches the compositor is one eye - which is why measured disparity is ~2px across the
+   scene's whole depth range. **The work is to make the post chain view-aware, or to resolve per-eye
+   from the two-layer scene target before the mono passes collapse it.** The camera modes and the
+   per-eye skew are done and verified; this is the last link.
+   See `research/20260829_1600_multiview-is-correct-the-post-chain-is-mono.md`.
+
 2. **The occlusion descriptor set**, which is dropped rather than fixed on Android and costs four
    pipelines. Collapse sets 0/1/2 - one physical set bound three times to satisfy three HLSL
    register spaces - and the layout fits Adreno's four without dropping anything.
