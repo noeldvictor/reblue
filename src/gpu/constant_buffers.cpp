@@ -17,6 +17,10 @@
 #include <rex/runtime.h>
 #include <rex/types.h>
 
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
+
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
@@ -176,7 +180,49 @@ void CopyByteSwap32Impl(u8 *dst, u32 guest_va, u32 size) {
   }
   const u32 count = size / sizeof(u32);
   auto *out = reinterpret_cast<u32 *>(dst);
-  for (u32 i = 0; i < count; ++i) {
+  u32 i = 0;
+
+#if defined(__aarch64__)
+  // Sixteen dwords per iteration on ARM64, which is the hot path: this runs
+  // twice per draw over 4 KiB each, and a field scene submits ~2957 draws, so
+  // it is roughly 24 MB of stores a frame.
+  //
+  // Two separate reasons this is worth vectorising, and the second matters
+  // more than the first:
+  //
+  //  - vrev32q_u8 byte-reverses four dwords in one instruction.
+  //  - `dst` points into the persistently mapped UPLOAD heap, which is
+  //    write-combine. Scalar 4-byte stores into WC memory dribble into the
+  //    combine buffers and force partial flushes; 64 bytes at a time fills a
+  //    whole line per iteration. On Adreno that is the larger effect.
+  for (; i + 16 <= count; i += 16) {
+    const auto *s8 = reinterpret_cast<const u8 *>(src + i);
+    auto *d8 = reinterpret_cast<u8 *>(out + i);
+    uint32x4_t v0 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(s8 + 0)));
+    uint32x4_t v1 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(s8 + 16)));
+    uint32x4_t v2 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(s8 + 32)));
+    uint32x4_t v3 = vreinterpretq_u32_u8(vrev32q_u8(vld1q_u8(s8 + 48)));
+    if constexpr (kFlushNaN) {
+      // Same test as the scalar path: NaN iff |bits| > +Inf bits. vbicq is
+      // "and not", so a lane that compares true is cleared to +0.
+      const uint32x4_t abs_mask = vdupq_n_u32(0x7FFFFFFFu);
+      const uint32x4_t inf_bits = vdupq_n_u32(0x7F800000u);
+      v0 = vbicq_u32(v0, vcgtq_u32(vandq_u32(v0, abs_mask), inf_bits));
+      v1 = vbicq_u32(v1, vcgtq_u32(vandq_u32(v1, abs_mask), inf_bits));
+      v2 = vbicq_u32(v2, vcgtq_u32(vandq_u32(v2, abs_mask), inf_bits));
+      v3 = vbicq_u32(v3, vcgtq_u32(vandq_u32(v3, abs_mask), inf_bits));
+    }
+    vst1q_u8(d8 + 0, vreinterpretq_u8_u32(v0));
+    vst1q_u8(d8 + 16, vreinterpretq_u8_u32(v1));
+    vst1q_u8(d8 + 32, vreinterpretq_u8_u32(v2));
+    vst1q_u8(d8 + 48, vreinterpretq_u8_u32(v3));
+  }
+#endif
+
+  // Tail, and the whole job on non-ARM64. The constant blocks are 4 KiB and
+  // 256-byte aligned so the vector loop normally consumes all of it, but the
+  // shared block is not a multiple of 64 bytes.
+  for (; i < count; ++i) {
 #if defined(_MSC_VER)
     const u32 v = _byteswap_ulong(src[i]);
 #else
