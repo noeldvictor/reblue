@@ -25,6 +25,8 @@
 #include "gpu/pipeline/pipeline_cache.h"
 #include "gpu/pipeline/pso_recorder.h"
 
+REXCVAR_DECLARE(i32, bd_debug_max_pso);
+
 namespace bd::gpu {
 namespace {
 
@@ -219,7 +221,32 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   // D3D12 retains the bound pipeline across draws in a command list, so a clean
   // pipelineState can skip both the cache lookup and the bind.
   // BeginCommandList force-dirties this on every command list reset.
-  if (s.dirtyStates.pipelineState) {
+  // Diagnostic. A field scene binds 1121 pipelines across 2848 draws and the
+  // GPU spends ~32us on a draw that moves 140 vertices - a cost that survives
+  // halving the resolution, so it is per-draw and not fill. Pipeline switches
+  // are the last standing explanation.
+  //
+  // Capping them answers it: past the cap the previously bound pipeline is
+  // reused, so the scene renders with wrong materials but the draw count and
+  // geometry are untouched. If the fence collapses, PSO switching is the cost.
+  bool pso_capped = false;
+  if (const i32 cap = REXCVAR_GET(bd_debug_max_pso); cap > 0) {
+    static u32 s_frame = 0;
+    static u32 s_count = 0;
+    const u32 frame = FrameStatFrameCount();
+    if (frame != s_frame) {
+      s_frame = frame;
+      s_count = 0;
+    }
+    if (s.dirtyStates.pipelineState) {
+      if (s_count >= static_cast<u32>(cap))
+        pso_capped = true;
+      else
+        ++s_count;
+    }
+  }
+
+  if (s.dirtyStates.pipelineState && !pso_capped) {
     PipelineState lookup = s.pipelineState;
     SanitizePipelineState(lookup);
     bool built = false;

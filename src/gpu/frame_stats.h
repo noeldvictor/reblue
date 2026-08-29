@@ -58,6 +58,9 @@ void NoteDrawVertices(u32 count);
 // NoteDrawPhases accumulates the three phases of DispatchDraw - waiting on the
 // renderer mutex, binding the framebuffer, and flushing render state - into
 // per-frame totals reported alongside the draw count.
+// Frames counted so far, for diagnostics that need to reset per frame.
+u32 FrameStatFrameCount();
+
 u64 DrawPhaseNow();
 void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state);
 

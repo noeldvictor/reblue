@@ -516,6 +516,34 @@ See `research/20260828_1900_vr-camera-and-input.md` for the detail, including th
 (`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
 controllers are invisible to SDL.
 
+### The bottleneck: guest shader constants are global memory loads
+
+**This is the answer to why the port is slow**, and it is a property of the shader translation, not
+of Blue Dragon and not of VR. See `research/20260829_0030_shader-constants-are-global-loads.md`.
+
+`XenosRecomp/shader_recompiler.cpp:1345` emits every guest constant register as
+
+```cpp
+#define cN vk::RawBufferLoad<float4>(g_PushConstants.VertexShaderConstants + off, 0x10)
+```
+
+`VertexShaderConstants` is a `uint64_t` device address in a push constant, so **every `c[n]` read is
+a raw global memory load, per invocation**. The indexed form used by skinning (line 1340) adds a
+compare and a `min` on top. On a Xenos these were constant registers - the fastest read a shader
+had. On an Adreno 650 a UBO read goes through the constant path and is usually hoisted at wave
+launch, while a buffer-device-address load is ordinary global memory, per vertex.
+
+A skinned vertex shader reading four bone matrices plus a WVP is 20-40 global loads per vertex. At
+~400,000 vertices a frame that is 8-16 million uncached loads, and it measures as **~225ns per
+vertex** where single-digit nanoseconds would be normal.
+
+**The fix** is to bind the constant blocks as a uniform buffer instead of pushing a device address:
+`shader_recompiler.cpp` (lines ~1340-1395) and `shader_common.h` on the fork
+`noeldvictor/XenosRecomp`, plus `src/gpu/constant_buffers.cpp` and `src/gpu/draw.cpp` to bind a UBO
+descriptor rather than passing `gpuAddress` through `setGraphicsPushConstants`. The data, the upload
+heap and the alignment all stay; only how the shader reaches it changes. Needs the shader cache
+rebuilt.
+
 ### The bottleneck is not VR
 
 **Measured, VR switched off entirely**: the same field scene costs 2925 draws, 108.9ms on the GPU

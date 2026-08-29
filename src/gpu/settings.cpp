@@ -99,6 +99,12 @@ REXCVAR_DEFINE_INT32(bd_max_render_height,
 // Capping the draws answers it directly: if the fence falls in proportion the
 // frame is draw-bound and culling is the lever. The frame renders incorrectly
 // while this is set; it is a measurement, not a quality setting.
+REXCVAR_DEFINE_INT32(bd_debug_max_pso, 0, kCvarGroup,
+                     "Stop switching pipelines after N per frame; later draws "
+                     "reuse the last one. 0 disables. Diagnostic only - the "
+                     "scene renders with wrong materials.")
+    .range(0, 100000);
+
 REXCVAR_DEFINE_INT32(bd_debug_max_draws, 0, kCvarGroup,
                      "Stop submitting after N draws per frame. 0 disables. "
                      "Diagnostic only - the frame renders wrong.")

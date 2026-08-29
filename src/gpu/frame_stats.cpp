@@ -147,6 +147,10 @@ void NoteDrawVertices(u32 count) {
   g_vert_count.fetch_add(count, std::memory_order_relaxed);
 }
 
+u32 FrameStatFrameCount() {
+  return g_stat_frame_count.load(std::memory_order_relaxed);
+}
+
 u64 DrawPhaseNow() {
   return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
                  std::chrono::steady_clock::now().time_since_epoch())
