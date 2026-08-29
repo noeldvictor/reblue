@@ -356,6 +356,21 @@ diagnosing a slow build. The short version:
 - **Push directories, never files in a loop.** One `adb push` per file with a `mkdir -p` round trip
   each managed **3 files in 90 seconds**. Pushing the changed subtrees instead moved **5 GB in under
   a minute**, at 120 MB/s.
+- **A XenosRecomp change needs two manual steps or it never reaches the device.** `REBLUE_XENOSRECOMP`
+  points at `out/host-xenosrecomp/`, a separate host build tree that the Android build never
+  rebuilds - and the shader cache does not depend on that binary either, so `ninja` reports "no work
+  to do" and keeps the old `generated/shader_cache.cpp`. A shader-recompiler change therefore
+  compiles, commits, deploys, and changes nothing at all. This is how the per-eye stereo skew sat in
+  0 of 55 shaders for a day while the C++ around it looked correct.
+
+  ```sh
+  cmake --build out/host-xenosrecomp --target XenosRecomp
+  rm -f out/build/android-arm64-release/generated/shader_cache.cpp
+  cmake --build --preset android-arm64-release --target reblue
+  ```
+
+  **Verify in the emitted HLSL, not the source.** `--target reblue_shader_hlsl_dump` then grep
+  `out/build/<preset>/hlsl_dump/` for whatever was added. Nothing else can tell the difference.
 - **Do not rebuild the guest.** `reblue_recomp` and `reblue_generated` are separate OBJECT libraries
   so a change in `src/` never touches the 54 recompiled TUs or the multi-megabyte shader cache. If
   they rebuild, a codegen input changed — find out which.
