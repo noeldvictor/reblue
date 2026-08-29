@@ -104,12 +104,23 @@ void NoteDistinct(u32 *table, u32 &count, u32 value) {
 }
 } // namespace
 
+namespace {
+// How many nodes the distance test saw and how many it rejected, so a cull that
+// silently does nothing is distinguishable from one that is working and simply
+// has nothing to remove.
+std::atomic<u64> g_culled_count{0};
+std::atomic<u64> g_tested_count{0};
+} // namespace
+
 namespace bd::engine {
 void CensusReportDistinct() {
   if (!REXCVAR_GET(bd_guest_census))
     return;
   BD_INFO("[census]   sceneNodeDrawSingle distinct r3={} r4={}", g_distinct_r3,
           g_distinct_r4);
+  BD_INFO("[census]   distance cull: {} of {} nodes rejected",
+          g_culled_count.exchange(0, std::memory_order_relaxed),
+          g_tested_count.exchange(0, std::memory_order_relaxed));
   std::memset(g_seen_r3, 0, sizeof(g_seen_r3));
   std::memset(g_seen_r4, 0, sizeof(g_seen_r4));
   g_distinct_r3 = 0;
@@ -134,6 +145,7 @@ void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }
 
 REXCVAR_DECLARE(f64, bd_cull_bias);
 REXCVAR_DECLARE(f64, bd_cull_distance);
+
 
 // Set by the hook before the visibility test, read by the one after it. Per
 // thread because the guest culls on its own thread and nothing else must see it.
@@ -187,6 +199,9 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
 // sends it down its own "not visible" path and skips the draw. Nothing is
 // redirected and no return address is needed.
 void bdSceneCullDistanceHook(PPCRegister &r3) {
-  if (g_cull_this_node)
+  if (g_cull_this_node) {
     r3.u64 = 0;
+    g_culled_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  g_tested_count.fetch_add(1, std::memory_order_relaxed);
 }
