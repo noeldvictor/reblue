@@ -183,6 +183,20 @@ REXCVAR_DEFINE_DOUBLE(bd_effect_distance, 1.0, kCvarGroup,
 // skips their draw itself - no control flow redirected, no return address
 // needed. The CPU floor is real computation (43ms of GPU freed on a Quest moved
 // `elsewhere` by 1.2ms), and the census puts node submission at the top of it.
+// View-space distance beyond which a scene node is not drawn. The centre the
+// guest tests is in view space with the camera at the origin, so this is a plain
+// length; measured on device, mid-distance props sit around 700-820 and their
+// own radii run 4-11. An object is kept if its radius reaches inside the limit,
+// so a distant cliff does not vanish while the pebble beside it stays.
+//
+// 0 disables. This is the lever for the CPU floor: ~43ms of a Quest frame is
+// guest code and bdSceneNodeDrawSingle is 23x everything else in it, walked
+// once per node for about a thousand individually placed objects.
+REXCVAR_DEFINE_DOUBLE(bd_cull_distance, 0.0, kCvarGroup,
+                      "View-space distance beyond which scene nodes are not "
+                      "drawn. 0 disables. Cuts CPU, and things pop in.")
+    .range(0.0, 100000.0);
+
 REXCVAR_DEFINE_DOUBLE(bd_cull_bias, 1.0, kCvarGroup,
                       "Scales the bounding radius used by the scene-graph cull. "
                       "Below 1.0 culls more aggressively, cutting draws and the "

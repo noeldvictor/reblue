@@ -6,7 +6,10 @@
  */
 
 #include <atomic>
+#include <cmath>
 #include <cstring>
+
+#include "core/memory_helpers.h"
 
 #include <rex/hook.h>
 #include <rex/ppc.h>
@@ -130,6 +133,13 @@ void bdCensusbdFrameSubmitAndDebugHUD() { bd::engine::CensusNote(12); }
 void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }
 
 REXCVAR_DECLARE(f64, bd_cull_bias);
+REXCVAR_DECLARE(f64, bd_cull_distance);
+
+// Set by the hook before the visibility test, read by the one after it. Per
+// thread because the guest culls on its own thread and nothing else must see it.
+namespace {
+thread_local bool g_cull_this_node = false;
+} // namespace
 
 // Shrinks the bounding radius the guest tests against its own view frustum, so
 // nodes that only just intersect it are culled and their draw never happens.
@@ -139,8 +149,44 @@ REXCVAR_DECLARE(f64, bd_cull_bias);
 // did not move - and the census says node submission dominates it, so cutting
 // nodes is the lever. This is the cheapest form of that: one register, before a
 // call the guest already makes.
-void bdSceneCullBiasHook(PPCRegister &f1) {
+void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   const f64 bias = REXCVAR_GET(bd_cull_bias);
   if (bias != 1.0)
     f1.f64 *= bias;
+
+  // r3 is the transformed centre the visibility test reads - sub_82287788 opens
+  // with `mr r10,r3` and the VMX chain just above writes three floats through
+  // it. Logged once so the units are known: if the camera sits at the origin of
+  // whatever space this is, distance culling is length(centre) and needs no
+  // camera position at all.
+  // Distance. The centre is in view space with the camera at the origin, so the
+  // distance is just its length - no camera position, no matrix, no space
+  // conversion to get wrong. Stashed for the hook after the call, which is the
+  // only place the result can be overridden.
+  g_cull_this_node = false;
+  const f64 limit = REXCVAR_GET(bd_cull_distance);
+  if (limit <= 0.0)
+    return;
+  const u32 va = r3.u32;
+  if (va == 0)
+    return;
+  float c[3];
+  for (int i = 0; i < 3; ++i) {
+    const u32 bits = bd::mem::try_load<u32>(va + u32(i) * 4);
+    std::memcpy(&c[i], &bits, sizeof(float));
+  }
+  const f64 len =
+      std::sqrt(f64(c[0]) * c[0] + f64(c[1]) * c[1] + f64(c[2]) * c[2]);
+  // Keep anything whose own radius reaches inside the limit, so a large distant
+  // object - a cliff, a building - does not pop out while the pebble beside it
+  // stays.
+  g_cull_this_node = (len - f1.f64) > limit;
+}
+
+// Zeroes the visibility result the guest is about to compare against 0, which
+// sends it down its own "not visible" path and skips the draw. Nothing is
+// redirected and no return address is needed.
+void bdSceneCullDistanceHook(PPCRegister &r3) {
+  if (g_cull_this_node)
+    r3.u64 = 0;
 }

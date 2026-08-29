@@ -130,5 +130,20 @@ after_instruction = false
 [[midasm_hook]]
 address = 0x82282598
 name = "bdSceneCullBiasHook"
-registers = ["f1"]
+registers = ["f1", "r3"]
+after_instruction = false
+
+# Distance culling (bd_cull_distance). The pair above computes the decision from
+# the node centre, which r3 points at and which is in view space with the camera
+# at the origin - measured on device: z sits near -700 for mid-distance props and
+# lengths run 700-820. This one applies it, by zeroing the visibility result the
+# guest is about to test.
+#
+# Two hooks rather than one because the centre is only reachable before the call
+# and the result only after it. Forcing r3 here is what makes it safe: no control
+# flow is redirected and the guest skips the draw on its own path.
+[[midasm_hook]]
+address = 0x8228259C
+name = "bdSceneCullDistanceHook"
+registers = ["r3"]
 after_instruction = false
