@@ -27,6 +27,8 @@
 #include "xr/xr_game_camera.h"
 #include "xr/xr_pad.h"
 
+REXCVAR_DECLARE(bool, bd_stereo);
+
 namespace bd::xr {
 
 namespace {
@@ -508,18 +510,30 @@ void Session::EndFrame(const FrameState &state) {
   uint32_t layerCount = 0;
 
   if (g_projectionQueued && swapchain_) {
-    // Both eyes get the same image, the same pose and the same frustum. That
-    // is what makes this mono - and it is also why it is comfortable: an image
-    // drawn for one eye and shown to both is a stereo mismatch, whereas an
-    // image drawn from the head and shown to both is simply flat.
+    // This is the seam where stereo either reaches the headset or does not.
+    //
+    // With bd_stereo the renderer draws both eyes side by side into one image:
+    // every scene draw is submitted twice, into a left and a right half-width
+    // viewport, with its own per-eye constants. So each projection view has to
+    // take *its half* of that image. Handing both views the full rect - which
+    // is what this did - shows the same picture to both eyes and no amount of
+    // work in the renderer can make it stereo.
+    //
+    // Without bd_stereo the image is a single mono view and both eyes get all
+    // of it. That is flat rather than wrong: an image drawn from the head and
+    // shown to both eyes is comfortable, where an image drawn for one eye and
+    // shown to both is a stereo mismatch.
+    const bool sideBySide = REXCVAR_GET(bd_stereo);
+    const int32_t fullW = static_cast<int32_t>(swapchainWidth_);
+    const int32_t fullH = static_cast<int32_t>(swapchainHeight_);
+    const int32_t eyeW = sideBySide ? fullW / 2 : fullW;
     for (u32 i = 0; i < 2; ++i) {
       projViews[i].pose = g_headPose;
       projViews[i].fov = g_layerFov;
       projViews[i].subImage.swapchain = static_cast<XrSwapchain>(swapchain_);
-      projViews[i].subImage.imageRect.offset = {0, 0};
-      projViews[i].subImage.imageRect.extent = {
-          static_cast<int32_t>(swapchainWidth_),
-          static_cast<int32_t>(swapchainHeight_)};
+      projViews[i].subImage.imageRect.offset = {
+          sideBySide ? static_cast<int32_t>(i) * eyeW : 0, 0};
+      projViews[i].subImage.imageRect.extent = {eyeW, fullH};
       projViews[i].subImage.imageArrayIndex = 0;
     }
     projection.space = AsSpace(appSpace_);
