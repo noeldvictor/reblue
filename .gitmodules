@@ -1,9 +1,11 @@
 [submodule "thirdparty/plume"]
 	path = thirdparty/plume
-	url = https://github.com/zolaware/plume.git
+	url = git@github.com:noeldvictor/plume.git
+	branch = reblue-openxr
 [submodule "thirdparty/XenosRecomp"]
 	path = thirdparty/XenosRecomp
-	url = https://github.com/zolaware/reblue-XenosRecomp.git
+	url = git@github.com:noeldvictor/XenosRecomp.git
+	branch = reblue
 [submodule "thirdparty/implot"]
 	path = thirdparty/implot
 	url = https://github.com/epezent/implot.git

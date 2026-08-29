@@ -115,8 +115,11 @@ The Android target builds and runs on a Quest 2. `tools/build_apk.sh` packages i
 from `tools/extract_game_data.py`, and `args.txt` beside the game data appends cvars without
 rebuilding the APK - use it, a 62 MB reinstall to change a log level is not a dev loop.
 
-It runs: XEX loaded, 154 kernel imports patched, guest heap up, VFS mounting 70008 records of real
-game data, Vulkan 1.1 on the Adreno 650, the guest rendering, and OpenXR compositing it at 30 fps.
+It runs: XEX loaded, 154 kernel imports patched, guest heap up, VFS mounting **1673 archives /
+119346 record names** of real game data, Vulkan 1.1 on the Adreno 650, the guest rendering, Touch
+controllers reaching the guest as a pad, and OpenXR compositing it at 30 fps - the game's native
+rate. Those two VFS numbers are the quickest sanity check that the install is complete; see the
+game data section above.
 
 The one shortcut still in place is the sun occlusion descriptor set, which is **dropped** on Android
 rather than fixed. Adreno exposes `maxBoundDescriptorSets = 4` where a desktop GPU reports 8 or 32,
@@ -207,30 +210,46 @@ lives.
 
 ## Forked dependencies
 
-The owner has forked the three upstreams this port has to modify, so changes can live in their own
-history instead of accumulating in `patches/`:
+Both patches outgrew `patches/` and now live as real history in the owner's forks. **Push changes
+to these, do not add new patch files.**
 
-- `github.com/noeldvictor/rexglue-sdk` - the Android cross-build (`patches/rexglue-sdk-android.patch`,
-  ~15 files). There is no `android-arm64` release slice, so this is built from source regardless.
-- `github.com/noeldvictor/plume` - the OpenXR device-creation seam
-  (`patches/plume-openxr-seam.patch`). Stereo will need more here: per-eye targets and probably
-  `VK_KHR_multiview`, which is well past what a patch file should carry.
-- `github.com/noeldvictor/XenonRecomp` - note this repo vendors **XenosRecomp** (the Xenos *shader*
-  recompiler) in `thirdparty/`, which is a different project from XenonRecomp (the PowerPC CPU
-  recompiler). Check which one a change actually needs before pushing to either.
+| Submodule | Fork | Branch | Carries |
+| --- | --- | --- | --- |
+| `thirdparty/plume` | `noeldvictor/plume` | `reblue-openxr` | `VulkanInterfaceOptions`, so an OpenXR runtime can name the instance extensions, device extensions, physical device and minimum API version |
+| `thirdparty/XenosRecomp` | `noeldvictor/XenosRecomp` | `reblue` | Unmodified so far. `zolaware-main` on the same fork carries the full upstream history it was taken from |
 
-`patches/README.md` already says a patch is the cheap option rather than the right one, and that
-forking is correct once one grows past "small and obviously correct". Both have.
+The ReXGlue SDK is **not** a submodule - it is cloned to `out/rexglue-src` and pointed at with
+`REXSDK_DIR`, because no `android-arm64` release slice exists. Its Android port is
+`noeldvictor/rexglue-sdk` branch **`android-arm64`**: fibers via vendored libucontext (bionic
+aarch64 has no `getcontext` family at all), `ASharedMemory_create` for the guest address space,
+an activity harness, an Android filesystem path, and logcat logging.
+
+Two things to know before touching the SDK tree:
+
+- **Never commit `thirdparty/libmspack`.** Its symlinks check out as plain text on Windows, so the
+  submodule permanently reads as modified. Committing that corrupts the pointer.
+- This repo vendors **XenosRecomp**, the Xenos *shader* recompiler. **XenonRecomp** is a different
+  project - the PowerPC *CPU* recompiler - and is also forked, but nothing here uses it. Check which
+  one a change actually needs.
 
 ## Dev loop
 
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
 diagnosing a slow build. The short version:
 
-- **Do not go to the device.** Phases 0–5 run as a desktop executable against **Meta XR Simulator**,
-  a virtual Quest presented as an OpenXR runtime on the PC. Selected with `XR_RUNTIME_JSON`, so
-  simulator / Link / Monado is an environment variable, not a rebuild. The Quest is for comfort,
-  real performance numbers, and driver bugs only.
+- **The device loop is about 60 seconds, and that turned out to be fine.** Measured, on this
+  machine: incremental `src/` build **~10s**, `tools/build_apk.sh` **~15s**, `adb install -r`
+  **~5s**, launch to title screen **~30s**. The whole VR port was built this way. The advice below
+  used to say "do not go to the device, use Meta XR Simulator" - that is still the better loop *if*
+  a desktop Vulkan toolchain exists, but this machine has no vcpkg so the desktop targets do not
+  link, and the simulator was never needed. Do not treat going to the device as defeat.
+- **Change a cvar without building anything.** `args.txt` beside the game data is read at launch,
+  one argument per line. A settings experiment is a push and a relaunch, about 30 seconds, with no
+  compile and no 62 MB reinstall. Check the `args.txt added N argument(s)` line in logcat, because
+  a failed push looks exactly like a setting that does nothing.
+- **Push directories, never files in a loop.** One `adb push` per file with a `mkdir -p` round trip
+  each managed **3 files in 90 seconds**. Pushing the changed subtrees instead moved **5 GB in under
+  a minute**, at 120 MB/s.
 - **Do not rebuild the guest.** `reblue_recomp` and `reblue_generated` are separate OBJECT libraries
   so a change in `src/` never touches the 54 recompiled TUs or the multi-megabyte shader cache. If
   they rebuild, a codegen input changed — find out which.
@@ -462,34 +481,48 @@ per-app ceiling around 4 GB, weaker than the Thor's 8 Gen 2, and stereo doubles 
 September 2024 with support running to roughly 2026–2027 — a fixed, non-improving target, which at
 least means optimising for one known device.
 
-### The key scheduling insight
+### The key scheduling insight, and how it actually went
 
-VR is the priority but Android is the blocker, and taken literally that puts the most important work
-behind the longest pole. It does not have to be: **build and debug the VR camera on desktop Vulkan**
-(`reblue_vk.exe` or the Linux Vulkan build) against a PC OpenXR runtime, wearing the Quest 2 over
-Link, with a real debugger and RenderDoc attached. Port to native Android only once the camera is
-right. Do not attempt to invent a VR renderer on a device with no debugger.
+The original plan said: VR is the priority but Android is the blocker, so build and debug the VR
+camera on desktop Vulkan against a PC OpenXR runtime, with a real debugger and RenderDoc, and port
+to Android only once the camera is right. **That is still the right instinct, and it is not what
+happened** - this machine has no vcpkg, so the desktop targets never linked, and the entire port was
+built on-device with a 60-second loop and printf.
+
+What made that survivable was not tooling, it was making the machine answer questions instead of
+guessing. Every hard bug this port has hit was found by adding one line of output and reading it:
+
+- 124ms of a 150ms frame in the flat present - found by printing a frame breakdown, which also
+  killed three plausible hypotheses in the same line.
+- A fatal file load 25 minutes into a renderer investigation - found by reading the log rather than
+  the renderer.
+- A camera seam that was reached but composing wrongly - found by logging the head pose and seeing
+  it move.
+
+So the rule that generalises is not "use the simulator". It is **make it visible before debugging
+it**, which is the same lesson recorded in the devloop skill.
 
 ### Order of work
 
-1. The Vulkan device-creation seam — **written, as `patches/plume-openxr-seam.patch`.** 69
-   insertions across `plume_vulkan.h` and `plume_vulkan.cpp`, adding `VulkanInterfaceOptions` so an
-   OpenXR runtime can name the instance extensions, device extensions, physical device and minimum
-   API version. Backward compatible: the options pointer defaults to null and the no-argument
-   `CreateVulkanInterface()` stays. It is a patch rather than a plume fork because forking a
-   submodule means owning its history; see `patches/README.md`. **Not compiled** — no Vulkan SDK
-   here — so building it is the first thing that happens on a real toolchain.
-2. `src/xr/` — **done** for the dependency-free half: `xr_math` (handedness, view, per-eye
-   projection), `xr_camera` (all four modes, world scale, recentre, snap turn), `xr_cull` (combined
-   two-eye volume), `xr_settings` (15 cvars, wired into `ReblueApp::OnPostInitLogging`). 49 checks
-   passing under `tools/xr_math_test`. The OpenXR half is next and needs a real toolchain.
-3. Black stereo frame on the Quest over Link, from the desktop Vulkan build.
-4. Stereo scene rendering, then the 6DOF camera and its modes.
-5. In parallel and independently, because it is pure information and the longest pole: attempt the
-   ReXGlue SDK `android-arm64` cross-build.
-6. Tourist mode whenever a quick win is wanted — it touches nothing else, and
+Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and runs, the SDK
+cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
+game composites into a headset at its native frame rate with working controllers. What is left:
+
+1. **Stereo.** The one thing standing between this and actual VR. Today the scene renders once, from
+   one eye, onto a world-locked quad - a cinema screen rather than a world you are inside. It needs
+   either the guest's scene drawn twice per frame, or per-view matrices reaching shaders whose
+   constants XenosRecomp already baked. **This is a renderer change, not an XR one.** The camera
+   modes are composed and delivered every frame already, so the 6DOF plumbing is live and waiting.
+   Budget: the GPU is 97% idle, so drawing twice is affordable; the CPU is the constraint.
+2. **The occlusion descriptor set**, which is dropped rather than fixed on Android and costs four
+   pipelines. Collapse sets 0/1/2 - one physical set bound three times to satisfy three HLSL
+   register spaces - and the layout fits Adreno's four without dropping anything.
+3. **Fixed foveated rendering** (`XR_FB_foveation`; Quest 2 has no eye tracking, so fixed only).
+   Worth nothing today and genuinely useful the moment stereo lands.
+4. **Tourist mode** whenever a quick win is wanted. It touches nothing else, and
    `src/engine/character.h` already exposes `PlayableCharacter::SetHP()` with
    `src/engine/stat_breakdown.h` documenting exactly which block to write for maxed stats.
-7. Cel shading last, and only once there is a real frame budget to measure against.
+5. **Cel shading last**, and only once there is a real frame budget to measure against.
 
-Do not start with OpenXR on-device. Do not start with cel shading.
+Do not start with cel shading. Do not optimise the GPU before re-measuring - see the frame budget
+section, where the intuitive moves all save nothing.
