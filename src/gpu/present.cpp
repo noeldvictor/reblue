@@ -14,6 +14,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
+#include <system_error>
 #include <mutex>
 #include <thread>
 
@@ -26,6 +29,7 @@
 #include "xr/xr_settings.h"
 #endif
 
+#include "core/app_root.h"
 #include "gpu/gpu_profiling.h"
 
 #include "core/logging.h"
@@ -39,6 +43,7 @@
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(bool, bd_cel_shading);
+REXCVAR_DECLARE(double, bd_capture_after_s);
 
 namespace bd::gpu {
 
@@ -411,6 +416,138 @@ bool EnsureOffscreen(VideoState &s, u32 width, u32 height,
   return true;
 }
 
+// --- one-shot frame capture -------------------------------------------------
+//
+// Records a copy of the finished frame into a readback buffer, then stalls on
+// the fence and writes it out. The stall is deliberate: a capture is a debug
+// one-shot, and threading the readback across frames to avoid a hitch would
+// buy nothing and be much easier to get subtly wrong.
+
+// Matches the back-buffer format chosen in Present below.
+#if defined(__ANDROID__)
+constexpr auto kCaptureFmt = plume::RenderFormat::R8G8B8A8_UNORM;
+constexpr bool kCaptureIsBgra = false;
+#else
+constexpr auto kCaptureFmt = plume::RenderFormat::B8G8R8A8_UNORM;
+constexpr bool kCaptureIsBgra = true;
+#endif
+
+// True exactly once, on the first frame at or after bd_capture_after_s.
+bool CaptureDue() {
+  static bool fired = false;
+  if (fired)
+    return false;
+  const double after = REXCVAR_GET(bd_capture_after_s);
+  if (after <= 0.0)
+    return false;
+
+  using Clock = std::chrono::steady_clock;
+  static const Clock::time_point start = Clock::now();
+  if (std::chrono::duration<double>(Clock::now() - start).count() < after)
+    return false;
+
+  fired = true;
+  return true;
+}
+
+std::unique_ptr<plume::RenderBuffer> g_capture_buffer;
+u32 g_capture_w = 0;
+u32 g_capture_h = 0;
+u32 g_capture_row_texels = 0;
+
+// D3D12 wants 256-byte aligned rows in a placed footprint and Vulkan does not
+// care, so align always and let the writer skip the padding.
+constexpr u32 kCaptureRowAlign = 64; // texels, i.e. 256 bytes at RGBA8
+
+// Records the copy. Returns false if nothing was set up, in which case the
+// resolve step must not run.
+bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
+                   u32 height, plume::RenderFormat format) {
+  if (width == 0 || height == 0)
+    return false;
+
+  const u32 row_texels =
+      ((width + kCaptureRowAlign - 1) / kCaptureRowAlign) * kCaptureRowAlign;
+  const u64 size = u64(row_texels) * height * 4ull;
+
+  if (!g_capture_buffer || g_capture_w != width || g_capture_h != height) {
+    g_capture_buffer.reset();
+    g_capture_buffer =
+        s.device->createBuffer(plume::RenderBufferDesc::ReadbackBuffer(size));
+    if (!g_capture_buffer) {
+      BD_ERROR("[capture] readback buffer {} bytes failed", size);
+      return false;
+    }
+    g_capture_w = width;
+    g_capture_h = height;
+    g_capture_row_texels = row_texels;
+  }
+
+  const plume::RenderTextureBarrier to_copy(
+      back, plume::RenderTextureLayout::COPY_SOURCE);
+  s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0,
+                           &to_copy, 1);
+  s.command_list->copyTextureRegion(
+      plume::RenderTextureCopyLocation::PlacedFootprint(
+          g_capture_buffer.get(), format, width, height, 1, row_texels),
+      plume::RenderTextureCopyLocation::Subresource(back));
+
+  // Back to the layout the rest of the frame expects, exactly as the XR copy
+  // above does - leaving it in COPY_SOURCE shows as a black layer on Quest
+  // rather than as an error.
+  const plume::RenderTextureBarrier restore(
+      back, XrCompositorPacing() ? plume::RenderTextureLayout::COLOR_WRITE
+                                 : plume::RenderTextureLayout::PRESENT);
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
+                           &restore, 1);
+  return true;
+}
+
+// Maps the buffer and writes it. Must be called only after the fence for the
+// frame that recorded the copy has been waited.
+void ResolveCapture(bool bgra) {
+  if (!g_capture_buffer)
+    return;
+
+  const void *mapped = g_capture_buffer->map();
+  if (!mapped) {
+    BD_ERROR("[capture] map failed");
+    return;
+  }
+
+  std::error_code ec;
+  const auto dir = bd::AppRootFolder() / "logs" / "capture";
+  std::filesystem::create_directories(dir, ec);
+  const auto path =
+      dir / ("frame_" + std::to_string(std::chrono::duration_cast<
+                                       std::chrono::seconds>(
+                                       std::chrono::system_clock::now()
+                                           .time_since_epoch())
+                                           .count()) +
+             ".raw");
+
+  std::ofstream out(path, std::ios::binary);
+  if (out) {
+    // One text line, then tightly packed RGBA. The row padding is dropped
+    // here rather than on the host so the file needs no alignment rule to
+    // read - it is just width*height*4 after the newline.
+    out << "RGBA " << g_capture_w << " " << g_capture_h << " "
+        << (bgra ? "bgra" : "rgba") << "\n";
+    const auto *src = static_cast<const u8 *>(mapped);
+    for (u32 y = 0; y < g_capture_h; ++y)
+      out.write(reinterpret_cast<const char *>(src + u64(y) *
+                                               g_capture_row_texels * 4),
+                std::streamsize(u64(g_capture_w) * 4));
+  }
+  g_capture_buffer->unmap();
+
+  if (out)
+    BD_INFO("[capture] wrote {}x{} to {}", g_capture_w, g_capture_h,
+            path.string());
+  else
+    BD_ERROR("[capture] could not write {}", path.string());
+}
+
 } // namespace
 
 #if defined(REBLUE_OPENXR)
@@ -735,6 +872,12 @@ void Video::Present(GuestTexture *frontBuffer) {
   RecordXrQuad(s, back);
 #endif
 
+  // Recorded after the XR copy, so what lands in the file is exactly the image
+  // the compositor was handed, not an earlier stage of it.
+  const bool capturing =
+      CaptureDue() && RecordCapture(s, back, s.swap_chain->getWidth(),
+                                    s.swap_chain->getHeight(), kCaptureFmt);
+
   const u32 cur = s.frame.load(std::memory_order_relaxed);
   FrameEnd(s.command_list);
   s.command_lists[cur]->end();
@@ -759,6 +902,13 @@ void Video::Present(GuestTexture *frontBuffer) {
     s.queue->executeCommandLists(lists, 1, waits, wait_count, signals,
                                  signal_count, s.fences[cur].get());
     pb.submit_ms = ms_since(t0);
+  }
+
+  if (capturing) {
+    // The one place this stalls. CaptureDue() has already latched, so a
+    // failed capture cannot retry every frame for the rest of the session.
+    s.queue->waitForCommandFence(s.fences[cur].get());
+    ResolveCapture(kCaptureIsBgra);
   }
   s.command_list_submitted[cur] = true;
   ApplyVsync(s);

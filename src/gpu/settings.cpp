@@ -203,6 +203,28 @@ REXCVAR_DEFINE_DOUBLE(bd_cull_bias, 1.0, kCvarGroup,
                       "CPU cost of submitting them; things pop in at the edges.")
     .range(0.2, 1.0);
 
+// One-shot frame capture. Writes the finished composited frame - the same
+// image the headset is handed - to logs/capture/ as raw RGBA plus a one-line
+// header, and clears itself.
+//
+// This exists because "verify the pixels, not a proxy" is a rule here and
+// there was no way to keep it in VR: the Quest system screenshot intents do
+// not fire on this Horizon build, adb screencap does not see compositor
+// layers, and every other check available was a log line. A VR claim that
+// rests on "swapchain format 37" has been wrong before.
+//
+// Raw rather than PNG because the tree vendors stb_image but not
+// stb_image_write, and a capture is pulled to a host that can convert it in
+// three lines. Not worth a new dependency.
+// Seconds rather than a bool, because args.txt is read once at launch and a
+// bool would therefore only ever capture the title screen. Autoplay reaches a
+// field scene at a known time, so "capture at t=200s" is the whole interface.
+REXCVAR_DEFINE_DOUBLE(bd_capture_after_s, 0.0, kCvarGroup,
+                      "Write the composited frame to logs/capture/ once, this "
+                      "many seconds after start. 0 disables. Stalls one "
+                      "frame.")
+    .range(0.0, 100000.0);
+
 REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");
