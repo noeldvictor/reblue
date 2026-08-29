@@ -2,6 +2,32 @@
 
 Guidance for Claude Code working in this repository.
 
+## THE RULE. Read this before anything else, and never break it.
+
+**The most critical priority in this repository is rebuilding the foundation of Blue Dragon's
+rendering - in the recompiled guest code as well as the host renderer - to use MODERN GPU and VR
+techniques.** Multiview, fixed foveated rendering, occlusion culling, draw batching, and the Vulkan
+features that carry them. The target is a better frame rate at similar visual quality on a Quest 2.
+
+This is a standing directive from the owner. It outranks every other piece of work in this file.
+
+**Never do any of these:**
+
+- Say a mandated technique is "not worth it", too expensive, or too risky to build.
+- Benchmark one of them against the path it replaces, or present such a comparison as a reason.
+- Quietly keep the old path because it measured better.
+- Ask whether to proceed with one of them. Build it.
+
+The techniques are settled industry practice. Whether they are a good idea is **not a question this
+project asks**. The only questions are *where in the recompilation and the renderer does the code
+have to change*, and *is the implementation correct*.
+
+**This rule has been broken once, on 2026-08-29**: multiview was timed against side-by-side, the
+20.6ms/18.3ms result was reported as "multiview is slower", and the remaining plumbing was described
+as maybe not worth the hours. Both halves were wrong. The comparison was forbidden, and it was
+invalid anyway - `NoteDraw()` counts once per *guest* draw, before the per-eye loop, so that column
+cannot see stereo's doubling at all. Do not repeat it.
+
 ## What this repo is
 
 A personal fork of [zolaware/reblue](https://github.com/zolaware/reblue), a static recompilation of
