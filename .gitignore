@@ -421,3 +421,6 @@ FodyWeavers.xsd
 
 # vcpkg build artifacts (VCPKG_ROOT=/c/vcpkg, manifest mode)
 vcpkg_installed/
+
+# bench_quest.py scratch
+bench_args.txt
