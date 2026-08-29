@@ -553,12 +553,25 @@ A skinned vertex shader reading four bone matrices plus a WVP is 20-40 global lo
 ~400,000 vertices a frame that is 8-16 million uncached loads, and it measures as **~225ns per
 vertex** where single-digit nanoseconds would be normal.
 
+Measured from the dumped HLSL (`--target reblue_shader_hlsl_dump`): **86-89 raw loads per vertex
+shader**, and in `bd_toon_vs_env` **24 of them are `a0`-relative** - `exMatrix(0 + a0)` and friends,
+which is bone-matrix lookup for skinning. Those are the expensive ones: the bounds check cannot
+fold, and the address is *divergent across the wave*, so the driver cannot use scalar loads and must
+gather per-lane from uncached global memory. On a Xenos these hit the constant file and were nearly
+free.
+
 **The fix** is to bind the constant blocks as a uniform buffer instead of pushing a device address:
 `shader_recompiler.cpp` (lines ~1340-1395) and `shader_common.h` on the fork
 `noeldvictor/XenosRecomp`, plus `src/gpu/constant_buffers.cpp` and `src/gpu/draw.cpp` to bind a UBO
 descriptor rather than passing `gpuAddress` through `setGraphicsPushConstants`. The data, the upload
 heap and the alignment all stay; only how the shader reaches it changes. Needs the shader cache
 rebuilt.
+
+**Scope it before starting.** The constants change every draw, which is exactly why a device address
+in a push constant was chosen - it needs no descriptor update. A UBO needs dynamic offsets (plume
+does not expose them yet) or a per-draw descriptor write, which would be worse than today. And there
+is no spare set: Adreno allows 4 and sets 0-3 are taken, so the UBO has to become a *binding* on the
+shared texture set, with DXC shift flags to dodge `t0` and the variable-count array kept last.
 
 ### The bottleneck is not VR
 

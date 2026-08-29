@@ -107,18 +107,56 @@ The scalar constants are `#define`s, so every textual use re-loads, and `c255` a
 and an indexed load cannot be hoisted that way. Tried, measured against the dumped HLSL, reverted.
 Recorded so it is not tried again.
 
+## The precise mechanism: a0-indexed reads are divergent global gathers
+
+The call sites in `bd_toon_vs_env` settle it:
+
+```
+7x  exMatrix(0 + a0)      3x  g_mWorld(0)
+7x  exMatrix(1 + a0)      3x  g_mWorld(1)
+7x  exMatrix(2 + a0)      3x  g_mWorld(2)
+3x  exMatrix(3 + a0)      1x  g_mWorld(3)
+```
+
+`a0` is the Xenos **address register** - dynamic constant indexing, which here is **bone matrix
+lookup for skinning**. Twenty-four of the 86 loads in this shader are `a0`-relative.
+
+Those are far worse than the static ones, for two compounding reasons:
+
+1. **The bounds check cannot fold.** `select((INDEX) < 196, ..., min(INDEX, 195) ...)` with a runtime
+   index is a real compare, min and select on every access - ALU a literal index would have removed
+   at compile time.
+2. **The address is divergent across the wave.** Different vertices skin to different bones, so the
+   lanes read different addresses, the driver cannot issue a scalar load, and it must gather
+   per-lane from uncached global memory. That is the worst case this hardware has.
+
+On a Xenos these hit the constant file and were close to free - the register file was built for
+exactly this access pattern. Turning them into per-lane global gathers is what makes a 140-vertex
+draw cost 32us, and it explains the shader-dependence and the resolution-independence at once.
+
 ## The fix
 
 Bind the per-draw constant blocks as a **uniform buffer** and index it, instead of pushing a device
 address and doing raw loads. Two coordinated changes:
 
 1. **XenosRecomp** (`shader_recompiler.cpp` around lines 1340-1395, and `shader_common.h`) - emit
-   `cbuffer`/`ConstantBuffer<>` accesses rather than `vk::RawBufferLoad`. The fork is
+   `cbuffer`/`ConstantBuffer<>` accesses rather than `vk::RawBufferLoad`. A dynamically indexed UBO
+   read still goes through the constant cache on Adreno, which is the entire point. The fork is
    `noeldvictor/XenosRecomp`, already repointed.
-2. **The renderer** (`src/gpu/constant_buffers.cpp`, `src/gpu/draw.cpp`) - bind the existing upload
+2. **The renderer** (`src/gpu/constant_buffers.cpp`, `src/gpu/draw.cpp`) - bind the upload
    allocations as a UBO descriptor rather than passing `gpuAddress` through
-   `setGraphicsPushConstants`. The data, the upload heap and the 256-byte alignment can all stay as
-   they are; only how the shader reaches it changes.
+   `setGraphicsPushConstants`.
+
+**Scope the descriptor problem before starting.** The constants change every draw, which is exactly
+why a device address in a push constant was chosen - it needs no descriptor update. A UBO needs
+either **dynamic offsets** (one descriptor, offset supplied per draw at bind time; plume does not
+currently expose this) or a descriptor write per draw, which would be worse than what is there now.
+Adding dynamic-offset support to the forked plume is likely the real prerequisite.
+
+There is also no free descriptor set: Adreno's `maxBoundDescriptorSets` is 4 and sets 0-3 are taken.
+Sets 0/1/2 are one physical set bound three times to satisfy three HLSL register spaces, so the UBO
+can be added as a *binding* on that shared set - with DXC `-fvk-b-shift` / `-fvk-t-shift` to avoid
+colliding with `t0`, and the variable-count texture array kept as the last binding.
 
 Both the D3D12 and Vulkan paths already declare the same constants through
 `DEFINE_SHARED_CONSTANTS()` for the non-SPIR-V case, so there is a precedent in the file for the
