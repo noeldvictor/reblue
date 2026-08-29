@@ -48,7 +48,7 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
 | — OpenXR session | **Working on a Quest 2** | Instance, session, reference space, swapchain, frame loop. The plume seam compiles and runs. |
 | — head pose driving the game camera | **Working** | Composed onto the game's own view matrix at `bdBuildViewMatrix`, the same seam frame interpolation uses. One frame of latency, by construction. |
-| — stereo rendering | Not started | Needs the guest scene rendered twice per frame, or per-view matrices in shaders whose constants XenosRecomp already baked. A renderer change, not an XR one. |
+| — stereo rendering | **Renders, on desktop** | `bd_stereo`. Every scene draw is submitted twice into left/right viewports with per-eye constants, giving real parallax and a convergence control. Making the *guest* render twice was tried and does not work - it yields +21% draws, not a second scene, because the render list is built once per frame above every seam. Not yet run on a headset, and not yet per-eye OpenXR views. |
 | **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 140 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. |
 | — shaders | **Solved** | 142 cache entries. They live in `pack/!necessity.ipk`, zlib-compressed, which is why raw scans found nothing. `tools/extract_ipk.py` unpacks them. |
 | — APK | **Installs and runs on a Quest 2** | `tools/build_apk.sh`, 62 MB. Six steps, no Gradle. |
@@ -56,13 +56,31 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
 | **Quest 2 VR** | **Renders in VR** | Blue Dragon hangs in space in front of you as a world-locked screen, in stereo, at a readable size. Not yet *stereo 3D*: the game renders once, from one eye, so it is a cinema screen rather than a world you are inside. |
 | — performance, title screen | **30 fps, the game's native rate** | Was 6.7. The renderer was drawing a 1280x720 game at the 3664x1920 headset panel resolution, and the flat Android present - a surface a headset never shows - cost 124ms of every 150ms frame. |
-| — performance, in game | **4-8 fps** | A different problem, and the honest headline. ~180ms per frame is CPU - the recompiled PowerPC - against ~1ms on the GPU. Shader and texture work cannot touch it. |
+| — performance, in game | **4-8 fps** | The honest headline, and now understood. A ~210ms frame is ~141ms GPU and ~62ms CPU. **The GPU half is fill-bound**: clipping the scissor to 25% takes the fence from 141ms to 0.1ms *while the draw count rises*, so fragments are the entire GPU cost and draws are free. `bd_render_scale=50` quarters them and `bd_reflections=false` removes a whole scene re-render; both verified. The ~62ms CPU floor is untouched and caps the port near 14 fps on its own. |
 | — mono projection layer | **Built, never seen render** | Replaces the floating quad so the world surrounds you instead of hanging in front of you. Committed; the one capture of it was black, a NaN was fixed after that, and the headset went offline before a retest. |
 | — character-anchored camera | **Does not work** | `SubmitCharacter()` is never called, so third-person and first-person quietly fall back to the game's own camera. |
 | — controllers | **Working** | Touch controllers are not Android gamepads — they exist only as OpenXR actions, which is why SDL reported no pad and `adb input keyevent` did nothing. 13 actions, Touch bindings, presented to the guest as a 360 pad. |
 | **Cel shading on characters** | Not started | Post-process outlines and banded lighting. Optional, toggled in the options menu. |
-| **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
+| **Tourist mode** | **Works** | `bd_tourist_mode` keeps the party at full HP and MP so a field can be looked at rather than survived. Encounter suppression still to do. |
 | Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |
+
+### Settings that matter for VR performance
+
+All reach the game through `args.txt` beside the game data on Android, or the profile's
+`reblue.toml` on desktop - no rebuild, no reinstall.
+
+| cvar | What it does |
+| --- | --- |
+| `bd_render_scale` | Scene at N% per axis. 50 quarters the fragment cost. **Verified.** |
+| `bd_reflections` | Off pins the planar reflection, which re-renders the scene, to its floor. **Verified.** |
+| `bd_shadows` | Off renders the sun shadow map at 64x64. Unverified - the draw census cannot see a depth-only target. |
+| `bd_stereo` | Submits every scene draw twice, one viewport per eye. |
+| `bd_stereo_separation` / `bd_stereo_convergence` | Eye offset and the distance at which parallax is zero. |
+| `bd_tourist_mode` | Full HP and MP while walking the field. |
+| `bd_debug_fill_scale` | Diagnostic. Shrinks the scissor without touching the viewport, so only the fragment count moves. This is what proved the frame fill-bound. |
+
+`python tools/bench_quest.py all` runs the verified levers on a connected Quest, one variable at a
+time, and prints a comparison table. It builds nothing.
 
 **There are no patch files any more.** Both outgrew `patches/` and now live as real history in
 forks: `noeldvictor/plume` branch `reblue-openxr` carries the OpenXR device-creation seam, and
