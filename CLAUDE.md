@@ -66,6 +66,29 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
+### Building for the desktop, which does work
+
+The one non-obvious part is that `rexglue_DIR` caches to whichever slice was configured last, and an
+Android install has no Windows import libraries - the symptom is
+`IMPORTED_IMPLIB not set for imported target "rex::runtime"`, which reads like a broken slice and is
+not. Point it at the right one explicitly:
+
+```sh
+export PATH="/c/Program Files/LLVM/bin:$PATH"
+export VCPKG_ROOT="C:/vcpkg"
+cmake --preset win-amd64-release -DREBLUE_D3D12=OFF -DREBLUE_OPENXR=OFF -DREBLUE_BUILD_INSTALLER=OFF   -Drexglue_DIR="$PWD/out/sdk/win-amd64/lib/cmake/rexglue"
+cmake --build --preset win-amd64-release --target reblue
+```
+
+With `REBLUE_D3D12=OFF` the Vulkan executable is the `reblue` target, not `reblue_vk` - that name
+only exists when both backends are configured.
+
+`REBLUE_OPENXR=ON` additionally needs `REBLUE_OPENXR_INCLUDE` and `REBLUE_OPENXR_LOADER`. The
+OpenXR-SDK source is already checked out under `out/xr-loader-android/` (that build tree is the
+Android loader; the headers in its `include/` are platform-neutral), so a Windows loader is a second
+configure of the same source rather than a new dependency. **That is the route to Meta XR Simulator,
+and it is the only way to work on stereo without the headset.**
+
 ## Layout
 
 ```
@@ -275,8 +298,10 @@ diagnosing a slow build. The short version:
 - **Bootstrap first, then most of this works.** The SDK is a public release and `default.xex` can
   be extracted from a disc image in under a second with `tools/extract_xex.py` — codegen then runs
   in ~7 seconds and is deterministic. See the `devloop` skill. A *full* Windows link additionally
-  needs vcpkg, which is not installed here; short of it, syntax-check individual sources against the
-  real SDK headers in `out/sdk/win-amd64/include`. Never report a build success that did not happen.
+  needs vcpkg. **It is installed** - `C:/vcpkg`, with `vcpkg_installed/` already populated, and
+  LLVM 22 lives at `C:/Program Files/LLVM/bin` - so the desktop build is available and was for a
+  long time believed not to be. This file said otherwise for weeks and that is what kept the
+  simulator route closed. Never report a build success that did not happen.
 - **But the maths is testable.** `tools/xr_math_test/` compiles `xr_math.h` standalone against a
   stub `rex/types.h` and runs assertions on it. It caught the off-centre projection sign on its
   first run. Keep new maths in the dependency-free files so it stays reachable from here, and extend
