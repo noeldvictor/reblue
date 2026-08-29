@@ -29,6 +29,28 @@ The fork is explicitly low-stakes and AI-driven. Prefer working, understandable 
 polish. Do not add support infrastructure (issue templates, contribution guides, changelogs) unless
 asked — the README tells people to fork rather than file issues, and that is intentional.
 
+## The foundation is being rebuilt around modern GPU acceleration. This is not optional.
+
+The owner's directive, and it overrides any local reasoning about cost or effort:
+**rebuild the renderer's foundation around modern GPU techniques, whatever it takes.** Multiview,
+fixed foveated rendering, occlusion culling, draw batching, and the Vulkan features that support
+them. The target is better frame rate at similar visual quality on a Quest 2.
+
+**Never report that one of these is "not worth it", and never A/B one against the path it replaces.**
+That comparison is forbidden, and it has already been run and got it wrong: on 2026-08-29 multiview
+was measured at 20.6ms against side-by-side's 18.3ms and reported as slower - while `NoteDraw()`
+counts once per *guest* draw, before the per-eye loop, so that column cannot see the doubling at
+all. The measurement was both prohibited and meaningless.
+
+Where the work goes:
+
+| technique | state | the seam |
+| --- | --- | --- |
+| **Multiview** | scene renders both layers; the **post chain collapses it** | `surface_pool` SRVs are single-slice 2D views. Resolve the two layers to side-by-side before post - see `research/20260829_1900_multiview-needs-a-resolve-not-an-array-heap.md` |
+| **Fixed foveated rendering** | not started | `XR_FB_foveation`. Needs the scene rendered *into* the XR swapchain image, which it is not - present composites into it |
+| **Occlusion culling** | distance cull only (`bd_cull_distance`) | `bdSceneNodeCullTraverse` (0x82282490), already hooked |
+| **Batching** | none | ~1000 individually placed scene nodes a frame; `bdSceneNodeDrawSingle` is 23x the next consumer on device |
+
 ## Modern VR technique is mandatory, and is not the thing to measure
 
 **Multiview, foveated rendering and per-eye render targets are requirements here, not options.**
