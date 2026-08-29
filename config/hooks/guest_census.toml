@@ -1,0 +1,48 @@
+# Per-frame call counts for the guest functions most likely to dominate the CPU
+# floor (bodies in src/engine/guest_census.cpp).
+#
+# The optimisation plan names these from *static* instruction counts -
+# bdAnimBoneEvaluate has 780 SIMD ops and is a recursive bone walk, the matrix
+# helpers are small but called from everywhere. Static counts have been wrong
+# every time they have been trusted in this port, so this measures how often
+# each is actually reached. Calls x size is a far better ranking than size, and
+# it is what should aim any REX_FUNC host reimplementation.
+#
+# Entry hooks only: a call count needs no exit, and exit addresses would have to
+# be found one function at a time.
+
+[[midasm_hook]]
+address = 0x822834E8
+name = "bdCensusAnimBoneEvaluate"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x821414A0
+name = "bdCensusAnimationUpdate"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82168308
+name = "bdCensusMatrixInverse4x4"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82136698
+name = "bdCensusMatrixTransformVector"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82160038
+name = "bdCensusAnimCurveSample3"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x820E4288
+name = "bdCensusMatrix4x4Copy"
+registers = []
+after_instruction = false

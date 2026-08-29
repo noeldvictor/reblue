@@ -36,6 +36,14 @@ REXCVAR_DEFINE_BOOL(bd_dbgprint, false, kCvarGroup,
 // the reason for the VR port, and being killed by a wandering monster while
 // doing so is not part of that. Refills the party every field frame rather than
 // patching a damage path, so nothing else has to be understood.
+// The CPU floor is ~62ms of a Quest frame and caps the port near 14 fps with a
+// completely free GPU, and the functions blamed for it were picked by counting
+// instructions in a disassembly. Every static count trusted in this port has
+// been wrong, so count the calls instead.
+REXCVAR_DEFINE_BOOL(bd_guest_census, false, kCvarGroup,
+                    "Report per-frame call counts for the guest functions "
+                    "suspected of dominating CPU time.");
+
 REXCVAR_DEFINE_BOOL(bd_tourist_mode, false, kCvarGroup,
                     "Keep the party at full HP and MP while walking the field, "
                     "for looking at the world instead of surviving it.");

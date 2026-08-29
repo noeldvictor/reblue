@@ -5,6 +5,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include "engine/guest_census.h"
 #include "gpu/frame_stats.h"
 
 #include <algorithm>
@@ -156,6 +157,7 @@ void UpdateFrameStats() {
         for (auto &t : g_targets)
           t = TargetTally{};
       }
+      bd::engine::CensusReport(ticks);
       ticks = 0;
       acc_v = 0;
       acc_d = 0;

@@ -13,6 +13,7 @@ includes = [
   "config/hooks/disc_io.toml",
   "config/hooks/encyclopedia_menu.toml",
   "config/hooks/frame_interp.toml",
+  "config/hooks/guest_census.toml",
   "config/hooks/guest_debug.toml",
   "config/hooks/hud_anchor.toml",
   "config/hooks/hud_fade.toml",
