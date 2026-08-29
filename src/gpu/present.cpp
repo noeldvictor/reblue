@@ -341,9 +341,14 @@ void Video::RequestResize() {
 }
 
 
-#if defined(REBLUE_OPENXR)
 namespace {
 
+// Deliberately outside the REBLUE_OPENXR guard. This reaches no OpenXR header -
+// it is plume and nothing else - and its use site in Present is gated at run
+// time on XrCompositorPacing(), which is a compile-time false without OpenXR
+// rather than an #if. Guarding the definition and not the use meant the file
+// only built with OpenXR on, which the Android target always has.
+//
 // The game's finished frame, copied into the runtime's swapchain image and
 // submitted as a world-locked quad - a screen floating in front of the player.
 // Stereo projection comes later; this is the mode most likely to be comfortable
@@ -398,6 +403,11 @@ bool EnsureOffscreen(VideoState &s, u32 width, u32 height,
           "left alone", width, height);
   return true;
 }
+
+} // namespace
+
+#if defined(REBLUE_OPENXR)
+namespace {
 
 // Frame accounting. A dropped quad layer and a slow frame look identical from
 // inside the headset - both read as "flickery and choppy" - so they are counted
