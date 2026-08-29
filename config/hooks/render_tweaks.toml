@@ -34,6 +34,19 @@ name = "bdReflectionResolutionScaleHook"
 registers = ["r31"]
 after_instruction = false
 
+# Effect draw distance (bd_effect_distance). Despite its name,
+# bdVisualObjectGetMaxDrawDistance is called only from bdEffectUpdate, so it
+# gates particles rather than scene objects. It ends with
+#   loc_8214148C: fcmpu cr6,f1,f0 ; bgtlr cr6 ; fmr f1,f0 ; blr
+# so it returns whichever of f1/f0 is larger and there are two exits. Hooking
+# before the compare, with both candidates still live, scales the result
+# whichever way it leaves - one hook instead of chasing a bgtlr.
+[[midasm_hook]]
+address = 0x8214148C
+name = "bdDrawDistanceScaleHook"
+registers = ["f1", "f0"]
+after_instruction = false
+
 # Sun shadow map resolution (bd_shadow_dimension). Force the square dimension at
 # BOTH dimension sources so the render surface and its sampleable copy stay one
 # size; r3=Width r4=Height.

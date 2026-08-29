@@ -31,6 +31,7 @@
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(bool, bd_shadows);
 REXCVAR_DECLARE(bool, bd_reflections);
+REXCVAR_DECLARE(f64, bd_effect_distance);
 #include "gpu/settings.h"
 
 namespace bd::gpu {
@@ -128,6 +129,23 @@ void bdShadowResolutionScaleHook(PPCRegister &r3, PPCRegister &r4) {
                     : 64u;
   r3.u32 = d;
   r4.u32 = d;
+}
+
+// Culls distant EFFECTS earlier. bdVisualObjectGetMaxDrawDistance is called
+// only from bdEffectUpdate - all four sites, checked in the recompiled source -
+// so despite the name it gates particles, not scene objects.
+//
+// Worth having because particles are alpha-blended overdraw on a fill-bound
+// frame, but it moved nothing in a field scene, which has almost none.
+//
+// Both candidates are scaled because the callee returns the larger of the two
+// and has two exits; see the comment on the hook address.
+void bdDrawDistanceScaleHook(PPCRegister &f1, PPCRegister &f0) {
+  const f64 s = REXCVAR_GET(bd_effect_distance);
+  if (s == 1.0)
+    return;
+  f1.f64 *= s;
+  f0.f64 *= s;
 }
 
 // f1 is the sun frustum's coverage scale, and BD's own curve saturates at a

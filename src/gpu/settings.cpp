@@ -155,6 +155,20 @@ REXCVAR_DEFINE_INT32(bd_render_scale, 100, kCvarGroup,
 // from the same camera, which is visually wrong on purpose: it answers whether a
 // second full scene render per frame is possible at all, and what it costs,
 // before any per-eye matrices or targets are introduced.
+// EFFECTS, not scene geometry - every caller of the guest function this scales
+// is inside bdEffectUpdate. Named bdVisualObjectGetMaxDrawDistance, which reads
+// like general object culling and is not.
+//
+// Kept because particles are alpha-blended overdraw and the frame is fill-bound,
+// so an effect-heavy scene is exactly where this should bite. UNVERIFIED: a
+// desktop field scene at 1.0/0.5/0.25 gave 847/836/843 draws, i.e. nothing,
+// because that scene has almost no effects. Needs a battle to test.
+REXCVAR_DEFINE_DOUBLE(bd_effect_distance, 1.0, kCvarGroup,
+                      "Effect/particle draw-distance multiplier, 1.0 = stock. "
+                      "Below 1.0 culls distant effects earlier. Untested - it "
+                      "moved nothing in a field scene; try it in a battle.")
+    .range(0.1, 2.0);
+
 REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
                     "Render the 3D scene twice per frame from the same camera. "
                     "Diagnostic only - the image is unchanged and the cost "
