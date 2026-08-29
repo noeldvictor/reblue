@@ -46,3 +46,57 @@ address = 0x820E4288
 name = "bdCensusMatrix4x4Copy"
 registers = []
 after_instruction = false
+
+# Widened after the first run: three of the original six were never called at
+# all, so the list was clearly not the right one. These are the largest named
+# functions that plausibly run per frame rather than at load time -
+# bdSceneNodeDrawSingle in particular is 7,740 bytes and is entered per scene
+# node, which could dwarf everything already measured.
+
+[[midasm_hook]]
+address = 0x8227FEE8
+name = "bdCensusbdSceneNodeDrawSingle"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x8219D708
+name = "bdCensusScriptManTaskUpdate"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82184E90
+name = "bdCensusbdRenderViewSubmit"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x821AC020
+name = "bdCensusbdFieldInteractionSearch"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x821A0F78
+name = "bdCensusbdFieldHUDUpdate"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x821ADC78
+name = "bdCensusbdScriptExecute"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82133F70
+name = "bdCensusbdFrameSubmitAndDebugHUD"
+registers = []
+after_instruction = false
+
+[[midasm_hook]]
+address = 0x82139738
+name = "bdCensusbdEffectEmitterUpdate"
+registers = []
+after_instruction = false

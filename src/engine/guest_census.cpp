@@ -30,12 +30,21 @@ Entry g_entries[] = {
     {"bdAnimBoneEvaluate"},     {"bdAnimationUpdate"},
     {"bdMatrixInverse4x4"},     {"bdMatrixTransformVector"},
     {"bdAnimCurveSample3"},     {"bdMatrix4x4Copy"},
+    {"bdSceneNodeDrawSingle"},
+    {"ScriptManTaskUpdate"},
+    {"bdRenderViewSubmit"},
+    {"bdFieldInteractionSearch"},
+    {"bdFieldHUDUpdate"},
+    {"bdScriptExecute"},
+    {"bdFrameSubmitAndDebugHUD"},
+    {"bdEffectEmitterUpdate"},
 };
 
 // Bytes of guest code per function, from config/functions.toml. Calls alone
 // rank by frequency; calls x size ranks by roughly how much recompiled code is
 // executed, which is closer to the thing that costs time.
-constexpr u32 kSizes[] = {0x15E8, 0x71C, 0x238, 0x234, 0xE8, 0x84};
+constexpr u32 kSizes[] = {0x15E8, 0x71C, 0x238, 0x234, 0xE8, 0x84,
+                          0x1E3C, 0x36F4, 0x19AC, 0x1714, 0x13D4, 0x1040, 0xE70, 0xE34};
 
 } // namespace
 
@@ -64,3 +73,11 @@ void bdCensusMatrixInverse4x4() { bd::engine::CensusNote(2); }
 void bdCensusMatrixTransformVector() { bd::engine::CensusNote(3); }
 void bdCensusAnimCurveSample3() { bd::engine::CensusNote(4); }
 void bdCensusMatrix4x4Copy() { bd::engine::CensusNote(5); }
+void bdCensusbdSceneNodeDrawSingle() { bd::engine::CensusNote(6); }
+void bdCensusScriptManTaskUpdate() { bd::engine::CensusNote(7); }
+void bdCensusbdRenderViewSubmit() { bd::engine::CensusNote(8); }
+void bdCensusbdFieldInteractionSearch() { bd::engine::CensusNote(9); }
+void bdCensusbdFieldHUDUpdate() { bd::engine::CensusNote(10); }
+void bdCensusbdScriptExecute() { bd::engine::CensusNote(11); }
+void bdCensusbdFrameSubmitAndDebugHUD() { bd::engine::CensusNote(12); }
+void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }

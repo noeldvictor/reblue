@@ -63,3 +63,56 @@ a plan, not from a profile, and the real top consumer may not be among them.
 The honest next step is a sampling profile on device (`tools/profile_quest.py`, still never run),
 which would name functions this table never thought to include. The census is what can be had
 without a headset, and it has already eliminated half its own candidates.
+
+---
+
+## Widened, and the answer changed
+
+The caveat above - "six functions chosen from a plan, not from a profile, and the real top consumer
+may not be among them" - was the important sentence. Eight more hooks, chosen as the largest named
+functions that plausibly run per frame rather than at load time:
+
+```
+per frame, over 150 frames:
+  bdSceneNodeDrawSingle       420 calls   3250800 bytes of guest code
+  bdAnimBoneEvaluate           63 calls    353304 bytes
+  bdAnimationUpdate            56 calls    101920 bytes
+  bdRenderViewSubmit            1 call       6572 bytes
+  bdFieldInteractionSearch      1 call       5908 bytes
+  bdFieldHUDUpdate              1 call       5076 bytes
+  bdFrameSubmitAndDebugHUD      1 call       3696 bytes
+  ScriptManTaskUpdate           0 calls          0
+  bdScriptExecute               0 calls          0
+  bdEffectEmitterUpdate         0 calls          0
+```
+
+**`bdSceneNodeDrawSingle` is 9.2x `bdAnimBoneEvaluate`** and dwarfs everything else combined. The
+previous conclusion - that `bdAnimBoneEvaluate` was the function worth hand-writing - was wrong, and
+so is the optimisation plan's, which reached the same place from a static SIMD count. Hand-writing
+it would have been days of careful work against roughly a tenth of the cost.
+
+`ScriptManTaskUpdate` is the largest named function in the game at 14,068 bytes and is **never
+called** in a field scene.
+
+### This joins up with the fill finding
+
+420 calls against ~840 draws is one per two draws: this *is* the guest side of draw submission. So
+the frame has one shape on each side of the fence -
+
+- **GPU: fragments.** Draws are free; `bd_render_scale` and `bd_reflections` are the levers, both
+  verified.
+- **CPU: draws.** Node submission dominates; the lever is submitting fewer nodes.
+
+And it explains a measurement from the very first session that was never accounted for: capping
+draws to 500 took the frame's CPU from **60.7ms to 29.5ms** as well as emptying the GPU. That was
+read at the time as evidence the frame was draw-bound on the *GPU*, which the scissor test later
+disproved. It was really evidence about the CPU, and it was sitting there the whole time.
+
+### So the CPU lever is culling
+
+Which makes `src/xr/xr_cull.cpp` - **written, 49 checks passing, and never connected to anything** -
+the most valuable dead code in the tree. `bdCameraViewFrustumTest` (`0x82135030`) is named and is
+the seam. Distance culling and LOD sit next to it.
+
+Before building any of that: **run this census in a battle.** A field scene has one party member,
+and the ranking has already changed once by looking somewhere new.
