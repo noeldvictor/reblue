@@ -158,6 +158,7 @@ void UpdateFrameStats() {
           t = TargetTally{};
       }
       bd::engine::CensusReport(ticks);
+      bd::engine::CensusReportDistinct();
       ticks = 0;
       acc_v = 0;
       acc_d = 0;

@@ -53,10 +53,15 @@ after_instruction = false
 # bdSceneNodeDrawSingle in particular is 7,740 bytes and is entered per scene
 # node, which could dwarf everything already measured.
 
+# r3/r4 as well as the count: 2084 calls a frame is either two thousand
+# individually placed props, which distance culling would thin, or a handful of
+# meshes instanced across a terrain, which wants batching instead. Counting how
+# many DISTINCT values those arguments take per frame separates the two, and
+# they are different fixes.
 [[midasm_hook]]
 address = 0x8227FEE8
 name = "bdCensusbdSceneNodeDrawSingle"
-registers = []
+registers = ["r3", "r4"]
 after_instruction = false
 
 [[midasm_hook]]

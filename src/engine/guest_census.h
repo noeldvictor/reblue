@@ -16,4 +16,8 @@ void CensusNote(u32 index);
 // Prints the counts and resets them. Cheap when bd_guest_census is off.
 void CensusReport(u32 frames);
 
+// How many distinct values bdSceneNodeDrawSingle's first two arguments take in
+// a frame - individually placed props against instanced geometry.
+void CensusReportDistinct();
+
 } // namespace bd::engine

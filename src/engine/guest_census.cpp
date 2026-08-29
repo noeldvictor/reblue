@@ -6,6 +6,7 @@
  */
 
 #include <atomic>
+#include <cstring>
 
 #include <rex/hook.h>
 #include <rex/ppc.h>
@@ -73,7 +74,53 @@ void bdCensusMatrixInverse4x4() { bd::engine::CensusNote(2); }
 void bdCensusMatrixTransformVector() { bd::engine::CensusNote(3); }
 void bdCensusAnimCurveSample3() { bd::engine::CensusNote(4); }
 void bdCensusMatrix4x4Copy() { bd::engine::CensusNote(5); }
-void bdCensusbdSceneNodeDrawSingle() { bd::engine::CensusNote(6); }
+// Distinct-value counters for the scene node draw. Open addressing over a fixed
+// table because this runs 2000+ times a frame and a std::set would cost more
+// than the thing being measured.
+namespace {
+constexpr u32 kDistinctSlots = 8192;
+u32 g_seen_r3[kDistinctSlots];
+u32 g_seen_r4[kDistinctSlots];
+u32 g_distinct_r3 = 0;
+u32 g_distinct_r4 = 0;
+
+void NoteDistinct(u32 *table, u32 &count, u32 value) {
+  if (value == 0)
+    return;
+  const u32 h = (value * 2654435761u) % kDistinctSlots;
+  for (u32 probe = 0; probe < 64; ++probe) {
+    const u32 slot = (h + probe) % kDistinctSlots;
+    if (table[slot] == value)
+      return;
+    if (table[slot] == 0) {
+      table[slot] = value;
+      ++count;
+      return;
+    }
+  }
+}
+} // namespace
+
+namespace bd::engine {
+void CensusReportDistinct() {
+  if (!REXCVAR_GET(bd_guest_census))
+    return;
+  BD_INFO("[census]   sceneNodeDrawSingle distinct r3={} r4={}", g_distinct_r3,
+          g_distinct_r4);
+  std::memset(g_seen_r3, 0, sizeof(g_seen_r3));
+  std::memset(g_seen_r4, 0, sizeof(g_seen_r4));
+  g_distinct_r3 = 0;
+  g_distinct_r4 = 0;
+}
+} // namespace bd::engine
+
+void bdCensusbdSceneNodeDrawSingle(PPCRegister &r3, PPCRegister &r4) {
+  bd::engine::CensusNote(6);
+  if (!REXCVAR_GET(bd_guest_census))
+    return;
+  NoteDistinct(g_seen_r3, g_distinct_r3, r3.u32);
+  NoteDistinct(g_seen_r4, g_distinct_r4, r4.u32);
+}
 void bdCensusScriptManTaskUpdate() { bd::engine::CensusNote(7); }
 void bdCensusbdRenderViewSubmit() { bd::engine::CensusNote(8); }
 void bdCensusbdFieldInteractionSearch() { bd::engine::CensusNote(9); }

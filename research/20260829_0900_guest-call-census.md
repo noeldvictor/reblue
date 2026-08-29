@@ -239,3 +239,29 @@ thousand of them in the first place.
 each with 144 vertices, this is a scene built from very many very small pieces. If they are
 individually placed props and foliage, distance culling should remove most of the far ones. If they
 are the same handful of meshes instanced across a terrain grid, the fix is batching, not culling.
+
+## Props, not instances - so distance culling is the right axis
+
+The open question above, answered on device by counting how many distinct values
+`bdSceneNodeDrawSingle`'s first two arguments take in a frame:
+
+```
+bdSceneNodeDrawSingle   2083 calls    distinct r3 = 1270    distinct r4 = 497
+```
+
+**1270 distinct first arguments out of 2083 calls.** If the scene were a handful of meshes instanced
+across a terrain grid, that number would be small and the fix would be batching. It is not: this is
+on the order of a thousand individually placed objects, each drawn once or twice.
+
+The second argument takes 497 distinct values, about four calls each, which is the amount of sharing
+you would expect from a few hundred distinct meshes reused across those objects - enough to matter
+for state changes, not enough to make batching the answer.
+
+So the lever is **removing objects**, and the axis is distance rather than size. `bd_cull_bias`
+culls by bounding radius, which is why it only reached 110 of 3041 draws: it takes the small ones,
+and the cost is per object regardless of size.
+
+**A thousand objects in a field scene is the actual problem.** At 144 vertices each they are small
+props - rocks, plants, fence posts, the clutter a 2007 JRPG scatters to make a field look inhabited -
+and on a Xenon with a hardware command processor they were nearly free. Each one now costs a walk
+through 7,740 bytes of recompiled PowerPC.
