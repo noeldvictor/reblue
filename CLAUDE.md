@@ -516,6 +516,22 @@ See `research/20260828_1900_vr-camera-and-input.md` for the detail, including th
 (`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
 controllers are invisible to SDL.
 
+### Measurement precision: +/-30% across restarts. Read this before trusting an A/B.
+
+Within a single run the frame is stable to about 3% (200.5-207.1ms observed). **Across restarts it
+is not**: two runs at essentially the same draw count (2848 and 2834) measured 159ms and 205ms.
+`bd_xr_autoplay` presses buttons on a fixed schedule, but load times vary, so the character is not
+in the same place at the same elapsed time and the scene genuinely differs.
+
+So any effect smaller than ~30% cannot be resolved by comparing two runs, and several results in
+this session sit inside that band and must be treated as inconclusive rather than negative. The
+conclusions that survive are the ones with effects far larger than the noise: capping draws
+(112.8ms -> 0.1ms), VR on versus off, resolution 720p versus 360p, and capping PSO switches
+(90ms -> 235ms).
+
+To measure something smaller, do it **within one run** - a cvar that can be toggled live, or two
+code paths alternating per frame - not by restarting.
+
 ### The bottleneck: guest shader constants are global memory loads
 
 **This is the answer to why the port is slow**, and it is a property of the shader translation, not

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <plume_render_interface_builders.h>
+#include <rex/cvar.h>
 #include <rex/runtime.h>
 #include <rex/types.h>
 
@@ -30,6 +31,8 @@
 #include "gpu/sampler_cache.h"
 #include "gpu/settings.h"
 #include "gpu/shaders/shader_cache.h"
+
+REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 
 namespace bd::gpu {
 
@@ -103,14 +106,42 @@ bool CreateChunk(UploadChunk &chunk) {
   auto *device = bd::gpu::Video::HostDevice();
   if (!device)
     return false;
-  chunk.buffer = bd::gpu::CreateHostBuffer(
-      device,
-      plume::RenderBufferDesc::UploadBuffer(
-          kUploadChunkSize, plume::RenderBufferFlag::CONSTANT |
-                                plume::RenderBufferFlag::VERTEX |
-                                plume::RenderBufferFlag::INDEX |
-                                plume::RenderBufferFlag::DEVICE_ADDRESSABLE),
-      "cb-upload-chunk");
+  // Where the shader constants physically live, which turns out to matter more
+  // than anything else in this file.
+  //
+  // Translated shaders read every guest constant register with
+  // vk::RawBufferLoad from a device address - see
+  // research/20260829_0030_shader-constants-are-global-loads.md - so a skinned
+  // vertex shader does 20-40 loads out of this buffer per vertex, and a field
+  // scene runs ~400,000 vertices. An UPLOAD heap is host-visible write-combine,
+  // which the GPU reads uncached; GPU_UPLOAD is DEVICE_LOCAL | HOST_VISIBLE, so
+  // it stays mappable but the GPU's caches work on it. On a UMA part like the
+  // Quest 2 that is the same physical memory with different caching, and costs
+  // nothing to ask for.
+  auto desc = plume::RenderBufferDesc::UploadBuffer(
+      kUploadChunkSize, plume::RenderBufferFlag::CONSTANT |
+                            plume::RenderBufferFlag::VERTEX |
+                            plume::RenderBufferFlag::INDEX |
+                            plume::RenderBufferFlag::DEVICE_ADDRESSABLE);
+  const bool want_gpu_heap = REXCVAR_GET(bd_constants_gpu_upload) &&
+                             device->getCapabilities().gpuUploadHeap;
+  if (want_gpu_heap)
+    desc.heapType = plume::RenderHeapType::GPU_UPLOAD;
+  chunk.buffer = bd::gpu::CreateHostBuffer(device, desc, "cb-upload-chunk");
+  if (!chunk.buffer && want_gpu_heap) {
+    // The heap can exist and still fail to allocate 16 MiB of it. Falling back
+    // is better than losing the renderer.
+    BD_WARN("constant_buffers: GPU_UPLOAD chunk failed, falling back to UPLOAD");
+    desc.heapType = plume::RenderHeapType::UPLOAD;
+    chunk.buffer = bd::gpu::CreateHostBuffer(device, desc, "cb-upload-chunk");
+  } else if (want_gpu_heap) {
+    static bool told = false;
+    if (!told) {
+      told = true;
+      BD_INFO("constant_buffers: shader constants in GPU_UPLOAD "
+              "(device-local, host-visible)");
+    }
+  }
   if (!chunk.buffer) {
     BD_ERROR("constant_buffers: createBuffer({} MiB chunk) failed",
              kUploadChunkSize / (1024 * 1024));

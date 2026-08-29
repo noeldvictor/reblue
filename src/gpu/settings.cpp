@@ -99,6 +99,20 @@ REXCVAR_DEFINE_INT32(bd_max_render_height,
 // Capping the draws answers it directly: if the fence falls in proportion the
 // frame is draw-bound and culling is the lever. The frame renders incorrectly
 // while this is set; it is a measurement, not a quality setting.
+// Translated shaders read every guest constant register with a raw load from a
+// device address, so a skinned vertex shader does 20-40 loads out of the
+// constant buffer per vertex. An UPLOAD heap is host-visible write-combine and
+// the GPU reads it uncached; GPU_UPLOAD is DEVICE_LOCAL | HOST_VISIBLE, still
+// mappable but cached for the GPU. Same physical memory on a UMA part.
+// Measured on a Quest 2 and it makes no difference: 2834 draws at 205.5ms with
+// it off, 2851 draws at 208.2ms with it on. Kept, off, because the reasoning is
+// sound on paper and may hold on another Adreno - but it is not the fix.
+REXCVAR_DEFINE_BOOL(bd_constants_gpu_upload, false, kCvarGroup,
+                    "Place shader constants in the GPU_UPLOAD heap when the "
+                    "device has one. Measured as no change on a Quest 2. "
+                    "Requires restart.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_INT32(bd_debug_max_pso, 0, kCvarGroup,
                      "Stop switching pipelines after N per frame; later draws "
                      "reuse the last one. 0 disables. Diagnostic only - the "
