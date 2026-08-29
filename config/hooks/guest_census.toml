@@ -100,3 +100,30 @@ address = 0x82139738
 name = "bdCensusbdEffectEmitterUpdate"
 registers = []
 after_instruction = false
+
+# Cull bias (bd_cull_bias), body in src/engine/guest_census.cpp.
+#
+# bdSceneNodeCullTraverse (0x82282490) is the guest's own scene-graph cull, and
+# it is the only caller of bdSceneNodeDrawSingle that matters - the function the
+# census names as the top CPU consumer at 420 calls a frame. Its shape is:
+#
+#   lfs   f13,44(r29)      ; radius scale for this view
+#   lfs   f0,32(r30)       ; the node's bounding radius
+#   fmuls f1,f13,f0        ; f1 = world radius
+#   bl    0x82287788       ; visibility test -> r3       <- hooked here
+#   cmpwi r3,0
+#   beq   0x822825E0       ; not visible: skip the draw
+#   ...
+#   bl    0x8227FEE8       ; bdSceneNodeDrawSingle
+#
+# Hooking before the call and scaling f1 makes the guest's own test stricter,
+# so marginal nodes fail it and the guest skips their draw by itself. No control
+# flow is redirected and no return address has to be found, which is what makes
+# this safe: the alternative, forcing r3 after the test, needs f1 to have
+# survived a call that is free to clobber it.
+
+[[midasm_hook]]
+address = 0x82282598
+name = "bdSceneCullBiasHook"
+registers = ["f1"]
+after_instruction = false

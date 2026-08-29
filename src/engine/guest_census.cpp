@@ -81,3 +81,19 @@ void bdCensusbdFieldHUDUpdate() { bd::engine::CensusNote(10); }
 void bdCensusbdScriptExecute() { bd::engine::CensusNote(11); }
 void bdCensusbdFrameSubmitAndDebugHUD() { bd::engine::CensusNote(12); }
 void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }
+
+REXCVAR_DECLARE(f64, bd_cull_bias);
+
+// Shrinks the bounding radius the guest tests against its own view frustum, so
+// nodes that only just intersect it are culled and their draw never happens.
+// 1.0 is the game's own behaviour.
+//
+// The CPU floor is real - 43ms of GPU time was freed on a Quest and `elsewhere`
+// did not move - and the census says node submission dominates it, so cutting
+// nodes is the lever. This is the cheapest form of that: one register, before a
+// call the guest already makes.
+void bdSceneCullBiasHook(PPCRegister &f1) {
+  const f64 bias = REXCVAR_GET(bd_cull_bias);
+  if (bias != 1.0)
+    f1.f64 *= bias;
+}

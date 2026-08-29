@@ -90,3 +90,35 @@ effort against a blit.
 The session currently requests two extensions, `XR_KHR_vulkan_enable` and
 `XR_KHR_android_create_instance`, and adding the foveation pair to that list would compile and do
 nothing measurable.
+
+## Render scale below 50: the GPU can be taken to zero
+
+```
+configuration                          frame    fence     else    fps   draws
+render_scale=50, reflections=false   129.4ms   62.7ms   58.0ms    7.7   2768
+render_scale=35, reflections=false   115.8ms   50.6ms   57.0ms    8.6   2775
+render_scale=25, reflections=false    73.0ms    0.1ms   64.1ms   13.7   3045
+```
+
+**13.7 fps at quarter scale, against 5.9 at baseline - 2.3x.** And the GPU fence is **0.1ms**: the
+scene is drawn, the levers are on, and the GPU has nothing left to wait for. The fall from 50.6ms to
+0.1ms between 35 and 25 is the same super-linear tiler behaviour the scissor sweep showed - below
+some size whole tiles contain nothing and are skipped rather than shaded cheaply.
+
+So the GPU half of this port is **solved**, in the sense that it can be taken to zero whenever the
+image quality is worth trading. What is left at 73ms is 64ms of CPU and 8ms of `xrWait`.
+
+**The frame is now entirely CPU-bound**, which is what the earlier back-pressure test predicted and
+this confirms from the other direction: freeing the GPU completely leaves `elsewhere` at 64ms, up
+slightly from 58ms rather than down.
+
+### What that means for the target
+
+72 fps needs 13.9ms. The CPU floor is ~58-64ms. **Nothing on the GPU side can get there** - it is
+already at zero. Every remaining frame of headroom has to come out of the CPU, which is guest
+simulation plus node submission, and the census names `bdSceneNodeDrawSingle` as the top consumer in
+both scenes it has been run in.
+
+`bd_cull_bias` is the first attempt at that, hooked before the visibility test in
+`bdSceneNodeCullTraverse` so the guest culls its own nodes more aggressively without any control
+flow being redirected.

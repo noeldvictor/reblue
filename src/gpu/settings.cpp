@@ -178,6 +178,17 @@ REXCVAR_DEFINE_DOUBLE(bd_effect_distance, 1.0, kCvarGroup,
 // already, and what the art wants on top is ink lines and flatter colour. Doing
 // it at present covers every material without touching XenosRecomp, without a
 // shader cache rebuild, and without having to know which draws are characters.
+// Scales the bounding radius the guest tests against its own frustum in
+// bdSceneNodeCullTraverse. Below 1.0 marginal nodes fail the test and the guest
+// skips their draw itself - no control flow redirected, no return address
+// needed. The CPU floor is real computation (43ms of GPU freed on a Quest moved
+// `elsewhere` by 1.2ms), and the census puts node submission at the top of it.
+REXCVAR_DEFINE_DOUBLE(bd_cull_bias, 1.0, kCvarGroup,
+                      "Scales the bounding radius used by the scene-graph cull. "
+                      "Below 1.0 culls more aggressively, cutting draws and the "
+                      "CPU cost of submitting them; things pop in at the edges.")
+    .range(0.2, 1.0);
+
 REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");
