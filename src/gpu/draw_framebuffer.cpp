@@ -44,14 +44,24 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   // or Vulkan rejects every draw. Taken from the attachment rather than the
   // cvar so a mono target in a stereo frame - the bloom chain, the 2D passes -
   // still gets a single-view pass.
-  const u32 fb_layers = container->layers;
+  // From the colour target, NOT from `container`. container is `ds ? ds : rt`
+  // because the cache entry lives on the depth surface, and reading the layer
+  // count off it was a real bug: the pipeline's multiview flag comes from the
+  // colour render target (see SetRenderTarget in hooks/state.cpp), so a
+  // single-layer depth surface paired with a two-layer colour target gave the
+  // framebuffer viewMask 0 while every pipeline drawn into it had viewMask 3.
+  // Vulkan render-pass compatibility includes the view mask, so that mismatch
+  // is undefined - and on Adreno it renders view 0 and leaves layer 1 cleared,
+  // with no validation error and no crash. Exactly the symptom that read as
+  // "multiview does nothing".
+  const u32 fb_layers = rt ? rt->layers : container->layers;
   desc.viewMask = fb_layers > 1 ? 0x3u : 0u;
   {
     static std::atomic<int> n{0};
-    if (n.fetch_add(1, std::memory_order_relaxed) < 6)
-      BD_INFO("[mv] framebuffer rt={} ds={} containerLayers={} viewMask={}",
-              rt ? rt->layers : 0u, ds ? ds->layers : 0u, fb_layers,
-              desc.viewMask);
+    if (n.fetch_add(1, std::memory_order_relaxed) < 24)
+      BD_INFO("[mv] framebuffer {}x{} rtLayers={} dsLayers={} -> viewMask={}",
+              rt ? rt->width : 0u, rt ? rt->height : 0u,
+              rt ? rt->layers : 0u, ds ? ds->layers : 0u, desc.viewMask);
   }
   const plume::RenderTexture *color_attachments[1];
   if (rt) {

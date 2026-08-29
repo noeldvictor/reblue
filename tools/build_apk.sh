@@ -76,6 +76,20 @@ if [ -n "${OPENXR_LOADER:-}" ] && [ -f "$OPENXR_LOADER" ]; then
   cp "$OPENXR_LOADER" "$OUT/staging/lib/arm64-v8a/"
   echo "    staged $(basename "$OPENXR_LOADER")"
 fi
+# Anything else that has to ship in the APK's lib dir - a Vulkan validation
+# layer, a replacement Turnip driver. Space-separated paths in $EXTRA_LIBS.
+# Android only loads layers from the app's own lib directory, so a layer that
+# is not packaged here cannot be enabled at all, whatever the settings say.
+for extra in ${EXTRA_LIBS:-}; do
+  if [ -f "$extra" ]; then
+    cp "$extra" "$OUT/staging/lib/arm64-v8a/"
+    echo "    staged $(basename "$extra")"
+  else
+    echo "EXTRA_LIBS: no such file: $extra" >&2
+    exit 1
+  fi
+done
+
 # DT_NEEDED is the authority on whether this build actually wants it.
 if grep -aq "libopenxr_loader.so" "$NATIVE_DIR/libreblue.so"    && [ ! -f "$OUT/staging/lib/arm64-v8a/libopenxr_loader.so" ]; then
   echo "libreblue.so links against libopenxr_loader.so but it is not staged." >&2
