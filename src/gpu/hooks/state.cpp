@@ -108,6 +108,11 @@ void D3DDevice_SetRenderTarget_hook(
       s.dirtyStates.pipelineState, s.pipelineState.sampleCount,
       surface != nullptr ? surface->sampleCount
                          : plume::RenderSampleCount::COUNT_1);
+  // Follows the target the same way sampleCount does: a two-layer surface needs
+  // multiview pipelines, and a mono one in the same frame must not get them.
+  bd::gpu::Video::SetDirtyValue<bool>(
+      s.dirtyStates.pipelineState, s.pipelineState.multiview,
+      surface != nullptr && surface->layers > 1);
   // Alpha test mode tied to sample count.
   bd::gpu::Video::SetAlphaTestMode(
       (s.pipelineState.specConstants & bd::gpu::kSpecConstantAlphaTest) != 0);

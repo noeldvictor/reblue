@@ -9,6 +9,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include <atomic>
 #include "gpu/pipeline/pipeline_cache.h"
 
 #include <memory>
@@ -27,7 +28,7 @@ namespace bd::gpu {
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
 // PipelineState field add/remove/reorder. Replace the literal if the struct
 // legitimately changes (and update the CSV schema + regenerate the PSO cache).
-static_assert(sizeof(PipelineState) == 156,
+static_assert(sizeof(PipelineState) == 157,
               "PipelineState size changed: update kCSVHeader/CsvRow + "
               "tools/shader_cache/pso_cache_to_header.py and regenerate "
               "cache/pipeline_state_cache.h.");
@@ -159,6 +160,22 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
 
   plume::RenderGraphicsPipelineDesc desc;
   desc.pipelineLayout = layout;
+  // 0b11: both eyes. Zero leaves the pipeline single-view, which is what every
+  // 2D, post and bloom pass gets.
+  desc.viewMask = state.multiview ? 0x3u : 0u;
+  {
+    static std::atomic<int> mv{0};
+    static std::atomic<int> mono{0};
+    if (state.multiview) {
+      if (mv.fetch_add(1, std::memory_order_relaxed) < 3)
+        BD_INFO("[mv] MULTIVIEW pipeline created, viewMask={}", desc.viewMask);
+    } else {
+      const int m = mono.fetch_add(1, std::memory_order_relaxed);
+      if (m == 40 || m == 200)
+        BD_INFO("[mv] {} mono pipelines so far, {} multiview", m + 1,
+                mv.load(std::memory_order_relaxed));
+    }
+  }
   desc.vertexShader = vs;
   desc.pixelShader = ps;
 

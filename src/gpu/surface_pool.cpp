@@ -26,6 +26,10 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/resources.h"
 #include "gpu/settings.h"
+#include "gpu/output.h"
+
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(i32, bd_stereo_debug_layer);
 
 namespace bd::gpu {
 
@@ -441,13 +445,24 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   InitResourceHeader(surface->x360.as_surface.resource,
                      D3DResourceType::kSurface);
 
+  // Multiview wants the scene rendered into a two-layer array, one layer per
+  // eye, so a single draw with viewMask 0b11 fills both. Only surfaces at or
+  // above the design canvas: the bloom chain and the small view textures are
+  // composited once over an already-stereo scene and gain nothing from a second
+  // layer but cost twice the memory.
+  const bool multiview_scene =
+      REXCVAR_GET(bd_stereo_multiview) &&
+      width >= u32(bd::gpu::kDesignCanvasWidth) * 25u / 100u &&
+      height >= u32(bd::gpu::kDesignCanvasHeight) * 25u / 100u;
+  const u32 layers = multiview_scene ? 2u : 1u;
+
   plume::RenderTextureDesc desc;
   desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
   desc.width = width;
   desc.height = height;
   desc.depth = 1;
   desc.mipLevels = 1;
-  desc.arraySize = 1;
+  desc.arraySize = layers;
   desc.format = plume_format;
   desc.flags = is_depth ? plume::RenderTextureFlag::DEPTH_TARGET
                         : plume::RenderTextureFlag::RENDER_TARGET;
@@ -466,8 +481,21 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
     if (surface->texture && !is_depth) {
       plume::RenderTextureViewDesc view_desc;
       view_desc.format = plume_format;
+      // Stays a plain 2D view of layer 0 even when the image has two layers.
+      // This is the *sampling* view - present and every guest texture read go
+      // through it, and the bindless heap it is registered in is declared
+      // Texture2D, so an array view here would be a type mismatch. The
+      // framebuffer does not use it: plume builds its own attachment view from
+      // the texture and takes the layer count from arraySize, which is what
+      // multiview needs.
       view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
       view_desc.mipLevels = 1;
+      if (layers > 1) {
+        // One layer of the array, chosen by bd_stereo_debug_layer, so the flat
+        // window can be pointed at either eye.
+        view_desc.arraySize = 1;
+        view_desc.arrayIndex = u32(REXCVAR_GET(bd_stereo_debug_layer));
+      }
       surface->textureView = surface->texture->createTextureView(view_desc);
       Video::BindTextureSRV(surface);
     }
@@ -476,6 +504,13 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   }
   surface->width = width;
   surface->height = height;
+  surface->layers = layers;
+  if (layers > 1) {
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1, std::memory_order_relaxed) < 4)
+      BD_INFO("[mv] layered surface {}x{} layers={} depth={}", width, height,
+              layers, is_depth);
+  }
   surface->format = plume_format;
   surface->guestFormat = guest_format;
   surface->viewDimension = plume::RenderTextureViewDimension::TEXTURE_2D;

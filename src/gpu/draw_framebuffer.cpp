@@ -8,6 +8,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include <atomic>
 #include "gpu/frame.h"
 
 #include <mutex>
@@ -39,6 +40,19 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   }
 
   plume::RenderFramebufferDesc desc;
+  // Multiview: the mask has to match the pipelines drawn into this framebuffer
+  // or Vulkan rejects every draw. Taken from the attachment rather than the
+  // cvar so a mono target in a stereo frame - the bloom chain, the 2D passes -
+  // still gets a single-view pass.
+  const u32 fb_layers = container->layers;
+  desc.viewMask = fb_layers > 1 ? 0x3u : 0u;
+  {
+    static std::atomic<int> n{0};
+    if (n.fetch_add(1, std::memory_order_relaxed) < 6)
+      BD_INFO("[mv] framebuffer rt={} ds={} containerLayers={} viewMask={}",
+              rt ? rt->layers : 0u, ds ? ds->layers : 0u, fb_layers,
+              desc.viewMask);
+  }
   const plume::RenderTexture *color_attachments[1];
   if (rt) {
     color_attachments[0] = rt->texture;

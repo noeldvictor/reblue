@@ -207,6 +207,28 @@ REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");
 
+// Multiview stereo: one draw renders both eyes into a two-layer target, with
+// each recompiled vertex shader reading SV_ViewID to pick its eye. The point is
+// the CPU - bd_stereo submits every scene draw twice and costs ~8ms a frame of
+// doubled recording on a Quest, and the frame is entirely CPU-bound.
+//
+// Requires a restart: the scene surfaces have to be created with two layers.
+// Which layer of a multiview scene target the flat present samples. The whole
+// point is to be able to look at layer 1: multiview rendering "works" is
+// otherwise only ever "it did not crash and the draw count did not double",
+// and this shows the second eye actually received a different view.
+REXCVAR_DEFINE_INT32(bd_stereo_debug_layer, 0, kCvarGroup,
+                     "Which eye layer the flat present samples, 0 or 1. "
+                     "Diagnostic for multiview. Requires restart.")
+    .range(0, 1)
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(bd_stereo_multiview, false, kCvarGroup,
+                    "Stereo by Vulkan multiview - one draw, two layers, "
+                    "SV_ViewID per eye. Cheaper than bd_stereo, which submits "
+                    "every draw twice. Requires restart.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
 REXCVAR_DEFINE_BOOL(bd_stereo, false, kCvarGroup,
                     "Submit every draw twice, into left and right half-width "
                     "viewports. Step one of stereo: no per-eye matrices yet, "

@@ -183,7 +183,8 @@ constexpr const char *kCSVHeader =
     "stencilWriteMask,stencilRef,alphaBlendEnable,blendOp,slopeScaledDepthBias,"
     "depthBias,srcBlendAlpha,destBlendAlpha,blendOpAlpha,colorWriteEnable,"
     "primitiveTopology,vertexStrides,renderTargetFormat,depthStencilFormat,"
-    "sampleCount,enableAlphaToCoverage,specConstants,occlusionCounting,"
+    "sampleCount,enableAlphaToCoverage,specConstants,multiview,"
+    "occlusionCounting,"
     "enhancedDOF";
 
 std::string CsvRow(const Entry &e) {
@@ -247,6 +248,7 @@ std::string CsvRow(const Entry &e) {
   u(s.specConstants);
   // Hashed PS swap variants: without these columns the occlusion count and
   // enhanced DOF PSOs serialize identically to their normal-draw row.
+  bl(s.multiview);
   bl(s.occlusionCounting);
   bl(s.enhancedDOF);
 

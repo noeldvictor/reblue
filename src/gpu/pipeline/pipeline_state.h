@@ -67,6 +67,11 @@ struct PipelineState {
   plume::RenderSampleCounts sampleCount = plume::RenderSampleCount::COUNT_1;
   bool enableAlphaToCoverage = false;
   u32 specConstants = 0;
+  // Set while the bound target is a two-layer multiview surface. Part of the
+  // PSO key because a multiview pipeline is built against a multiview render
+  // pass, and Vulkan requires the framebuffer's mask to match - so the mono and
+  // stereo variants of the same state are genuinely different pipelines.
+  bool multiview = false;
   // When set, the pipeline cache swaps the guest PS for occlusion_count_ps.
   // Hashed so the counting variant is its own PSO. Off for normal draws.
   bool occlusionCounting = false;

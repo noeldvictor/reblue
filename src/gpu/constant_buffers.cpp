@@ -35,6 +35,7 @@
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 
 REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
 
@@ -515,7 +516,11 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // Multiview stereo, read by every recompiled vertex shader. Zero unless
   // bd_stereo is on, which makes the per-eye skew a no-op rather than something
   // the shader has to branch around.
-  const bool stereo_on = REXCVAR_GET(bd_stereo);
+  // Either stereo path wants the per-eye constants: bd_stereo skews on the host
+  // per submission, bd_stereo_multiview lets the shader do it from SV_ViewID.
+  // Gating on bd_stereo alone left multiview rendering both layers identical.
+  const bool stereo_on =
+      REXCVAR_GET(bd_stereo) || REXCVAR_GET(bd_stereo_multiview);
   s.shared.stereoSeparation =
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
   s.shared.stereoConvergence =

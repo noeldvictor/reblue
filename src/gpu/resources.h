@@ -58,6 +58,10 @@ struct GuestTexture {
   std::unique_ptr<plume::RenderTextureView> textureView;
   u32 width = 0;
   u32 height = 0;
+  // 2 when this is a multiview scene target. Everything downstream - the
+  // framebuffer's view mask, the pipeline's, and whether present has to pick a
+  // layer - keys off this rather than re-deriving it from a cvar.
+  u32 layers = 1;
   u32 depth = 0;
   u32 mipLevels = 1;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
