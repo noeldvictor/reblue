@@ -28,10 +28,13 @@ static const float kBands = 6.0;
 // bands the sky badly; this keeps some gradient.
 static const float kBandStrength = 0.55;
 // Ink line darkness at a full-strength edge.
-static const float kInkStrength = 0.85;
-// Luminance gradient that counts as a full-strength edge. Lower catches more
-// interior detail and starts drawing lines on textures rather than on shapes.
-static const float kEdgeThreshold = 0.28;
+static const float kInkStrength = 0.9;
+// Ink ramp. Below kEdgeLo there is no line at all, which is the important end:
+// a plain saturate() gives every faint gradient a little ink and the whole
+// frame just goes dark instead of gaining outlines. Above kEdgeHi the line is
+// full strength.
+static const float kEdgeLo = 0.06;
+static const float kEdgeHi = 0.22;
 
 float Luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
 
@@ -53,7 +56,8 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
     const float l10 = Luma(tex.Sample(samp, texCoord + float2(texel.x, 0.0)).rgb);
     const float l01 = Luma(tex.Sample(samp, texCoord + float2(0.0, texel.y)).rgb);
     const float l11 = Luma(tex.Sample(samp, texCoord + texel).rgb);
-    const float edge = saturate((abs(l00 - l11) + abs(l10 - l01)) / kEdgeThreshold);
+    const float grad = abs(l00 - l11) + abs(l10 - l01);
+    const float edge = smoothstep(kEdgeLo, kEdgeHi, grad);
 
     // Posterise toward the band, preserving hue by scaling rather than
     // quantising each channel - per-channel banding shifts colours and looks
