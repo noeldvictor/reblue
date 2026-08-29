@@ -38,6 +38,7 @@
 #include "gpu/shaders/shader_cache.h"
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
+REXCVAR_DECLARE(bool, bd_stereo);
 
 namespace {
 
@@ -166,6 +167,18 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     return;
   bd::gpu::MarkDraw(cmd_list);
 
+  // Stereo, renderer side. Re-entering the guest to render a second view does
+  // not work - it yields +21% draws rather than a second scene, because the
+  // render list is built once per frame above every seam worth hooking (see
+  // research/20260829_0600_stereo-groundwork.md). So the second view is
+  // produced here instead: one guest frame, one render list, the same recorded
+  // draw submitted once per eye.
+  //
+  // This first step gives the two eyes different viewports and nothing else, so
+  // the result is the same image twice, side by side. That is deliberate - it
+  // separates "can the renderer emit every draw twice" from "are the per-eye
+  // matrices right", and the matrices are the part that already has unit tests.
+  const auto emit = [&]() {
   if (primitive_type == 13) {
     u32 quads = args.vertexOrIndexCount / 4;
     const u32 max_quads = bd::gpu::Video::QuadlistMaxQuads();
@@ -200,6 +213,52 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   } else {
     cmd_list->drawInstanced(args.vertexOrIndexCount, 1, args.startVertex, 0);
   }
+  };
+
+  // Scene geometry only. Doubling *every* draw compounds through the
+  // post-process chain: each full-screen pass reads a target that is already
+  // two half-width copies and writes two more, so the frame recursively
+  // subdivides into vertical stripes. Verified by looking at it.
+  //
+  // The scene target is the one at or above the design canvas; the bloom chain
+  // (640x360 down to 80x45) and the 2D/UI passes are all below it and must be
+  // left alone, composited once over the already-stereo scene.
+  // Target size alone is not enough: the full-resolution post passes render to
+  // the same surface, and each one samples an already-doubled image and doubles
+  // it again, so the frame subdivides once per pass - about six passes gave
+  // roughly sixty vertical stripes. A post pass is a full-screen quad, three or
+  // four vertices; scene geometry is not. That is the discriminator.
+  const bool scene_pass =
+      s.render_target != nullptr &&
+      s.render_target->width >= u32(bd::gpu::kDesignCanvasWidth) &&
+      s.render_target->height >= u32(bd::gpu::kDesignCanvasHeight) &&
+      args.vertexOrIndexCount > 6;
+  if (!REXCVAR_GET(bd_stereo) || !scene_pass) {
+    emit();
+    return;
+  }
+
+  // Half-width viewports, left eye then right. The scissor follows the viewport
+  // rather than the full target, so neither eye can bleed into the other.
+  const plume::RenderViewport vp = s.viewport;
+  for (int eye = 0; eye < 2; ++eye) {
+    plume::RenderViewport half = vp;
+    half.width = vp.width * 0.5f;
+    half.x = vp.x + (eye ? half.width : 0.0f);
+    if (half.minDepth > half.maxDepth)
+      std::swap(half.minDepth, half.maxDepth);
+    const plume::RenderRect rc{
+        static_cast<i32>(half.x), static_cast<i32>(half.y),
+        static_cast<i32>(half.x + half.width),
+        static_cast<i32>(half.y + half.height)};
+    cmd_list->setViewports(&half, 1);
+    cmd_list->setScissors(&rc, 1);
+    emit();
+  }
+  // FlushViewport owns s.viewport and believes it is still set; the next draw
+  // must reprogram it rather than inherit an eye's half.
+  s.dirtyStates.viewport = true;
+  s.dirtyStates.scissorRect = true;
 }
 
 // bdBuildQuadVertices assembles every glyph into this one buffer, and unlike

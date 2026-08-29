@@ -169,6 +169,15 @@ REXCVAR_DEFINE_DOUBLE(bd_effect_distance, 1.0, kCvarGroup,
                       "moved nothing in a field scene; try it in a battle.")
     .range(0.1, 2.0);
 
+// Renderer-side stereo: every recorded draw submitted once per eye, into a
+// half-width viewport each. One guest frame, one render list, two views - the
+// opposite of bd_stereo_test, which tried to make the guest produce the second
+// view and could not.
+REXCVAR_DEFINE_BOOL(bd_stereo, false, kCvarGroup,
+                    "Submit every draw twice, into left and right half-width "
+                    "viewports. Step one of stereo: no per-eye matrices yet, "
+                    "so both halves show the same view.");
+
 REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
                     "Render the 3D scene twice per frame from the same camera. "
                     "Diagnostic only - the image is unchanged and the cost "

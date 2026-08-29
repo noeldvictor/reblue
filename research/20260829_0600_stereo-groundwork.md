@@ -121,3 +121,51 @@ a quarter of a full-resolution view, so two eyes land at half the fragments of t
 
 **Do not implement stereo by calling guest functions twice.** That is the finding, and it is worth
 more than the +25% was.
+
+---
+
+## It renders. Renderer-side stereo, verified by looking at it
+
+`bd_stereo` (default off) submits every **scene geometry** draw twice, into left and right
+half-width viewports, in `DispatchDraw`. One guest frame, one render list, two views - the design
+the two guest-side experiments above pointed to.
+
+**A side-by-side stereo frame of the field scene now renders.** Same image in both halves, because
+this step deliberately changes the viewport and nothing else; the per-eye matrices are the next
+increment and already exist, unit-tested, in `xr_math`/`xr_camera`.
+
+### Two wrong versions first, both caught by screenshotting the window
+
+Neither would have been caught by a draw count or a log line, and both looked like plausible code.
+
+**1. Doubling every draw.** The frame came back as ~40 vertical stripes. The post-process chain is
+full-screen passes that *read the target they are doubling*, so each pass samples an image that is
+already two half-width copies and writes two more. The subdivision compounds once per pass.
+
+**2. Doubling every draw to a target at or above the design canvas.** Still striped, ~60 of them.
+The bloom chain is small enough to be excluded by size, but the **full-resolution** post passes
+render to the scene surface itself and sail straight through a size test.
+
+**What actually separates them is vertex count.** A post pass is a full-screen quad - three or four
+vertices. Scene geometry is not. `args.vertexOrIndexCount > 6` alongside the size test gives a clean
+frame.
+
+This is the third time this project has been saved by looking at the output instead of a metric, and
+the first two are already recorded in the devloop skill. A draw-count check would have reported
+"draws doubled, working" for all three versions.
+
+### What is left for real stereo
+
+- **Per-eye matrices.** The view matrix reaches the shader through the per-draw constant block, so
+  the second submission needs its own upload with the second eye's view. `xr_math::FromOpenXRPose`
+  and the camera modes already produce them.
+- **Per-eye targets rather than half-viewports.** OpenXR wants one image per view; half-width
+  viewports of one target are the desktop-visible stand-in.
+- **The 2D and post passes**, currently composited once over an already-stereo scene. Correct for
+  HUD-in-world, wrong for a HUD that should sit at a fixed depth per eye.
+
+### Cost
+
+Scene draws double, and the frame is fill-bound, so this roughly doubles GPU cost - which is exactly
+what `bd_render_scale` exists to pay for. At 50 each eye is a quarter of a full view, so two eyes
+land at half the fragments of today's mono frame.
