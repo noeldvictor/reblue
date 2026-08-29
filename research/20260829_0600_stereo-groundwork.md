@@ -304,3 +304,20 @@ off-centre per-eye projection with 49 passing unit tests behind it.
 That is a real piece of work rather than a one-line skew, and it is what "people feel in the world"
 actually requires - the current prototype gives a depth cue with geometry that is not tied to any
 interpupillary distance, head pose, or frustum.
+
+## Dead end recorded: r31+84 is not where the camera matrices land
+
+`bdCameraViewSetMatrices`' prologue is `lis r11,-32034 ; addi r31,r11,-22320`, so r31 is
+**0x82DDA8D0**, and it calls two helpers with `r5 = r31+84` and `r5 = r31+148` - two consecutive
+64-byte slots, which looked exactly like a view and a projection being written out.
+
+Dumped both from guest memory at 0x82DDA924 and 0x82DDA964, 500 draws into a field scene:
+**all thirty-two floats are zero.** So `r5` is a source or a template there, not a destination, and
+the matrices are somewhere else.
+
+The addresses are right - the arithmetic checks - so this is not an addressing slip; the reading of
+what the function does with them is wrong. Establishing that properly means following
+`sub_82135128` and `sub_821351A8` in the recompiled source to see what they do with r3/r4/r5, rather
+than inferring from the call shape. That is the next step and it is pure source reading, no device.
+
+Recorded so the same 20 minutes are not spent again on the same guess.
