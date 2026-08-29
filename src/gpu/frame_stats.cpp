@@ -47,6 +47,10 @@ std::atomic<u64> g_ph_state{0};
 struct TargetTally {
   const void *id = nullptr;
   u32 w = 0, h = 0, draws = 0, binds = 0;
+  // Layers, so the census answers the multiview question directly: a scene
+  // surface taking hundreds of draws at 1 layer means the per-eye skew never
+  // ran on the geometry, whatever the pipeline counts say.
+  u32 layers = 1;
 };
 std::mutex g_target_mutex;
 TargetTally g_targets[24];
@@ -148,9 +152,9 @@ void UpdateFrameStats() {
         for (const auto &t : sorted) {
           if (!t.draws)
             continue;
-          BD_INFO("[perf]   target {:012X} {}x{}: {} draws/frame over {} "
+          BD_INFO("[perf]   target {:012X} {}x{}x{}L: {} draws/frame over {} "
                   "binds/frame, {} Mpix/frame if each covered it once",
-                  u64(uintptr_t(t.id)), t.w, t.h, t.draws / ticks,
+                  u64(uintptr_t(t.id)), t.w, t.h, t.layers, t.draws / ticks,
                   t.binds / std::max(ticks, 1u),
                   (u64(t.w) * t.h * (t.draws / std::max(ticks, 1u))) / 1000000);
         }
@@ -191,7 +195,7 @@ u32 FrameStatFrameCount() {
   return g_stat_frame_count.load(std::memory_order_relaxed);
 }
 
-void NoteDrawTarget(const void *id, u32 width, u32 height) {
+void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers) {
   if (!width || !height)
     return;
   std::lock_guard<std::mutex> lock(g_target_mutex);
@@ -209,6 +213,7 @@ void NoteDrawTarget(const void *id, u32 width, u32 height) {
       t.id = id;
       t.w = width;
       t.h = height;
+      t.layers = layers;
       t.draws = 1;
       t.binds = 1;
       return;

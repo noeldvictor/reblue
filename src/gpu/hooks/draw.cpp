@@ -163,7 +163,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // bd_max_render_height, and this says where rather than inferring it.
   if (s.render_target)
     bd::gpu::NoteDrawTarget(s.render_target, s.render_target->width,
-                            s.render_target->height);
+                            s.render_target->height, s.render_target->layers);
 
   auto *cmd_list = s.command_list;
   if (!cmd_list)
