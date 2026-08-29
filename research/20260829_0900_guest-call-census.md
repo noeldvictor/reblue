@@ -305,19 +305,35 @@ bl 0x82392EC8   -> 0x8228275C     (guessed)
 cmpwi r3,0      -> 0x82282760     (guessed)
 ```
 
-**Both are wrong.** With those hooks in, the app launches, displays, stays resident and never
-writes a log line at all - it hangs before logging init rather than crashing, so there is no signal
-in logcat either. Removing them restored it immediately.
+With those hooks in, the app launches, displays, stays resident and **never writes a log line at
+all** - it hangs before logging init rather than crashing, so there is nothing in logcat either.
+Removing them restored it immediately, so they are certainly the cause.
 
-Counting instructions backwards from a label works only if every line in the comment listing is one
-instruction and none were folded or reordered by the recompiler. The first path's addresses were
-right because they were checked against the `loc_` labels on *both* sides of the block; this one was
-counted from one side only.
+**But the addresses are not obviously wrong, and the first explanation was.** Checked afterwards
+against the labels on the *other* side of the block:
 
-**The way to get these right is to read the address off the generated code, not to derive it.** The
-recompiler emits `// bl 0x...` comments and `loc_XXXXXXXX:` labels, and any hook address should be
-confirmed against a label that brackets it, or taken from `config/functions.toml` where the function
-is already named.
+```
+loc_82282780:   lwz r3,56(r30)   0x82282780
+                cmplwi r3,0      0x82282784
+                beq 0x82282794   0x82282788
+                mr r4,r29        0x8228278C
+                bl 0x82282608    0x82282790
+loc_82282794:                    0x82282794
+```
+
+Four bytes an instruction, and the label lands exactly where counting says it should - so the
+backwards count to `0x82282760` is consistent with the listing. Reusing one hook function at two
+addresses is not the problem either: `render_tweaks.toml` already does it with
+`bdSceneResolutionScaleHook`.
+
+**So the cause is undetermined.** Something about hooking this particular site hangs the guest
+before it can log, and the obvious two explanations are both ruled out. Candidates left: the
+`bl 0x82392EC8` site is reached far more often or far earlier than the first path's and the hook
+body's cost or its `bd::mem::try_load` matters there; or `r4` at that instant is not yet the stack
+scratch the following `addi` sets up, so the read walks somewhere unmapped.
+
+**The way to settle it is one hook, not two** - place only the `cmpwi` hook, with no memory read at
+all, and see whether the app still hangs. That separates the site from the body.
 
 So the second path is still unhooked and the distance cull still only covers one of the two callers
 of `bdSceneNodeDrawSingle`. Its real effect remains unmeasured.
