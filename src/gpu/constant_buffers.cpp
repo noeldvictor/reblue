@@ -359,14 +359,28 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
     // a distance, which is what clip.w must be. As rows the w coefficients
     // would include a -485, which no perspective matrix has.
     //
-    // So clip.x' = clip.x + skew * clip.z + shift * clip.w is register 32 +=
-    // skew * register 34 + shift * register 35, whole registers at a time.
-    // Taking one element from each register instead - which an assumption of
-    // row-major produces - mixes components and is why the convergence term
-    // sent the two eyes to different viewpoints.
+    // clip.x += skew * clip.z was the first attempt and it produces no depth
+    // at all. For any normal projection clip.z and clip.w agree to within a
+    // fraction of a percent beyond a few metres, so after the perspective
+    // divide that term is a constant sideways shift of the whole image - which
+    // is measurably what it did: +59px of disparity at the sky against +57px on
+    // the near ground, across a scene hundreds of metres deep.
+    //
+    // A lateral eye translation is a *constant* added to clip.x. Dividing by w
+    // then makes the screen-space shift inversely proportional to depth, which
+    // is parallax: near geometry separates strongly, distant geometry barely
+    // moves. Since clip.x = dot(position, register 32) and the position's w is
+    // 1, the constant lives in whichever component of register 32 multiplies
+    // that w - and from the shader's own swizzle,
+    //   r3.x = dot(r5.xyzw, g_mViewProj(0).wzyx)
+    // pairs r5.w with .x. So it is a single float.
+    //
+    // Convergence is unchanged and was always right: shift * clip.w moves the
+    // projection centre, setting the distance at which parallax is zero.
     auto *m = reinterpret_cast<float *>(alloc.memory) + kViewProjRegister * 4;
+    m[0] += eye_skew;
     for (int i = 0; i < 4; ++i)
-      m[i] += eye_skew * m[8 + i] + eye_shift * m[12 + i];
+      m[i] += eye_shift * m[12 + i];
   }
   return alloc;
 }
@@ -516,11 +530,16 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // Multiview stereo, read by every recompiled vertex shader. Zero unless
   // bd_stereo is on, which makes the per-eye skew a no-op rather than something
   // the shader has to branch around.
-  // Either stereo path wants the per-eye constants: bd_stereo skews on the host
-  // per submission, bd_stereo_multiview lets the shader do it from SV_ViewID.
-  // Gating on bd_stereo alone left multiview rendering both layers identical.
-  const bool stereo_on =
-      REXCVAR_GET(bd_stereo) || REXCVAR_GET(bd_stereo_multiview);
+  // Multiview ONLY. The shader's skew is keyed on SV_ViewID, which varies per
+  // view exactly when a multiview pass is running and is 0 otherwise - so under
+  // the side-by-side path it applied the same eyeSign to both eyes, adding
+  // -sep to each on top of the host's per-eye matrix patch. That left eye 0 at
+  // -2*sep and eye 1 at 0: still a stereo pair, but asymmetric about the mono
+  // image and with the convergence term applied twice.
+  //
+  // bd_stereo does its per-eye work in UploadVertexShaderConstants instead, so
+  // it must leave these at zero or the two mechanisms compound.
+  const bool stereo_on = REXCVAR_GET(bd_stereo_multiview);
   s.shared.stereoSeparation =
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
   s.shared.stereoConvergence =

@@ -246,8 +246,28 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
                           s.render_target->height >= min_h &&
                           args.vertexOrIndexCount > 6;
   if (!REXCVAR_GET(bd_stereo) || !scene_pass) {
+    // Counted, because "stereo does nothing" has three different causes and
+    // they are indistinguishable from the image: the cvar off, the scene-pass
+    // gate rejecting every draw, or the per-eye constants not landing. This
+    // separates the first two from the third.
+    if (REXCVAR_GET(bd_stereo)) {
+      static std::atomic<u32> rejected{0};
+      const u32 n = rejected.fetch_add(1, std::memory_order_relaxed);
+      if (n == 2000)
+        BD_INFO("[stereo] scene_pass rejected 2000 draws; rt={}x{} min={}x{}",
+                s.render_target ? s.render_target->width : 0u,
+                s.render_target ? s.render_target->height : 0u, min_w, min_h);
+    }
     emit();
     return;
+  }
+  {
+    static std::atomic<u32> accepted{0};
+    const u32 n = accepted.fetch_add(1, std::memory_order_relaxed);
+    if (n == 0 || n == 2000)
+      BD_INFO("[stereo] per-eye path taken {} times, rt={}x{}", n + 1,
+              s.render_target ? s.render_target->width : 0u,
+              s.render_target ? s.render_target->height : 0u);
   }
 
   // Half-width viewports, left eye then right. The scissor follows the viewport
@@ -265,13 +285,20 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         static_cast<i32>(half.y + half.height)};
     cmd_list->setViewports(&half, 1);
     cmd_list->setScissors(&rc, 1);
-    // Left eye negative, right eye positive, so the two views diverge about the
-    // mono image rather than one of them being the original.
+    // The left eye's camera sits to the left, so the world appears shifted
+    // *right* in its image - left eye positive. Getting this backwards is not a
+    // subtle error: it renders the scene pseudoscopic, near geometry reading as
+    // far and the whole world turned inside out, which fuses badly and is
+    // exactly the kind of sign mistake a symmetric test pose cannot see.
+    //
+    // Checkable from a capture: for a convergence plane at infinity every point
+    // must have crossed (negative) disparity, i.e. appear further left in the
+    // right eye, by more the nearer it is.
     const float sep = float(REXCVAR_GET(bd_stereo_separation));
     const float conv = float(REXCVAR_GET(bd_stereo_convergence));
     if (sep != 0.0f || conv != 0.0f)
-      bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? sep : -sep,
-                                             eye ? -conv : conv);
+      bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? -sep : sep,
+                                             eye ? conv : -conv);
     emit();
   }
   // The last eye left a skewed block bound and FlushRenderState believes the
