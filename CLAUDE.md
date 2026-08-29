@@ -66,6 +66,27 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
+### Measuring on the desktop, which is now the first stop
+
+A desktop run is ~90 seconds, needs no headset, no adb and no APK, and prints the same `[perf]`
+per-surface census the device does. Set up once:
+
+- The registry record has to name **the directory holding the exe** - running from anywhere else
+  raises a modal "running outside of its install directory" with no log line and no exit, which
+  looks exactly like a hang. `HKCU\Software\Zolawareeblue\Install`, `InstallRoot` plus
+  `SchemaVersion` = 3, and the game data at `<InstallRoot>/game` (a junction is fine).
+- Command-line flags **do not work** - `--help` returns a swallowed CLI11 parse error. Cvars go in
+  `<InstallRoot>/profiles/default/reblue.toml`, which is a flat TOML: `bd_xr_autoplay = true`.
+- `bd_xr_autoplay` drives it into a real scene on desktop too.
+
+**Read `other_ms` from `bd_perf_csv`, not the frame rate.** The desktop sits vsync-locked at exactly
+16.67ms with the GPU wait at 0.03ms, so `dt_ms` measures the monitor and nothing else. `other_ms` is
+CPU work per frame - 5.77ms in a field scene - and it is the desktop analogue of the Quest's ~62ms
+floor, which makes CPU changes measurable here. The CSV lands in `logs/perf/`.
+
+Averaging the whole file is wrong: loading frames drag the mean to 21.7 fps against a steady state
+of 60. Take the last few hundred rows.
+
 ### Building for the desktop, which does work
 
 The one non-obvious part is that `rexglue_DIR` caches to whichever slice was configured last, and an

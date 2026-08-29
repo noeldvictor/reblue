@@ -209,8 +209,13 @@ if(REBLUE_RELAXED_GUEST_MEMORY)
     add_custom_command(TARGET reblue_codegen POST_BUILD
         COMMAND "${CMAKE_COMMAND}" -E echo
                 "relaxing guest memory accessors (REBLUE_RELAXED_GUEST_MEMORY)"
+        # The source tree's generated/, not REBLUE_GEN_DIR: codegen emits the
+        # guest sources and this header there, while REBLUE_GEN_DIR is the
+        # binary dir for CMake's own generated files. Pointed at the wrong one,
+        # this step failed with FileNotFoundError and took the build with it,
+        # which is why the flag was never once measured.
         COMMAND python "${CMAKE_CURRENT_SOURCE_DIR}/tools/relax_guest_memory.py"
-                "${REBLUE_GEN_DIR}/reblue_pch.h"
+                "${CMAKE_CURRENT_SOURCE_DIR}/generated/reblue_pch.h"
         VERBATIM)
 endif()
 
