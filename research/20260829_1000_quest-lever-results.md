@@ -218,3 +218,46 @@ The CPU is still 2.7x too slow, and it is still node submission. `bd_cull_distan
 instrument - things pop in at the boundary - so the next move is either a gentler curve (fade rather
 than cut) or attacking the per-node cost itself, which is `bdSceneNodeDrawSingle` at 7,740 bytes of
 recompiled PowerPC per node.
+
+## The target is not 72 fps, and we are closer than the frame rate suggests
+
+Sweeping the cull further:
+
+```
+configuration                                 frame    fence     else    fps   draws
+cull_distance=600                            46.6ms    0.2ms   37.0ms   21.4   1754
+cull_distance=450                            42.8ms    0.2ms   32.1ms   23.4   1238
+cull_distance=350                            41.8ms    0.1ms   19.2ms   23.9    545
+```
+
+The CPU keeps falling - 37.0 to 19.2ms - but the frame rate stops moving. The breakdown says why:
+
+```
+frame 41.6ms = xrWait 21.0 + fence 0.3 + elsewhere 19.9
+```
+
+**`xrWait` is now the largest item in the frame.** 41.6ms is 72/3 Hz to within a tenth of a
+millisecond, so the compositor has locked the app to a third of the display rate and `xrWaitFrame`
+is absorbing the slack. The *work* is only about 20.6ms.
+
+### Which changes what "fast enough" means
+
+A Quest 2 compositor paces to submultiples of 72Hz: **13.9ms for 72, 27.8ms for 36, 41.7ms for 24**.
+At ~20.6ms of work the app is already comfortably inside the **36Hz** tier and is being paced at 24
+anyway - so there is a whole tier being left on the table for reasons that are not the frame's cost.
+
+And **Blue Dragon is natively 30 fps**. 36Hz is not a compromise for this game, it is above the rate
+the original ran at. 72 was never the right target; it is the panel's rate, not the game's.
+
+So the remaining work splits into two very different problems:
+
+1. **Why is a ~20.6ms frame being paced at 24Hz rather than 36?** Candidates: the app never requests
+   a display refresh rate (`XR_FB_display_refresh_rate`), so the runtime assumes 72 and drops to a
+   third when it cannot be met; or the pacing decision has hysteresis and is reacting to the
+   pre-cull frame times; or occasional long frames pull the average past the threshold. This is
+   worth more than any further CPU work - it is a whole tier for no rendering change at all.
+2. **Getting under 13.9ms**, which is the only reason to keep cutting CPU, and which matters only if
+   72Hz is actually wanted for a 30fps game.
+
+The honest reading: the port is one pacing question away from running at above its native frame
+rate, and the CPU work that looked like the whole problem this morning has already done its job.
