@@ -310,20 +310,32 @@ So the expensive options are allowed: changing what codegen emits, hand-writing 
 host `REX_FUNC` implementations (the mechanism exists and `config/functions.toml` already names 1608
 candidates), or cutting work a VR port does not need the guest to do at all.
 
-**Measure before rewriting anything.** Find which functions actually hold the 180ms first.
-`tools/profile_quest.py` does it with simpleperf and no instrumentation - all 27,080 recompiled
-functions are real symbols in `libreblue.so`, so it names them directly.
+**Measure before rewriting anything.** Two tools exist and both work:
+
+- **`bd_perf_csv`** - a per-frame CSV, no rebuild, set it in `args.txt`. This is the cheapest real
+  measurement in the project and went unused for a long time. A field scene reads:
+  `dt_ms 182.6 | fence_ms 110.0 | other_ms 72.2 | draws 2957 | pso_switches 1121 | fb_binds 23`.
+  **2,957 draws per frame** is the number that reframes everything below.
+- **`tools/profile_quest.py`** - simpleperf, no instrumentation, names all 27,080 recompiled
+  functions directly.
+
+Treat `gpu_total_ms` in that CSV with suspicion: `MarkDraw` writes a timestamp per draw into a
+512-entry pool, so at 2,957 draws the pool saturates early and the column measures a fraction of the
+frame, not the frame.
 
 ### What reading the code already found
 
 `research/20260828_2100_guest-cpu-cost.md` has the detail. Three things worth knowing before
 touching guest performance:
 
-- **`non_argument_as_local` was never switched on.** The SDK exposes eight codegen flags and
-  `reblue_manifest.toml` set six. Enabling this one took `ctx.` accesses across `generated/` from
-  **2,049,797 to 1,306,101 - a 36% cut** - because those scratch registers can now live in ARM64
-  registers instead of the context struct. Builds clean; **correctness and fps are both unverified
-  on device.** `skip_msr` is the remaining unset flag and is deliberately left alone.
+- **`non_argument_as_local` miscompiles the guest. Do not enable it.** It cuts `ctx.` accesses
+  across `generated/` from 2,049,797 to 1,306,101 - a 36% reduction - and builds cleanly, which is
+  exactly why it looked like a free win and was briefly reported as one. On device the game dies
+  0.2s after the VFS mounts with `[disc] file-load fatal, failed file: '<unknown>'` - no preceding
+  read failure, so the guest's own IO path is being miscompiled. Bisected against identical game
+  data. **The static metric was completely disconnected from correctness**, which is the lesson: the
+  flag is a promise about register liveness, and this codegen has no liveness pass to verify it
+  with. `skip_msr` is the remaining unset flag and is left alone for the same reason.
 - **Every guest memory access is `volatile`**, which costs real instructions, but unevenly. Built
   both ways and disassembled: `bdBuildViewMatrix` goes 1000 -> 818 instructions and loses **42% of
   its loads**, while `bdCameraRender` moves 1.5% and `bdPlayerFieldMovementUpdate` 0.8%. The win is
@@ -474,6 +486,15 @@ eye. The camera modes in `src/xr/xr_camera.cpp` are composed and delivered every
 plumbing for 6DOF is live — but genuine stereo needs the guest's scene rendered twice per frame, or
 per-view matrices reaching shaders whose constants XenosRecomp already baked. That is a renderer
 change, not an XR one, and it is the next real piece of work.
+
+**Keeping the headset awake unworn.** The proximity sensor suspends the app the moment nobody is
+wearing it - `onResume` then straight to `onPause`/`onStop`, no log file, which looks exactly like a
+startup hang. `adb shell am broadcast -a com.oculus.vrpowermanager.prox_close` makes it behave as if
+worn, which is what makes unattended measurement possible at all.
+
+**Regenerating `reblue_pch.h` does not invalidate the precompiled header.** Any codegen flag change
+then fails with "file has been modified since the precompiled header was built" until the
+`cmake_pch.hxx.pch` files are deleted.
 
 **Verify the pixels, not a proxy.** Got wrong repeatedly here, so it is a rule now. "13 input
 actions attached" is not "controllers work". "Swapchain format 37" is not "the colour is right". A
