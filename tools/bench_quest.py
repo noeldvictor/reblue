@@ -131,18 +131,54 @@ TARGET_RE = re.compile(
     r"(?: over (\d+) binds)?")
 
 
+def newest_log(serial):
+    return adb(serial, "shell",
+               "ls -t %s 2>/dev/null | head -1" % LOG_GLOB).stdout.strip()
+
+
+def stop_and_wait(serial, timeout=25):
+    """force-stop, then wait until the process is actually gone.
+
+    `am force-stop` returns immediately and does not reliably kill a VR app the
+    Oculus runtime is holding. When it does not, `am start` answers "intent has
+    been delivered to currently running top-most instance", the app keeps
+    running with its *previous* args and keeps writing to the same log - so
+    every configuration in a sweep measures one unchanged live process and
+    produces identical numbers that read as "this setting does nothing".
+
+    That is exactly what happened to two rounds of culling measurements.
+    """
+    adb(serial, "shell", "am", "force-stop", PKG)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not adb(serial, "shell", "pidof", PKG).stdout.strip():
+            return True
+        time.sleep(1)
+        adb(serial, "shell", "am", "force-stop", PKG)
+    return False
+
+
 def run_one(serial, cvars, settle, local_args, show_targets):
     push_args(serial, cvars, local_args)
-    adb(serial, "shell", "am", "force-stop", PKG)
+    # Remembered before launch: the app writes a fresh numbered log per run, so
+    # if the newest afterwards is still this one the run never started and
+    # reading it would report the previous configuration's numbers.
+    before = newest_log(serial)
+    if not stop_and_wait(serial):
+        print("    the app would not stop - its args are stale, skipping")
+        return None
     wake(serial)
     adb(serial, "shell", "am", "start", "-n", ACTIVITY)
     time.sleep(20)
     wake(serial)            # again: it suspends again while nobody wears it
     time.sleep(settle)
 
-    logf = adb(serial, "shell",
-               "ls -t %s 2>/dev/null | head -1" % LOG_GLOB).stdout.strip()
+    logf = newest_log(serial)
     if not logf:
+        return None
+    if logf == before:
+        print("    STALE: no new log after launch - not reporting the previous "
+              "run's numbers")
         return None
     tail = adb(serial, "shell", "tail -n 400 '%s'" % logf).stdout
 
