@@ -29,6 +29,34 @@ The fork is explicitly low-stakes and AI-driven. Prefer working, understandable 
 polish. Do not add support infrastructure (issue templates, contribution guides, changelogs) unless
 asked — the README tells people to fork rather than file issues, and that is intentional.
 
+## Modern VR technique is mandatory, and is not the thing to measure
+
+**Multiview, foveated rendering and per-eye render targets are requirements here, not options.**
+They are settled practice across the VR industry. Do not benchmark them against the path they
+replace, do not build an A/B to decide whether they are worth adopting, and do not report a result
+saying "the old way was about the same". That question is already answered, and running it spends
+headset time, build cycles and attention that the actual problem needs.
+
+**The actual problem is finding where in the static recompilation the guest has to change.**
+Blue Dragon is 2006 code written for a Xenon: a hardware command processor made draw calls nearly
+free, so the engine submits about a thousand individually placed scene nodes a frame and never
+batches. Every modern technique has to land somewhere in that recompiled code, and *where* is the
+research:
+
+- **Multiview** needs the scene in a layered target and every vertex shader reading `SV_ViewID`.
+  The seams were `D3DDevice_CreateSurface` for the target, `bdSceneNodeCullTraverse` for what gets
+  submitted, and XenosRecomp's vertex epilogue for the per-eye geometry.
+- **Foveation** needs the scene rendered *into the XR swapchain image*, which it currently is not:
+  the guest owns its surfaces and present composites into the runtime's image. Until that changes,
+  foveating the swapchain applies to a single blit that costs nothing.
+- **Anything that reduces work per object** has to be found in the guest first. `bd_guest_census`
+  exists to name the function, and it names `bdSceneNodeDrawSingle` - 23x everything else on device.
+
+**Point measurement at two questions only**: *where is the seam*, and *is the implementation
+correct*. Sampling layer 1 to confirm both eyes actually render is the right kind of check and it
+found two real bugs. Whether the technique itself is a good idea is not a question this project
+needs to ask.
+
 ## Build
 
 ```sh
