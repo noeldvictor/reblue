@@ -87,12 +87,26 @@ already what `xr_session` expects: `bd_stereo` makes it split the swapchain imag
 Multiview remains the better architecture and is worth returning to when the post chain can be made
 view-aware. It is strictly cheaper: one draw instead of two.
 
-## Cost
+## Cost, measured
 
-Every scene draw is submitted twice, and the CPU was already the constraint. The per-eye path was
-counted at 2001 draws before the first census tick, against ~540 draws/frame mono. Frame timings
-under stereo need re-measuring against the 60/2 tier; if it does not fit, the levers are
-`bd_cull_distance` and `bd_render_scale`, both of which are cheap and already characterised.
+| configuration | frame | fps | CPU (elsewhere) | fence |
+| --- | --- | --- | --- | --- |
+| mono, rs=25, cull 350 | 34.6ms | 28.9 | 19.0ms | 0.3ms |
+| **stereo**, rs=25, cull 350 | 50.0ms | **20.0** | 20.2ms | 0.2ms |
+| **stereo**, rs=20, cull 250, shadows off | 40.8ms | **24.5** | 18.7ms | 0.2ms |
+
+Note what the CPU column does **not** do: 20.2ms against 19.0ms. Submitting every scene draw twice
+costs about 1ms, because the second submission re-uses the recorded state and only re-uploads the
+vertex constants. The frame still falls from 34.6ms to 50.0ms.
+
+So the cost is on the GPU, and `fence` does not show it - the same trap recorded in
+`20260829_1000_quest-lever-results.md`. The compositor sees a late frame and drops a pacing tier
+while the app's own fence wait stays near zero. Stereo lands in 60/3 (50ms) instead of 60/2
+(33.3ms), and trimming fill with `render_scale` and `cull_distance` claws back to 40.8ms - still
+60/3, but the trend says the tier is reachable.
+
+**Getting stereo into the 30fps tier is the next performance job**, and it is a fill problem with
+proven levers, not an unknown.
 
 ## Method
 

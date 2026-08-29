@@ -584,7 +584,7 @@ table first, because it is the part that gets stale.
 | **In-game frame rate** | **4-8 fps, and ~180ms of it is CPU** |
 | Mono projection layer - the "in the world" mode | Works, captured and looked at |
 | **Character-anchored camera modes** | **Do not work** |
-| **Stereo, per-eye render** | **Both eyes render; disparity is flat, so no depth** |
+| Stereo, per-eye render | **Works.** Crossed disparity, correctly signed, 24.5 fps |
 | Cel shading, tourist mode | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
 
@@ -1034,18 +1034,26 @@ Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and 
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
 game composites into a headset at its native frame rate with working controllers. What is left:
 
-1. **Stereo - the scene renders both eyes; the post-process chain flattens it.** This has been
-   wrong twice, so it is worth stating what is measured. Validation layers on device raise **no**
-   multiview, view-mask or render-pass-compatibility error, the scene targets are two-layer with
-   `viewMask 3`, and `vkCmdBeginRenderPass` uses that pass. The scene renders in stereo.
+1. **Stereo works.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
+   **near - far = -16px** - crossed, correctly signed, monotone with depth. Before it was flat to
+   2px. Verified from a capture with `bd_capture_after_s`; nobody has to wear the headset to check.
 
-   What is mono is everything after it: the framebuffer log shows scene passes at `rtLayers=2
-   viewMask=3` and post passes at `rtLayers=1 viewMask=0`. A mono pass writes layer 0 only, so the
-   image that reaches the compositor is one eye - which is why measured disparity is ~2px across the
-   scene's whole depth range. **The work is to make the post chain view-aware, or to resolve per-eye
-   from the two-layer scene target before the mono passes collapse it.** The camera modes and the
-   per-eye skew are done and verified; this is the last link.
-   See `research/20260829_1600_multiview-is-correct-the-post-chain-is-mono.md`.
+   The bug was that both paths applied the eye offset as `sep * clip.z`, and `clip.z ~= clip.w` past
+   a few metres, so it divided out to a constant sideways slide with no depth at all. A lateral eye
+   translation is a **constant** added to `clip.x`. Two more things had to be right at once: the
+   shared constants must be multiview-only (`SV_ViewID` is 0 in the side-by-side path, so the shader
+   was adding `-sep` to *both* eyes on top of the host patch), and the **left eye takes the positive
+   constant** - backwards renders the scene pseudoscopic, and that is invisible in a symmetric test.
+
+   It uses the side-by-side path, not multiview: multiview renders both layers correctly and then
+   the **mono post chain** collapses them before present. Multiview is still the better architecture
+   - one draw instead of two - and is worth returning to when the post chain can be made view-aware.
+
+   **Cost is on the GPU and `fence` does not show it.** CPU only moves 19.0 -> 20.2ms, but the frame
+   goes 34.6 -> 50.0ms because the compositor drops a pacing tier. `render_scale=20, cull 250,
+   shadows off` claws back to 40.8ms / 24.5 fps. Getting stereo into the 33.3ms tier is the next
+   performance job, and it is a fill problem with proven levers.
+   See `research/20260829_1700_stereo-has-depth.md`.
 
 2. **The occlusion descriptor set**, which is dropped rather than fixed on Android and costs four
    pipelines. Collapse sets 0/1/2 - one physical set bound three times to satisfy three HLSL
