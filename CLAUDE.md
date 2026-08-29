@@ -1142,12 +1142,26 @@ game composites into a headset at its native frame rate with working controllers
    constants flush, and the shared stereo constants are zero unless the draw is scene geometry -
    the same `scene_pass` gate the host's side-by-side patch always had.
 
-   Third, and **this is the remaining blocker**: with the gate in, the two views come out identical
-   again. The post chain is multiview now and writes both layers, but its **texture sampling is not
-   view-aware** - `surface_pool` builds each surface's SRV as a single-slice 2D view, so every post
-   pass reads one eye and writes it to both. Making multiview deliver needs the SRVs to be
-   `2D_ARRAY` and the sampling indexed by `ViewIndex`, which is a shader-side change to the post
-   passes. **Until then use `bd_stereo`**, which works: it is unregressed at `far +4, near -5,
+   Third, and **this is the remaining blocker, and it is architectural rather than a bug**: the post
+   chain writes both layers but **reads one**. `surface_pool` builds each surface's sampling view as
+   a plain 2D view of layer 0, because the bindless heap it is registered in is declared
+   `Texture2D`. So the scene renders in stereo and the first pass that reads it flattens the pair.
+
+   Doing it properly needs a second bindless heap declared `Texture2DArray` sampled by `ViewIndex`,
+   which reaches into XenosRecomp's texture declarations, the descriptor set layout, and every
+   `tfetch` - and on Adreno has to fit inside a `maxBoundDescriptorSets` of 4 that is already full.
+   **Do not start that casually.**
+
+   **The cheap way round gets the win anyway**: the expensive part is the scene (~2000 draws against
+   a couple of dozen full-screen passes), so render the scene with multiview - one draw, two layers -
+   then **resolve the two slices into a side-by-side image on a single-layer target** before the post
+   chain, which then runs mono exactly as it does for `bd_stereo` today. One blit, no descriptor
+   changes, and `xr_session` already splits a side-by-side image into per-eye `imageRect`s. The seam
+   to insert it at is the render-target change from the two-layer scene surface to a single-layer
+   post surface, which `NoteDrawTarget` already observes. See
+   `research/20260829_1900_multiview-needs-a-resolve-not-an-array-heap.md`.
+
+   **Until then use `bd_stereo`**, which works and is unregressed: `far +4, near -5,
    near - far = -9px` on the flat desktop, bit-identical to the measurement taken before any of the
    multiview work.
 
