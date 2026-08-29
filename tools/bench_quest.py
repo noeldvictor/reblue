@@ -57,6 +57,27 @@ PRESETS = {
         {"bd_render_scale": "50", "bd_reflections": "false",
          "bd_shadows": "false"},
     ],
+    # Stereo. Costs a second view of the scene, so it roughly doubles a
+    # fill-bound frame - which is what render_scale pays for: two half-scale
+    # eyes are half the fragments of a full-scale mono frame.
+    "stereo": [
+        {},
+        {"bd_stereo": "true"},
+        {"bd_stereo": "true", "bd_stereo_separation": "0.06",
+         "bd_stereo_convergence": "0.03"},
+        {"bd_stereo": "true", "bd_stereo_separation": "0.06",
+         "bd_stereo_convergence": "0.03", "bd_render_scale": "50"},
+    ],
+    # Everything verified on desktop, together. The one to run first.
+    "all": [
+        {},
+        {"bd_render_scale": "50", "bd_reflections": "false"},
+        {"bd_render_scale": "50", "bd_reflections": "false",
+         "bd_shadows": "false"},
+        {"bd_render_scale": "50", "bd_reflections": "false",
+         "bd_shadows": "false", "bd_stereo": "true",
+         "bd_stereo_separation": "0.06", "bd_stereo_convergence": "0.03"},
+    ],
     # Is any of this VR's fault? It was not, the last time it was asked.
     "vr": [
         {},
