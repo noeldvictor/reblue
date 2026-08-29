@@ -50,6 +50,10 @@ void UpdateFrameStats();
 // Per draw call.
 void NoteDraw();
 
+// Draws recorded so far this frame. Reset with the rest of the counters at
+// frame end; used by the bd_debug_max_draws diagnostic.
+u32 DrawsThisFrame();
+
 // Per frame, like NoteDraw. On Vulkan every barriers() call ends the active
 // render pass and every framebuffer bind starts one, so these measure
 // render pass churn.

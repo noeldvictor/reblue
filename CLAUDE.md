@@ -527,6 +527,16 @@ And the GPU half is **insensitive to resolution**: 720p and 360p both cost ~110m
 fill, not blend, not framebuffer bandwidth - which eliminates every quality setting, and foveated
 rendering with them, since that only reduces shading rate.
 
+**Proven draw-bound.** `bd_debug_max_draws` caps draws per frame (a measurement, not a setting - the
+frame renders wrong). At ~2925 draws the frame is 183ms with 112.8ms on the fence; at 500 draws it
+is **30.1ms with 0.1ms on the fence**, i.e. 5.5 fps becomes 33 fps. Working the cost out from both
+points gives roughly **60 microseconds of GPU time per draw**, near enough linear.
+
+60µs a draw is the anomaly - a simple mobile draw should be single-digit microseconds, and 2925 of
+them at that price *is* the frame. It is a per-draw constant roughly two orders of magnitude too
+large, and it is resolution independent, which is exactly why every quality setting failed to move
+it. **Finding what that 60µs is, is now the whole problem.**
+
 What is left is ~2925 draws a frame on a tile-based renderer, which points at the **binning pass** -
 a tiler runs all geometry through vertex processing before shading, and that scales with draw calls
 and vertex count, not pixels. Not yet proven: `gpu_total_ms` reads 3.5ms against a 110ms fence, but

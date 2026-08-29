@@ -17,6 +17,7 @@
 #include <optional>
 
 #include <rex/graphics/xenos.h>
+#include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/runtime.h>
 #include <rex/types.h>
@@ -35,6 +36,8 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
 #include "gpu/shaders/shader_cache.h"
+
+REXCVAR_DECLARE(i32, bd_debug_max_draws);
 
 namespace {
 
@@ -99,6 +102,23 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   BD_CPU_ZONE_DYN(zone_name);
 #endif
   bd::gpu::NoteDraw();
+
+  // Diagnostic, off by default. A field scene submits ~2925 draws and spends
+  // ~110ms on the GPU fence, and that cost does not move when the render
+  // resolution is halved - so it is not fill, and the suspicion is the tiler's
+  // binning pass, which scales with draw calls and vertex count rather than
+  // pixels.
+  //
+  // Capping the draw count answers that directly: if the fence falls roughly in
+  // proportion, the frame is draw-bound and culling is the lever. If it does
+  // not, the binning theory is wrong and the search moves elsewhere. The frame
+  // renders incorrectly while this is set - that is the point, it is a
+  // measurement and not a setting.
+  if (const i32 cap = REXCVAR_GET(bd_debug_max_draws); cap > 0) {
+    if (bd::gpu::DrawsThisFrame() > static_cast<u32>(cap))
+      return;
+  }
+
   // One lock across the whole recording sequence: loader threads record texture
   // uploads and Present records under the same mutex, and the per-frame command
   // list they all write is single-producer.

@@ -112,6 +112,10 @@ void UpdateFrameStats() {
 
 void NoteDraw() { g_draw_count.fetch_add(1, std::memory_order_relaxed); }
 
+u32 DrawsThisFrame() {
+  return g_draw_count.load(std::memory_order_relaxed);
+}
+
 void NoteBarrierCall(u32 barrier_count, BarrierSite site) {
   g_barrier_call_count.fetch_add(1, std::memory_order_relaxed);
   g_barrier_count.fetch_add(barrier_count, std::memory_order_relaxed);

@@ -91,6 +91,19 @@ REXCVAR_DEFINE_INT32(bd_max_render_height,
     .range(0, 16384)
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
+// Diagnostic. A field scene submits ~2925 draws and spends ~110ms on the GPU
+// fence, and that cost is unchanged by halving the render resolution - so it is
+// not fill-bound. The suspicion is the tiler's binning pass, which scales with
+// draw calls and vertex count rather than pixels.
+//
+// Capping the draws answers it directly: if the fence falls in proportion the
+// frame is draw-bound and culling is the lever. The frame renders incorrectly
+// while this is set; it is a measurement, not a quality setting.
+REXCVAR_DEFINE_INT32(bd_debug_max_draws, 0, kCvarGroup,
+                     "Stop submitting after N draws per frame. 0 disables. "
+                     "Diagnostic only - the frame renders wrong.")
+    .range(0, 100000);
+
 REXCVAR_DEFINE_INT32(bd_msaa, 4, kCvarGroup,
                      "MSAA sample count for the 3D scene: 0 = off, 2, 4, 8. "
                      "Clamped to device support, ignored while "

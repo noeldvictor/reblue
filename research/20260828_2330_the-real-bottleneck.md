@@ -93,10 +93,42 @@ connected to anything. It is not causing the draw count - the flat renderer subm
 draws - but if draw-call reduction is the answer, that file is where the VR half of it already
 lives.
 
+## Proven: the frame is draw-bound
+
+`bd_debug_max_draws` caps how many draws are submitted per frame. The frame renders wrong while it
+is set - it is a measurement, not a setting - and it answers the question directly:
+
+| draws submitted | frame | fence | CPU (`elsewhere`) |
+| --- | --- | --- | --- |
+| ~2925 (all) | 183.0ms | **112.8ms** | 60.7ms |
+| 500 | **30.1ms** | **0.1ms** | 29.5ms |
+
+Capping to 500 draws takes the GPU wait from 112.8ms to essentially nothing, and the frame from
+5.5 fps to 33 fps. **The binning theory holds: the frame is draw-bound.**
+
+Read `fence` as *waiting*, not as GPU work: at 500 draws the GPU finishes inside the CPU's 29.5ms so
+there is nothing to wait for. Working the cost out per draw from both points gives roughly **60
+microseconds of GPU time per draw**, near enough linear rather than a cliff.
+
+**60µs a draw is the anomaly.** A simple draw on a mobile GPU should be single-digit microseconds.
+2925 of them at that price is 175ms, which is the frame. This is not a content problem - it is a
+per-draw constant that is roughly two orders of magnitude too large, and it is resolution
+independent, which is why every quality setting failed to move it.
+
+That per-draw constant is now the whole problem. Everything else measured in this note is a
+consequence of it.
+
 ## What to do next
 
-1. **Attribute the GPU time properly.** `ovrgpuprofiler -r` on the Quest, or Snapdragon Profiler.
-   Everything above narrows the search; none of it identifies the instruction.
+1. **Find what costs 60µs in a single draw.** This is the question now, and it is narrow. Candidates
+   worth testing in order: a pipeline switch on 38% of draws (1121 PSO switches for 2957 draws); a
+   render-pass or tile flush being provoked per draw; per-vertex work in the recompiled vertex
+   shaders (the `swapFloats`/`sintTexcoord` fixups read their masks with `vk::RawBufferLoad` per
+   invocation, which is a buffer load per vertex rather than a uniform); or enormous vertex counts
+   per draw, which is not currently recorded anywhere.
+   `ovrgpuprofiler -e` then `-t` gives a render-stage trace on the Quest, but it needs the app
+   started *after* detailed mode is enabled and it needs to be tracing while a heavy scene is
+   actually on screen - both awkward with autoplay, and it produced nothing usable here.
 2. **Count the geometry, not just the draws.** If binning is the cost, vertex count per frame is the
    number that matters and it is not currently recorded.
 3. **Draw-call reduction is the likely lever** - more aggressive frustum culling through
