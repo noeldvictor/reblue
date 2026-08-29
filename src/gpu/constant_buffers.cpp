@@ -34,6 +34,10 @@
 
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 
+REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(f64, bd_stereo_separation);
+REXCVAR_DECLARE(f64, bd_stereo_convergence);
+
 namespace bd::gpu {
 
 namespace {
@@ -508,6 +512,14 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       vs.vertex_declaration ? vs.vertex_declaration->sintTexcoords : 0u;
 
   s.shared.shadowPcfScale = s.shadowPcfScale;
+  // Multiview stereo, read by every recompiled vertex shader. Zero unless
+  // bd_stereo is on, which makes the per-eye skew a no-op rather than something
+  // the shader has to branch around.
+  const bool stereo_on = REXCVAR_GET(bd_stereo);
+  s.shared.stereoSeparation =
+      stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
+  s.shared.stereoConvergence =
+      stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_convergence)) : 0.0f;
 
   // Viewport extent, not the render target's: the NDC->pixel mapping this
   // cancels is the viewport's. +x/-y = half a pixel right and down.

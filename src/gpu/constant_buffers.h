@@ -47,11 +47,14 @@ struct SharedConstants {
   // multiplies each by this to hold the penumbra constant in world space.
   // max(1/distance, 1024/dimension) never scales a tap below one map texel.
   float shadowPcfScale{1.0f}; // c20.z, byte 328
-  u32 _pad_c20_w{};           // c20.w, byte 332
+  // Multiview stereo, read by every recompiled vertex shader. Zero when
+  // bd_stereo is off, which makes the skew below a no-op rather than something
+  // that has to be branched around.
+  float stereoSeparation{}; // c20.w, byte 332
   // Half-pixel NDC nudge read only by the substituted 2D blit VS
   float blitHalfPixelOffsetX{}; // c21.x, byte 336
   float blitHalfPixelOffsetY{}; // c21.y, byte 340
-  u32 _pad_c21_z{};             // c21.z, byte 344
+  float stereoConvergence{};    // c21.z, byte 344
   u32 _pad_c21_w{};             // c21.w, byte 348
 };
 static_assert(sizeof(SharedConstants) == 352);
