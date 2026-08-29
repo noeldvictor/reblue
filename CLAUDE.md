@@ -304,9 +304,28 @@ So the expensive options are allowed: changing what codegen emits, hand-writing 
 host `REX_FUNC` implementations (the mechanism exists and `config/functions.toml` already names 1608
 candidates), or cutting work a VR port does not need the guest to do at all.
 
-**Measure before rewriting anything.** Find which functions actually hold the 180ms first. Two
-sessions have now been spent optimising things that turned out to cost nothing, and the frame
-budget section above is the record of it.
+**Measure before rewriting anything.** Find which functions actually hold the 180ms first.
+`tools/profile_quest.py` does it with simpleperf and no instrumentation - all 27,080 recompiled
+functions are real symbols in `libreblue.so`, so it names them directly.
+
+### What reading the code already found
+
+`research/20260828_2100_guest-cpu-cost.md` has the detail. Three things worth knowing before
+touching guest performance:
+
+- **`non_argument_as_local` was never switched on.** The SDK exposes eight codegen flags and
+  `reblue_manifest.toml` set six. Enabling this one took `ctx.` accesses across `generated/` from
+  **2,049,797 to 1,306,101 - a 36% cut** - because those scratch registers can now live in ARM64
+  registers instead of the context struct. Builds clean; **correctness and fps are both unverified
+  on device.** `skip_msr` is the remaining unset flag and is deliberately left alone.
+- **Every guest memory access is `volatile`**, which costs real instructions: a representative
+  recompiled sequence compiles to 11 instructions without it and **23 with**, because redundant
+  reloads and spill-forwarding cannot be eliminated. It cannot simply be removed - a guest
+  spin-loop polling a flag would hang if its load were hoisted - so it needs a flag and device
+  testing.
+- **Two things that look expensive and are not**, recorded so they are not investigated twice:
+  FPSCR flush-mode switching is guarded by a cached compare and only writes FPCR on an actual
+  change, and indirect dispatch is a range check plus a table lookup. Neither is a bottleneck.
 
 ## Research notes
 

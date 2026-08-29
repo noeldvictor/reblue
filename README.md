@@ -46,7 +46,7 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — third-person, head-anchored orbit | Composition done | Default mode. The game's own follow camera still needs suppressing. |
 | — first person | Composition done | Animations are authored third-person, so expect a novelty. |
 | — diorama + world scale | Composition done | Tabletop view. Probably the mode that ends up working best. |
-| — OpenXR session | **Working on a Quest 2** | Instance, session, reference space, swapchain, frame loop. The plume patch compiles and runs. |
+| — OpenXR session | **Working on a Quest 2** | Instance, session, reference space, swapchain, frame loop. The plume seam compiles and runs. |
 | — head pose driving the game camera | **Working** | Composed onto the game's own view matrix at `bdBuildViewMatrix`, the same seam frame interpolation uses. One frame of latency, by construction. |
 | — stereo rendering | Not started | Needs the guest scene rendered twice per frame, or per-view matrices in shaders whose constants XenosRecomp already baked. A renderer change, not an XR one. |
 | **ARM64 Android (AYN Thor, etc.)** | **Builds** | `libreblue.so`, 140 MB, ELF64 AArch64, linking against stock platform libraries only. The SDK cross-builds too. |
@@ -64,9 +64,10 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | **Tourist mode** | Not started | Infinite HP, 999 stats, encounter suppression. Cheapest item on the list. |
 | Windows / Linux / macOS, x86-64 and ARM64 | Works (upstream) | Untouched here. Use upstream builds. |
 
-`patches/plume-openxr-seam.patch` unblocked the largest risk: OpenXR insists on naming the Vulkan
-instance extensions, device extensions and physical device, and plume picked its own. 69 insertions,
-backward compatible — and it now compiles and runs on a headset, which is what it was written for.
+**There are no patch files any more.** Both outgrew `patches/` and now live as real history in
+forks: `noeldvictor/plume` branch `reblue-openxr` carries the OpenXR device-creation seam, and
+`noeldvictor/rexglue-sdk` branch `android-arm64` carries the Android cross-build. The submodules
+point at those. `noeldvictor/XenosRecomp` is forked and repointed too, unmodified so far.
 
 **[docs/VR_PORT_PLAN.md](docs/VR_PORT_PLAN.md)** is the actual plan, with the guest camera addresses,
 the phase breakdown, and an honest risk register. [CLAUDE.md](CLAUDE.md) is the condensed version

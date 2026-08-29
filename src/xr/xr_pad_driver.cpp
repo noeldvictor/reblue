@@ -124,8 +124,12 @@ X_STATUS PadDriver::Setup() { return X_STATUS_SUCCESS; }
 
 void PadDriver::EnumerateDevices(std::vector<rex::input::DeviceInfo> &out) {
   PadState pad;
-  if (!CurrentPad(pad))
-    return; // no runtime, or no controller has reported yet
+  // Autoplay deliberately does not require a runtime. The point of it is to
+  // walk the game into a field scene unattended, and that is just as useful on
+  // a flat Android handheld - which is where the guest can be profiled without
+  // a headset attached at all.
+  if (!CurrentPad(pad) && !REXCVAR_GET(bd_xr_autoplay))
+    return; // no runtime, and nothing synthesising input
 
   rex::input::DeviceInfo info;
   info.id = kPadDevice;
@@ -160,7 +164,8 @@ X_RESULT PadDriver::GetDeviceState(rex::input::DeviceId id,
     return X_ERROR_DEVICE_NOT_CONNECTED;
 
   PadState pad;
-  if (!CurrentPad(pad))
+  const bool autoplay = REXCVAR_GET(bd_xr_autoplay);
+  if (!CurrentPad(pad) && !autoplay)
     return X_ERROR_DEVICE_NOT_CONNECTED;
 
   // One line, the first time the guest actually asks. Everything upstream of
@@ -173,7 +178,7 @@ X_RESULT PadDriver::GetDeviceState(rex::input::DeviceId id,
     BD_INFO("[xr] guest is polling the OpenXR pad");
   }
 
-  if (REXCVAR_GET(bd_xr_autoplay))
+  if (autoplay)
     ApplyAutoplay(pad);
 
   if (out_state) {
