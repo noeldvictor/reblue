@@ -116,3 +116,65 @@ error is the durable fix.
 
 **None of `bd_render_scale`, `bd_shadows` or `bd_reflections` has been verified.** The desktop build
 is the way to verify them without a headset and it is one dialog away.
+
+---
+
+## Resolved: it runs, and the levers are verified
+
+The dialog was captured with `PrintWindow` (not `CopyFromScreen`, which grabs whatever is on top
+since `SetForegroundWindow` is restricted) and reads:
+
+> Warning: re:Blue is running outside of its install directory.
+> Please run the exe from `C:\...\reblue\out`
+
+**The exe must sit in the install root.** That is the whole blocker, and it is a silent modal - no
+log line, no stderr, no exit - so it looks identical to a hang. Point the registry at the build
+directory instead of moving the exe, and junction the game data in beside it:
+
+```powershell
+$build = "C:\...\reblue\out\build\win-amd64-release"
+New-ItemProperty "HKCU:\Software\Zolaware\reblue\Install" InstallRoot $build -PropertyType String -Force
+cmd /c mklink /J "$build\game" "C:\...\reblue\out\game"
+```
+
+Then run it **from that directory**. It boots: 1673 archives, 119,346 VFS record names, profile and
+save store mounted, guest running, `[perf]` reporting every few seconds.
+
+Flags still do not reach it from the command line - `--help` is still a swallowed CLI11 parse error
+- but that no longer matters, because the per-profile config works and is a **flat TOML**:
+
+```toml
+# <install_root>/profiles/default/reblue.toml
+bd_xr_autoplay = true
+bd_render_scale = 50
+```
+
+`bd_xr_autoplay` drives it into a real scene on desktop too - 837 draws, 213,451 verts.
+
+### The levers, measured
+
+From the per-surface census, one variable at a time, same scene:
+
+| configuration | scene target | draws | fragments |
+| --- | --- | --- | --- |
+| baseline | 1920x1080 | 177 | 367 Mpix |
+| `bd_render_scale = 50` | **960x540** | 178 | **92 Mpix** |
+
+| configuration | reflection target | draws | fragments |
+| --- | --- | --- | --- |
+| baseline | 480x270 | 63 | 8 Mpix |
+| `bd_reflections = false` | **128x72** | 63 | **0 Mpix** |
+
+**Both work exactly as designed**: the surface shrinks, the draw count is untouched, and the
+fragments - the thing the Quest is bound on - fall by 4x and to nothing respectively.
+
+`bd_shadows = false` shows **no change** in this scene (177 draws to 175, no shadow-map row in the
+census at all), so it is **not verified**. Either this autoplay scene casts no sun shadow, or the
+shadow map is a depth-only target that `NoteDrawTarget` never sees because it hooks the colour
+render target. Worth checking which before trusting it.
+
+### Why this matters more than the numbers
+
+This is the loop the port has never had. A desktop run is ~90 seconds, needs no headset, no adb, no
+APK, and prints the same `[perf]` census as the device. It is also the only way to work on stereo
+without a Quest, once `REBLUE_OPENXR=ON` is built against Meta XR Simulator.
