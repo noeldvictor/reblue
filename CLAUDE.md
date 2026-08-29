@@ -153,47 +153,34 @@ not exercised** - stereo geometry is checkable this way, the anchor and the came
 left a 23 KB stub DLL whose import lib links with `undefined symbol: xrEndSession`, which reads like
 a missing dependency and is not. A real static loader is 3.1 MB.
 
-What is missing is a **runtime**, and this is now well explored - do not repeat it:
-
-| tried | result |
-| --- | --- |
-| SteamVR as installed | `OpenXR: no usable runtime (-4)` - no HMD attached |
-| SteamVR **null driver** (`requireHmd:false`, `forcedDriver:null`, `driver_null.enable:true`), vrserver + vrcompositor confirmed running | still `-4`. Its OpenXR runtime will not initialise without an activated HMD |
-| `XR_RUNTIME_JSON` pointed straight at `steamxr_win64.json`, from both bash and PowerShell | still `-4` |
-| Oculus runtime | present, needs a Quest over Link |
-
-**Do not leave `forcedDriver:null` / `requireHmd:false` in `steamvr.vrsettings`** - it stops a real
-headset working. Back the file up before touching it and restore it afterwards.
-
-So **Meta XR Simulator is the remaining option**, it is the one designed to run headless, and
-getting it needs **one manual step that cannot be automated**: the binary sits behind a Meta
-developer login.
-
-The trail, so nobody re-walks it. Meta's Unity registry is public and the package is real:
+**We wrote our own OpenXR runtime, and VR now runs on the desktop with no headset.**
+`tools/xrsim/` is a headless runtime: two views, real `VkImage`s for the swapchains, a made-up head
+pose, no compositor. **Invoke the `vrsim` skill** before using it.
 
 ```sh
-curl -sSL https://npm.developer.oculus.com/com.meta.xr.simulator          # metadata, versions, public
-curl -sSL "https://www.facebook.com/horizon_devcenter_download?app_id=28549923061320041&sdk_version=81"
-# -> {"binaries":[{"version":"81","download_url":"https://securecdn.oculus.com/binaries-download-auth/?id=..."}]}
+cmake -S tools/xrsim -B out/xrsim-build -G Ninja -DCMAKE_BUILD_TYPE=Release       -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ && cmake --build out/xrsim-build
+XR_RUNTIME_JSON="$PWD/out/xrsim-build/reblue_xrsim.json" ./out/build/win-amd64-release/reblue_vk.exe
 ```
 
-Both of those work unauthenticated. The `download_url` they hand back **404s without a session
-token** - `binaries-download-auth` is what the name says, and the Unity installer supplies a token
-this project has no way to obtain. The npm tarball itself is only the 31 KB Unity editor wrapper,
-not the runtime.
+This is what makes the camera modes and the character anchor testable at all: without a runtime
+`ViewOverrideActive()` is false and they never compose. **The pose is a function of frame index, not
+wall-clock time**, so a capture at frame N is identical across runs - which a real headset can never
+give you.
 
-**So: download it once from https://developers.meta.com/horizon/downloads/package/meta-xr-simulator-windows
-while logged in.** After that it is per-process and changes nothing globally:
+Three traps, each of which cost a run: **do not minimise the window** (0x0 client area, the flat
+swapchain fails with `Plume createSwapChain failed`); the manifest's `library_path` must be
+**absolute**; and a missing entry point crashes the app at PC 0 rather than erroring, because an
+OpenXR client caches the pointer and calls it - that is how the absent `xrGetActionStateVector2f`
+announced itself.
 
-```sh
-XR_RUNTIME_JSON=<unzipped>/meta_openxr_simulator.json ./reblue_vk.exe
-```
+The check that it took: `[xr] cam:` must show **`eye` differing from `game`**. If they match, VR is
+not driving the view.
 
-and the desktop build gains an eye pose, which is what the camera modes, the character anchor and
-the projection layer all need. `XR_RUNTIME_JSON` overrides the active runtime per process, so installing it changes
-nothing globally. Until then the desktop loop verifies **renderer** behaviour (stereo geometry, the
-post chain, captures) and the device is required for anything that needs an eye pose: the camera
-modes, the character anchor, the projection layer.
+Everything below was tried first and is closed, so do not repeat it: SteamVR will not initialise
+without an activated HMD even with the null driver and `vrserver` running (**and never leave
+`forcedDriver:null` in `steamvr.vrsettings` - it breaks a real headset**); the Oculus runtime wants
+a Quest over Link; and Meta XR Simulator's binary is behind a developer login that cannot be
+scripted - its npm package is a 31 KB Unity wrapper and the CDN URL 404s without a session token.
 See `research/20260829_1730_the-desktop-loop-works.md`.
 
 `REBLUE_OPENXR=ON` additionally needs `REBLUE_OPENXR_INCLUDE` and `REBLUE_OPENXR_LOADER`. The
@@ -392,6 +379,10 @@ Two things to know before touching the SDK tree:
 **Invoke the `devloop` skill** (`.claude/skills/devloop/`) before building, running, deploying, or
 diagnosing a slow build. The short version:
 
+- **`tools/xrsim/` runs the whole VR path on the desktop with no headset** - our own headless
+  OpenXR runtime. It is the only way to exercise the camera modes and the character anchor, because
+  without a runtime `ViewOverrideActive()` is false and they never compose. **Invoke the `vrsim`
+  skill.**
 - **`tools/stereo_check.py` answers "does stereo have depth" in one command.** It captures a frame
   with `bd_capture_after_s`, matches the two eyes band by band and prints a verdict: **FLAT** (the
   eye offset is proportional to `clip.z` and divides out to a constant slide), **INVERTED** (crossed
