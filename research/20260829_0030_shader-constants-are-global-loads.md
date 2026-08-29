@@ -72,6 +72,41 @@ invisible to every quality setting.
 It is also not a Blue Dragon problem. Any game translated this way pays it; Blue Dragon just draws
 2848 times a frame, which was ordinary on hardware with real constant registers.
 
+## Quantified, from the emitted HLSL
+
+`cmake --build ... --target reblue_shader_hlsl_dump` writes all 141 translated shaders as readable
+HLSL. Counting raw loads per vertex shader:
+
+```
+89  bd_normal_vs_grassland      86  bd_toon_vs_env
+87  bd_normal_vs_wind           86  bd_caustics_vs
+86  bd_water_vs                 86  bd_fur_vs_env
+```
+
+**86-89 raw global loads per vertex shader**, and at ~400,000 vertices a frame that is upward of 34
+million uncached loads. Against ~90ms of GPU time that is ~2.6ns a load, which is the right order
+for uncached global memory on this part. The arithmetic closes.
+
+And in the shaders that matter they are all the **indexed** form:
+
+```hlsl
+#define g_mWorld(INDEX)    select((INDEX) < 236, vk::RawBufferLoad<float4>(... + (20 + min(INDEX, 235)) * 16, 0x10), 0.0)
+#define g_mViewProj(INDEX) select((INDEX) < 224, vk::RawBufferLoad<float4>(... + (32 + min(INDEX, 223)) * 16, 0x10), 0.0)
+#define exMatrix(INDEX)    select((INDEX) < 196, vk::RawBufferLoad<float4>(... + (60 + min(INDEX, 195)) * 16, 0x10), 0.0)
+```
+
+Matrices, read a row at a time - four loads plus four `select`/`min` pairs per matrix, per vertex.
+
+### A cheaper fix that does not work
+
+The scalar constants are `#define`s, so every textual use re-loads, and `c255` appears 14 times in
+`bd_toon_vs_env` with `c0` and `c1` eight times each. Emitting them as `static const float4` instead
+- a two-line change in `shader_recompiler.cpp` - hoists the load to shader entry.
+
+**It changes nothing in the shaders that matter**, because those use the indexed form exclusively,
+and an indexed load cannot be hoisted that way. Tried, measured against the dumped HLSL, reverted.
+Recorded so it is not tried again.
+
 ## The fix
 
 Bind the per-draw constant blocks as a **uniform buffer** and index it, instead of pushing a device
