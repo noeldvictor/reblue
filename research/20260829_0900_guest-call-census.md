@@ -129,19 +129,22 @@ submission the census measured.
 
 Desktop, last 400 frames:
 
-| cap | CPU (`other_ms`) | 
-| --- | --- |
-| none | 4.20ms |
-| 400 | 3.70ms |
+| draws submitted | CPU (`other_ms`) | change |
+| --- | --- | --- |
+| 829 (uncapped) | 4.20ms | — |
+| 400 | 3.70ms | -0.50ms |
+| 150 | 3.13ms | -1.07ms |
 
-0.5ms for roughly 440 skipped draws is **~1.1us per draw of renderer cost**, which agrees with the
-`flushState` 0.8ms and `bindFB` 0.2ms already reported. Nothing about the guest.
+Linear, at **~1.3us per draw of renderer cost**, which agrees with the `flushState` 0.8ms and
+`bindFB` 0.2ms already reported. So of the desktop's 4.20ms of CPU, about **1.1ms is the renderer
+and about 3.1ms is guest simulation**. Nothing here touches the guest.
 
 ### Which makes the Quest number strange, in a useful way
 
 On the Quest, `bd_debug_max_draws=500` took `elsewhere` from **60.7ms to 29.5ms** - 31ms across
-about 2400 skipped draws, or ~13us per draw. Desktop is roughly 3x faster per core, so renderer cost
-there should be near 3.3us per draw. **13us is four times too much to be renderer work.**
+about 2400 skipped draws. Scaling the measured 1.3us per draw by a core roughly three times slower
+predicts about 4us per draw, so 2400 draws should have cost near **10ms of renderer time, not
+31ms**. The gap is a factor of three and it is not explained by anything measured here.
 
 The explanation that fits is **back-pressure**: part of what the Quest frame counts as `elsewhere` is
 the guest thread waiting on the render thread, not computing. Fewer submitted draws means less GPU
