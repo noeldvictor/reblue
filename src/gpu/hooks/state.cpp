@@ -38,22 +38,10 @@ void D3DDevice_SetViewport_hook(
 
   auto &s = bd::gpu::state();
 
-  // The guest sets viewports in the terms it asked for, so a surface that
-  // bd_render_scale allocated smaller needs them converted. Derived from the
-  // bound target rather than from the cvar, because only surfaces at or above
-  // the design canvas are scaled and a view texture must pass through as-is.
-  float vs_x = 1.0f;
-  float vs_y = 1.0f;
-  if (const auto *rt = s.render_target;
-      rt != nullptr && rt->requestedWidth != 0 && rt->requestedHeight != 0) {
-    vs_x = float(rt->width) / float(rt->requestedWidth);
-    vs_y = float(rt->height) / float(rt->requestedHeight);
-  }
-
-  const float fx = static_cast<float>(u32(pViewport->X)) * vs_x;
-  const float fy = static_cast<float>(u32(pViewport->Y)) * vs_y;
-  const float fw = static_cast<float>(u32(pViewport->Width)) * vs_x;
-  const float fh = static_cast<float>(u32(pViewport->Height)) * vs_y;
+  const float fx = static_cast<float>(u32(pViewport->X));
+  const float fy = static_cast<float>(u32(pViewport->Y));
+  const float fw = static_cast<float>(u32(pViewport->Width));
+  const float fh = static_cast<float>(u32(pViewport->Height));
   const float fmin = float(pViewport->MinZ);
   const float fmax = float(pViewport->MaxZ);
 

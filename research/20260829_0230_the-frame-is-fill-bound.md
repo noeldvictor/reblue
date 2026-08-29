@@ -151,3 +151,40 @@ analogy with the scissor sweep, giving a ~98ms frame; the ~62ms CPU floor is unt
 things to check on the first run are the post-process chain, which samples the scene surface and
 derives texel offsets from dimensions the guest still believes are 1280x720, and anything that reads
 `bdSetViewportConstants`' (1/W, 1/H) in VS/PS c21.
+
+## The fix, second attempt - on the right seam
+
+The first implementation scaled at `D3DDevice_CreateSurface_hook` and was replaced before it ever
+ran. Scaling there means the guest still believes the surface is 1280x720 and keeps computing
+viewports, resolve rects and post-process texel offsets from that, so every reader needs a ratio
+fixup - the viewport hook got one, and `bdSetViewportConstants`' (1/W, 1/H) in VS/PS c21 would have
+needed another.
+
+`config/hooks/render_tweaks.toml` already has the right seam, and it was already in use:
+
+```
+# Scale the scene COLOR surface dims (bl hcgD3DCreateSurface; r3=Width r4=Height).
+address = 0x82186CDC   name = "bdSceneResolutionScaleHook"
+# Scale the scene DEPTH surface dims (bl hcgD3DCreateSurfaceEx; r3=Width r4=Height).
+address = 0x82186D34   name = "bdSceneResolutionScaleHook"
+```
+
+`bd_supersampling` scales the scene **up** through exactly this hook, and the engine resolves the
+result onto the output target. Scaling **down** through it is the same operation with a factor below
+one: the guest asks for the smaller surface itself, so everything it derives stays consistent and no
+fixups are needed anywhere. `CopySurfaceToTextureLocked` already handles a scene resolving to a
+different size.
+
+Three cvars, all defaulting to current behaviour:
+
+- `bd_render_scale` (25-100) - scene colour and depth, in `bdSceneResolutionScaleHook`.
+- `bd_shadows` (bool) - off forces 64x64 in `bdShadowResolutionScaleHook`.
+- `bd_reflections` (bool) - off pins `PlaneReflectInfo::width` to its 128 floor in
+  `bdReflectionResolutionScaleHook`.
+
+**Off forces the smallest legal surface instead of skipping the pass.** The receivers sample these
+textures, and a pass that never runs leaves them reading stale content; the draws cost nothing, so
+there is no reason to remove them.
+
+All three compile. **None have been run** - the Quest left USB before any of it could be deployed,
+and the only device now attached is a Thor with neither the app nor the game data on it.

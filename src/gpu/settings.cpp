@@ -132,13 +132,35 @@ REXCVAR_DEFINE_INT32(bd_debug_fill_scale, 100, kCvarGroup,
                      "fragment cost from everything else.")
     .range(10, 100);
 
+// Applied where bd_supersampling already scales the scene surfaces, so the
+// guest asks for the smaller size itself and its viewports, resolve rects and
+// post-process chain all follow. A Quest 2 field frame is fill-bound: clipping
+// the scissor to 25% takes the GPU fence from 141ms to 0.1ms while the draw
+// count rises, so fragments are the whole GPU cost.
 REXCVAR_DEFINE_INT32(bd_render_scale, 100, kCvarGroup,
                      "Render the 3D scene at N percent of the design canvas in "
-                     "each axis, 100 = native 1280x720. The frame is "
-                     "fill-bound on a Quest 2, so 50 quarters the fragment "
-                     "cost. Distinct from bd_max_render_height, which sizes "
-                     "the output fit and leaves the scene alone.")
-    .range(25, 100);
+                     "each axis, 100 = native 1280x720. 50 quarters the "
+                     "fragment cost. Distinct from bd_max_render_height, which "
+                     "sizes the output fit and leaves the scene alone. "
+                     "Requires restart.")
+    .range(25, 100)
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+// True off switches, as opposed to the quality knobs beside them. Both work by
+// forcing the pass to its smallest legal surface rather than by suppressing the
+// draws: the frame is fill-bound, so the fragments are the cost and the draws
+// are free. Keeping the pass alive keeps every guest-side invariant that hangs
+// off its texture intact.
+REXCVAR_DEFINE_BOOL(bd_shadows, true, kCvarGroup,
+                    "Sun shadows. Off renders the shadow map at 64x64, which "
+                    "costs nothing. Requires restart.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
+
+REXCVAR_DEFINE_BOOL(bd_reflections, true, kCvarGroup,
+                    "Planar water reflections. The reflection re-renders the "
+                    "scene, so off is a large saving; it pins the reflection "
+                    "to its 128-wide floor.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_INT32(bd_msaa, 4, kCvarGroup,
                      "MSAA sample count for the 3D scene: 0 = off, 2, 4, 8. "

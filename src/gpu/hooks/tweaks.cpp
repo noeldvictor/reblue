@@ -28,6 +28,11 @@
 #include "gpu/output.h"
 #include "gpu/settings.h"
 
+REXCVAR_DECLARE(i32, bd_render_scale);
+REXCVAR_DECLARE(bool, bd_shadows);
+REXCVAR_DECLARE(bool, bd_reflections);
+#include "gpu/settings.h"
+
 namespace bd::gpu {
 
 // Event scenes hold BD's authored coverage, so pin it to original for the
@@ -55,10 +60,19 @@ void bdSceneForceFullResHook(PPCRegister &r11) {
 // matched. The engine resolves the scaled scene down to the output target.
 void bdSceneResolutionScaleHook(PPCRegister &r3, PPCRegister &r4) {
   const i32 f = bd::gpu::Video::BootSupersampling();
-  if (f <= 1)
-    return;
-  r3.u32 *= static_cast<u32>(f);
-  r4.u32 *= static_cast<u32>(f);
+  if (f > 1) {
+    r3.u32 *= static_cast<u32>(f);
+    r4.u32 *= static_cast<u32>(f);
+  }
+  // Scaling down through the same seam supersampling scales up through, so the
+  // guest asks for the smaller surface itself and everything derived from it -
+  // viewport, resolve rect, post-process chain - stays consistent. The engine
+  // already resolves a scene of a different size onto the output target.
+  const i32 pct = REXCVAR_GET(bd_render_scale);
+  if (pct < 100) {
+    r3.u32 = std::max(1u, r3.u32 * u32(pct) / 100u);
+    r4.u32 = std::max(1u, r4.u32 * u32(pct) / 100u);
+  }
 }
 
 // BD sizes the planar reflection off a hardcoded 320-wide base against the
@@ -87,8 +101,12 @@ void bdReflectionResolutionScaleHook(PPCRegister &r31) {
       bd::gpu::Settings::Get().ReflectionUpscale());
   const double cap = std::min(render_w, 1280u) - 8.0;
   const u32 stock = static_cast<u32>(info->width);
-  const u32 width = static_cast<u32>(std::min(stock * sx, cap) + 0.5);
-  if (width > stock)
+  // 128 is the guest's own floor for this field, so pinning to it keeps the
+  // reflection texture valid while making the re-render of the scene free.
+  const u32 width = REXCVAR_GET(bd_reflections)
+                        ? static_cast<u32>(std::min(stock * sx, cap) + 0.5)
+                        : 128u;
+  if (width != stock)
     info->width = width;
 
   static std::unordered_map<u32, u32> forced;
@@ -102,7 +120,12 @@ void bdReflectionResolutionScaleHook(PPCRegister &r31) {
 // The light frustum is world-space and receivers sample by UV, so a larger map
 // is just finer with no shader change.
 void bdShadowResolutionScaleHook(PPCRegister &r3, PPCRegister &r4) {
-  const u32 d = static_cast<u32>(bd::gpu::Settings::Get().ShadowDimension());
+  // Off still renders the pass, into a 64x64 map. Suppressing the draws would
+  // leave the receivers sampling a texture nothing wrote, and the draws are not
+  // what costs anything.
+  const u32 d = REXCVAR_GET(bd_shadows)
+                    ? static_cast<u32>(bd::gpu::Settings::Get().ShadowDimension())
+                    : 64u;
   r3.u32 = d;
   r4.u32 = d;
 }

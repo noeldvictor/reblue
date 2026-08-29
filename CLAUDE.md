@@ -623,6 +623,26 @@ to entry-initialised statics was implemented and **changed the compiled SPIR-V b
 already CSEs them. Measured by rebuilding the shader cache and comparing size, no device needed.
 Reverted. The same idea was separately tried and reverted for vertex shaders.
 
+### The three fill levers
+
+All three scale a surface the guest asks for, on the seam `bd_supersampling` already uses, so the
+guest computes its own viewports, resolve rects and post-process chain from the smaller size. None
+of them suppress draws - draws are free, fragments are not.
+
+| cvar | default | what it does |
+| --- | --- | --- |
+| `bd_render_scale` | 100 | Scene colour and depth at N% per axis. 50 quarters the fragment cost. |
+| `bd_shadows` | true | Off renders the sun shadow map at 64x64 instead of 1024x1024. |
+| `bd_reflections` | true | Off pins the planar reflection to its 128-wide floor. The reflection re-renders the scene, so this is the largest single pass to remove. |
+
+Bodies in `src/gpu/hooks/tweaks.cpp`, addresses in `config/hooks/render_tweaks.toml`. **Off forces
+the smallest legal surface rather than skipping the pass**, because the receivers sample those
+textures and a pass that never runs leaves them reading whatever was there before.
+
+Do not reach for `D3DDevice_CreateSurface_hook` for this. Scaling there means lying to the guest
+about a size it still computes viewports and texel offsets from, which needs a ratio fixup at every
+site that reads back. It was written that way first and replaced.
+
 See `research/20260829_0230_the-frame-is-fill-bound.md` for the full trail and
 `research/20260828_2330_the-real-bottleneck.md` for the eliminations it corrects. Note that
 `src/xr/xr_cull.cpp` is **dead code** - written, unit-tested, never connected to anything.
