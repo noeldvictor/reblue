@@ -153,10 +153,23 @@ not exercised** - stereo geometry is checkable this way, the anchor and the came
 left a 23 KB stub DLL whose import lib links with `undefined symbol: xrEndSession`, which reads like
 a missing dependency and is not. A real static loader is 3.1 MB.
 
-What is missing is a **runtime**. Oculus and SteamVR are both installed here and neither works
-without hardware - `OpenXR: no usable runtime (-4)`. **Meta XR Simulator is the headless one and is
-not installed**; it is the single remaining piece for testing camera modes with no headset, and
-`XR_RUNTIME_JSON` overrides the active runtime per process so installing it changes nothing globally.
+What is missing is a **runtime**, and this is now well explored - do not repeat it:
+
+| tried | result |
+| --- | --- |
+| SteamVR as installed | `OpenXR: no usable runtime (-4)` - no HMD attached |
+| SteamVR **null driver** (`requireHmd:false`, `forcedDriver:null`, `driver_null.enable:true`), vrserver + vrcompositor confirmed running | still `-4`. Its OpenXR runtime will not initialise without an activated HMD |
+| `XR_RUNTIME_JSON` pointed straight at `steamxr_win64.json`, from both bash and PowerShell | still `-4` |
+| Oculus runtime | present, needs a Quest over Link |
+
+**Do not leave `forcedDriver:null` / `requireHmd:false` in `steamvr.vrsettings`** - it stops a real
+headset working. Back the file up before touching it and restore it afterwards.
+
+So **Meta XR Simulator is the remaining option** - it is the one designed to run headless, and it is
+not installed. `XR_RUNTIME_JSON` overrides the active runtime per process, so installing it changes
+nothing globally. Until then the desktop loop verifies **renderer** behaviour (stereo geometry, the
+post chain, captures) and the device is required for anything that needs an eye pose: the camera
+modes, the character anchor, the projection layer.
 See `research/20260829_1730_the-desktop-loop-works.md`.
 
 `REBLUE_OPENXR=ON` additionally needs `REBLUE_OPENXR_INCLUDE` and `REBLUE_OPENXR_LOADER`. The
@@ -1069,7 +1082,7 @@ Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and 
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
 game composites into a headset at its native frame rate with working controllers. What is left:
 
-1. **Stereo works.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
+1. **Stereo works, on the side-by-side path.** `bd_stereo=true` gives genuine depth: measured disparity far +21px, near +5px,
    **near - far = -16px** - crossed, correctly signed, monotone with depth. Before it was flat to
    2px. Verified from a capture with `bd_capture_after_s`; nobody has to wear the headset to check.
 
@@ -1080,9 +1093,15 @@ game composites into a headset at its native frame rate with working controllers
    was adding `-sep` to *both* eyes on top of the host patch), and the **left eye takes the positive
    constant** - backwards renders the scene pseudoscopic, and that is invisible in a symmetric test.
 
-   It uses the side-by-side path, not multiview: multiview renders both layers correctly and then
-   the **mono post chain** collapses them before present. Multiview is still the better architecture
-   - one draw instead of two - and is worth returning to when the post chain can be made view-aware.
+   **Multiview is still not usable, and is now one step further along.** The post chain was mono
+   because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
+   canvas - so the bloom and downsample targets were single-layer, took single-view pipelines, wrote
+   layer 0 and collapsed the pair on the first post pass. That threshold is gone: every render
+   target is two-layer under `bd_stereo_multiview`, confirmed on desktop as `1920x1080`, `960x540`,
+   `480x270`, `240x135`, `120x67` all at `viewMask=3`, and **layer 1 is now populated where it used
+   to be black**. But the two layers come out *identical* - `SV_ViewID` is still not varying the
+   skew, with a fresh shader cache and validation clean. That is the remaining multiview bug. The
+   side-by-side path is unaffected and is what works.
 
    **Cost is on the GPU and `fence` does not show it.** CPU only moves 19.0 -> 20.2ms, but the frame
    goes 34.6 -> 50.0ms because the compositor drops a pacing tier. `render_scale=20, cull 250,

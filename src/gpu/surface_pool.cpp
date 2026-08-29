@@ -446,14 +446,24 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
                      D3DResourceType::kSurface);
 
   // Multiview wants the scene rendered into a two-layer array, one layer per
-  // eye, so a single draw with viewMask 0b11 fills both. Only surfaces at or
-  // above the design canvas: the bloom chain and the small view textures are
-  // composited once over an already-stereo scene and gain nothing from a second
-  // layer but cost twice the memory.
-  const bool multiview_scene =
-      REXCVAR_GET(bd_stereo_multiview) &&
-      width >= u32(bd::gpu::kDesignCanvasWidth) * 25u / 100u &&
-      height >= u32(bd::gpu::kDesignCanvasHeight) * 25u / 100u;
+  // eye, so a single draw with viewMask 0b11 fills both.
+  //
+  // This used to require the surface to be at or above a quarter of the design
+  // canvas, on the reasoning that the bloom chain and the small view textures
+  // are "composited once over an already-stereo scene and gain nothing from a
+  // second layer". That reasoning is wrong, and it is why multiview rendered
+  // correctly and still reached the compositor as one eye.
+  //
+  // A pass drawn into a single-layer target gets a single-view pipeline, writes
+  // layer 0, and reads whichever layer the sampled SRV points at. So the whole
+  // post chain collapsed the stereo pair back to mono on its first pass, and
+  // the frame handed to the compositor had an empty layer 1 - measured, and
+  // chased for a session and a half. Every render target in the chain has to
+  // carry both eyes, not just the ones large enough to look like "the scene".
+  //
+  // Costs twice the memory on the small targets, which is a rounding error
+  // against the scene colour and depth that were already doubled.
+  const bool multiview_scene = REXCVAR_GET(bd_stereo_multiview);
   const u32 layers = multiview_scene ? 2u : 1u;
 
   plume::RenderTextureDesc desc;
