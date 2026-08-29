@@ -239,6 +239,12 @@ Two more silent no-ops in the same family, worth knowing before trusting a measu
 - **`bd_msaa` only accepts 0/2/4/8.** `--bd_msaa 1` is rejected by the validator and leaves it at 4.
   A run that "proves MSAA does not matter" may be a run with MSAA still on.
 - **Cvars with `kRequiresRestart` need a `force-stop`**, not just a relaunch of the activity.
+- **An APK missing `libopenxr_loader.so` installs cleanly and then cannot start.** It dies in
+  `dlopen` before `main()`, so **no reblue log file is written at all** and the newest log on device
+  is the *previous* run's - which then reports the old build's numbers under the new build's name.
+  The only evidence is one logcat line. `tools/build_apk.sh` now finds the loader itself and refuses
+  to package without it, but if a launch ever produces no new log, check logcat for `dlopen` before
+  anything else.
 
 ## Game data: use `--all`, not the manifest
 
@@ -568,9 +574,16 @@ table first, because it is the part that gets stale.
 
 Three of those rows need saying plainly rather than being read past:
 
-- **`SubmitCharacter()` is never called.** `CharacterAnchor` has no source, so `ThirdPerson` and
-  `FirstPerson` fall back to the game's own camera position. The character-anchored modes do not do
-  what their names say.
+- **`SubmitCharacter()` is never called**, still, but not for the reason this file gave for weeks.
+  `src/xr/xr_player_anchor.cpp` exists, is compiled, and hangs off
+  `bdPlayerFieldMovementUpdate` (0x82207858) - and that function **never fires**, even with the
+  character verifiably walking. `generated/` has one call site for it, in `bdPlayerFieldUpdateMain`.
+  The next seam to try is `bdFieldCameraSetupFollow` (0x821B1A58). Until then `CharacterAnchor`
+  stays invalid and `ThirdPerson` / `FirstPerson` fall back to the game's own camera position, so
+  the character-anchored modes do not do what their names say. See
+  `research/20260829_1420_autoplay-walks-and-the-anchor-hook-is-dead.md` for everything already
+  ruled out - the file being compiled, the hook being registered, `args.txt` being read, and the
+  byte-swap being right - so none of it gets re-checked.
 - **The projection layer has never been observed producing an image.** It is built, committed, and
   replaces the quad in every non-Cinema mode. The one capture taken of it was black; a NaN was found
   and fixed after that, and the headset went offline before a retest.
@@ -610,6 +623,23 @@ Three lessons from getting this far, all of which cost hours and all of which re
 See `research/20260828_1900_vr-camera-and-input.md` for the detail, including the hook seams
 (`bdBuildViewMatrix` at 0x82286C40, `bdBuildProjectionMatrix` at 0x82168E18) and why Quest
 controllers are invisible to SDL.
+
+### Every measurement before 2026-08-29 was taken standing still
+
+`bd_xr_autoplay` pressed START and then A, for ever, and **never touched a stick**. So the fill
+sweeps, the culling sweeps and the 28.9 fps result were all measured with the character stationary -
+not a representative frame, and the reason every hook on the player object silently never fired.
+
+It now walks a slow circle. Two things follow, and both bite:
+
+- **`kWalkStart` is 150s and has to be late.** At 26s the file menu is still up and a stick
+  deflection moves the selection; the run then sits in a menu for ever, measuring 18 draws/frame
+  with the camera pinned at (0, 1000, 500), which reads exactly like a hang. Launch to a field
+  scene is ~130s on a Quest 2.
+- **Walking triggers random encounters**, so a run leaves the field within about a minute and a
+  longer settle makes it *more* likely to have wandered into a battle or a menu. Check the draw
+  count before believing any number: a field scene is ~500-600 draws, a menu is 18. This is the
+  first concrete reason to want tourist mode's encounter suppression as a *measurement tool*.
 
 ### Measurement precision: +/-30% across restarts. Read this before trusting an A/B.
 
