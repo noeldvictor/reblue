@@ -366,3 +366,48 @@ the sibling hook, that is correct stereo geometry rather than the empirical shea
 `bd::xr::LastGuestProjection()` now exposes the captured matrix, and
 `config/hooks/stereo.toml` carries the hook. The remaining work is to apply the per-eye projection
 at the point the constants are uploaded, replacing the skew.
+
+## Correction: VS register 32 *is* the view-projection, on scene draws
+
+The earlier claim in this file - that register 32 holds "an affine matrix with a 0.041 scale" and is
+"certainly not a view-projection" - is **wrong**, and wrong for a reason that has now caused four
+separate mistakes in this port: **the sample was not filtered to scene geometry.**
+
+Dumped from a draw known to be scene geometry (222 vertices, target at the design canvas):
+
+```
+[-1.72855  0.00000  0.11006  -15.49801]
+[ 0.02380  3.05633  0.37383 -485.24396]
+[ 0.06308 -0.12166  0.99062   -7.26695]
+[ 0.06307 -0.12165  0.99057   -6.26658]
+```
+
+Rows 2 and 3 are identical to four decimal places except in the last column, where they differ by
+almost exactly 1.0. That is precisely the relationship between `[2][3] = -1` and `[3][3] = 0` in the
+projection captured from `bdCameraViewSetProjMatrix`. **This is the world-to-clip view-projection**,
+and the earlier identity and 0.041-scale samples were non-scene draws that never write the block.
+
+So the clip-space skew in `DispatchDraw` is operating on the real view-projection after all, and the
+parallax it produces is less accidental than the previous entry concluded.
+
+### The open question, narrowed
+
+Under the assumed layout - `m[row * 4 + col]`, row-vector - `column 0 += c * column 3` is
+algebraically a uniform NDC shift of `c`, because `clip.x' = clip.x + c * clip.w`. It is not: at
+`c = 0.004` the two eyes went to different viewpoints. Meanwhile `column 0 += s * column 2` produces
+correct depth-ordered parallax.
+
+Both cannot be true under one layout, so the row/column mapping is still not established. The
+magnitudes are the clue worth following: column 3 runs to -485 while column 0 is around 0.02, so a
+small coefficient against column 3 swamps column 0 entirely - which is what a *transposed* reading
+would produce.
+
+The decisive test is cheap and has not been run: apply the convergence term under the transposed
+mapping and look at the frame. Two builds, six minutes, on the desktop loop.
+
+### The lesson, now four times over
+
+Filter the sample to the thing being measured. MSAA at the title screen, `bd_debug_max_draws`
+removing fragments along with draws, stereo doubling the post chain, and now a matrix read from
+draws that never write it. Every one of them produced a confident and wrong conclusion from a
+correctly-executed measurement.
