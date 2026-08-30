@@ -59,7 +59,11 @@ struct TargetTally {
   bool has_ds = false;
 };
 std::mutex g_target_mutex;
-TargetTally g_targets[24];
+// 64, not 24. The table fills in creation order and silently drops anything
+// after it is full, and on a Quest field frame it reported 226 draws/frame
+// attributed of 381 counted - so ~40% of draws were landing on surfaces the
+// census could not see at all, which is exactly where a shadow pass would hide.
+TargetTally g_targets[64];
 const void *g_last_target = nullptr;
 std::atomic<u32> g_stat_draws{0};
 std::atomic<u32> g_barrier_call_count{0};
@@ -149,7 +153,7 @@ void UpdateFrameStats() {
         // Sorted by pixel volume, because the question is which surface is
         // eating the fill rate, not which is drawn to most often.
         std::lock_guard<std::mutex> tl(g_target_mutex);
-        TargetTally sorted[24];
+        TargetTally sorted[64];
         std::copy(std::begin(g_targets), std::end(g_targets), std::begin(sorted));
         std::sort(std::begin(sorted), std::end(sorted),
                   [](const TargetTally &a, const TargetTally &b) {

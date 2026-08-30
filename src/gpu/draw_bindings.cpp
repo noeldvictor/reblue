@@ -49,6 +49,8 @@ void Video::SetTexture(u32 index, GuestTexture *texture) {
       BindTextureSRVLocked(s, texture->sourceSurface);
     }
   }
+  if (s.textures[index] != texture)
+    s.texture_bindings_dirty = true;
   s.textures[index] = texture;
 }
 

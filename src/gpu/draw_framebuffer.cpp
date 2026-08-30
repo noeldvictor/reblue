@@ -298,6 +298,18 @@ bool Video::BindDrawFramebufferLocked() {
     MaterializeOutboundLocked(s, t);
   }
 
+  // Runs on every draw, and that is not the waste it looks like.
+  //
+  // It emits a barrier only when a bound texture's source surface is still in
+  // COLOR_WRITE, and on a Quest field frame that happens 48 times against 23
+  // framebuffer binds. Gating it on "the framebuffer or a texture binding
+  // changed" was tried and does nothing: bindings change on essentially every
+  // draw, so the gate never fires. Measured within one run - bar_drawfb stayed
+  // at 48 in both arms and gpu_draw moved -0.5%.
+  //
+  // The 48 are genuine render-target ping-pong: draw into a surface, sample it,
+  // draw into it again. Reducing them means changing that pattern, not gating
+  // the scan.
   TransitionResolveSources(s, rt, ds);
 
   // The bound pair is compared, not just the flag: it resets on RT/DS pointer

@@ -502,6 +502,12 @@ struct VideoState {
   std::unordered_map<u64, GuestTexture *> subchain_resolve;
 
   GuestTexture *textures[16] = {};
+  // Set when a texture binding changes, cleared once the resolve-source
+  // transitions have been applied for the current set. Lets
+  // TransitionResolveSources run when the bindings actually moved rather than
+  // on every draw - it emits a barrier that ends the active render pass, which
+  // on a tiler is a full tile store and reload.
+  bool texture_bindings_dirty = true;
   GuestShader *vertex_shader = nullptr;
   GuestShader *pixel_shader = nullptr;
   GuestVertexDeclaration *vertex_declaration = nullptr;

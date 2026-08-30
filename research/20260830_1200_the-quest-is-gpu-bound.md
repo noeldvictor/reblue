@@ -297,3 +297,49 @@ that single formatting choice hid the answer.
   barrier calls per frame (48 of them from `TransitionResolveSources`, each ending the render pass on
   a tiler) are costing tile store/reload traffic that does not show as fill. **That is the next thing
   to measure, and it is not a fill problem.**
+
+
+## The census was hiding 40% of the frame, and the scene is rendered TWICE
+
+The tally table filled in creation order and silently dropped anything after its 24 rows - it
+reported 226 draws/frame attributed of 381 counted. Widened to 64:
+
+```
+1280x720x2L depth: 61.71 draws/frame over 0.50 binds/frame, 56.9 Mpix
+1280x720x2L depth: 61.24 draws/frame over 0.50 binds/frame, 56.4 Mpix
+1280x720x2L depth: 59.87 draws/frame over 0.50 binds/frame, 55.2 Mpix
+1280x720x2L depth: 59.83 draws/frame over 0.50 binds/frame, 55.1 Mpix
+ 344x193x2L depth: 34.29 draws/frame over 0.50 binds/frame          (x2)
+targets: 40 rows, 343 draws/frame attributed of 443 counted
+```
+
+**Four** full-resolution depth targets at 0.50 binds each is **two logical passes**, each
+double-buffered. So the scene geometry is rendered **twice per frame at 1280x720**, and because
+`surface_pool` gives every target two layers under multiview, that is **four rasterisations of the
+scene per frame** - roughly 110 Mpix of scene fill where one eye-visible pass would be 55.
+
+**This is the shape the owner suspected**: a pass that does not need per-eye rendering is being
+rendered per-eye. A shadow or reflection pass is view-independent or view-derived - it does not want
+`viewMask=3`.
+
+`bd_shadows=false` was set for this run and **does not skip the pass**: `bdShadowResolutionScaleHook`
+(`src/gpu/hooks/tweaks.cpp:121-132`) only forces the map to 64x64, with the comment "Off still
+renders the pass ... the draws are not what costs anything". On a two-layer target that assumption is
+worth re-testing, because the draws are now rasterised twice.
+
+**What is not yet known, and must be before anything is changed:** which of the two 1280x720 passes
+is which. Both carry depth and both take ~60 draws. The candidates are the main scene, a planar
+reflection (`bd_reflections=false` pins it to a 128-wide floor, so probably not this), and whatever
+the two `344x193x2L depth` passes are. Name them - a log line at the render-target bind naming the
+guest function that set it would do - then make the non-eye passes single-layer.
+
+## What did not work: gating the resolve-source barriers
+
+48 of the frame's 83 barrier calls come from `TransitionResolveSources`, each ending the render pass
+- a tile store and reload on a tiler - so gating it to run only when the framebuffer or a texture
+binding changed looked like a clear win. **Measured within one run, it does nothing:** `bar_drawfb`
+stayed at 48 in both arms and `gpu_draw_ms` moved -0.5%.
+
+The gate never fires, because texture bindings change on essentially every draw. Reverted. The 48
+are genuine render-target ping-pong - draw into a surface, sample it, draw into it again - and
+reducing them means changing that pattern, not gating the scan.
