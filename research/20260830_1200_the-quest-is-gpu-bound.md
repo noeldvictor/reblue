@@ -151,3 +151,32 @@ carried the *previous day's* timestamp and the change was completely inert. Only
 `CMakeFiles/reblue_recomp.dir/**/*.o` by hand forced the 111-target rebuild that actually applied it.
 This is the same shape as the XenosRecomp two-step already in CLAUDE.md, in a new place: **after any
 `out/rexglue-src` header change, delete the guest objects or you are measuring the old build.**
+
+
+## Stereo on the headset is NOT verified for the current build
+
+Stated plainly because I reported the opposite earlier from a stale file.
+
+- The composited panel image (3664x1920, what the compositor actually shows) from a fresh run of the
+  current build reads **`far -80, near -80`, spread 0 - FLAT**. A uniform inter-eye offset with no
+  variation by depth.
+- The stale capture from a previous day's build read `far +57, near -80` on the same tool and the
+  same format, so the format is not inherently unmeasurable and the tool can see depth in it.
+- **`bd_mv_capture_array` does not work on device.** Asked for the layered scene target it wrote a
+  single-layer `1376x720` image that is **entirely black** - it picked a post/intermediate surface,
+  not the scene. So the direct "do the two layers differ" test is unavailable on the Quest until that
+  instrument is fixed. That is the third instrument in this family to be wrong on device.
+
+**What is actually established:** multiview stereo has correct crossed depth *on the desktop*
+(`far -4, near -26`, array capture, verified repeatedly today). On the Quest it is unverified, and
+the one fresh measurement available says flat.
+
+**What it is not safe to conclude:** that stereo is broken on device. The panel image is
+post-composition and may be post-distortion, the eye rects inside it are the runtime's and not
+necessarily exact halves, and the one instrument that would settle it is itself broken here.
+
+**Next, and it is a correctness question rather than a performance one:** fix
+`bd_mv_capture_array`'s surface selection on device (it should follow `last_scene_rt` and that
+surface should be the 2-layer one the per-target census shows as `1280x720x2L`), then re-measure.
+Do not tune `bd_stereo_separation` or touch the eye sign until an instrument that works on the
+headset says which way it is wrong.
