@@ -1010,12 +1010,20 @@ the two below wherever they disagree. The headline facts, all measured on a Ques
 - **Why**: `surface_pool.cpp:467` gives **two layers to every render target** under
   `bd_stereo_multiview`, not just the scene, so the whole post chain rasterises twice. The per-target
   census shows three separate `1280x720x2L` targets, ~140 Mpix/frame.
-- **Stereo on the headset is UNVERIFIED for the current build.** Desktop is verified correct
-  (`far -4, near -26`). The one fresh device capture reads flat, and `bd_mv_capture_array` is broken
-  on device (writes a black single-layer surface), so the test that would settle it does not work
-  there yet. **Fix that instrument before tuning separation or the eye sign.**
+- **Stereo IS verified on the Quest 2**: `far -2, near -25`, monotone across all eight bands,
+  crossed and correct, from a `bd_mv_capture_array` grab read with `stereo_check --stacked`. 81.4% of
+  pixels differ between the eyes. **Only a `--stacked` array grab gives a stereo verdict on device** -
+  running `stereo_check --raw` on the composited 3664x1920 panel image is invalid (it is
+  post-distortion with runtime-chosen eye rects) and reported a false "flat" that looked like a
+  regression.
 
-**Two traps that silently produce fake results, both hit on 2026-08-30:**
+**Three traps that silently produce fake results, all hit on 2026-08-30:**
+
+- **`bd_mv_capture_array` used to photograph the wrong surface.** It follows `last_scene_rt`, which
+  was the *last* colour+depth target of the frame - on device a small late depth pass, so the capture
+  came back a single black layer and stereo read as flat. It now takes the *largest* colour+depth
+  target and logs its choice (`[mv] capture_array picking WxH layers=N`). If that line names
+  something small, the capture is not the scene.
 
 - **`tools/verify_quest.sh` used to pull stale artefacts.** A run that crashed 33s in handed back the
   *previous day's* capture and CSV, and they were reported as that day's result. It now clears remote
