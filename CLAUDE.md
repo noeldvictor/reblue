@@ -68,6 +68,42 @@ was measured at 20.6ms against side-by-side's 18.3ms and reported as slower - wh
 counts once per *guest* draw, before the per-eye loop, so that column cannot see the doubling at
 all. The measurement was both prohibited and meaningless.
 
+### The scene render path, mapped
+
+`tools/callgraph.py` builds a call graph over all **18,777** recompiled functions in about seven
+seconds and caches it. Use it before touching a rendering path - "what else calls this" is not
+answerable by eye across 223 files, and the rewrite changes contracts, not just bodies.
+
+```sh
+python tools/callgraph.py callers bdSceneNodeDrawSingle   # who has to change
+python tools/callgraph.py tree    bdSceneNodeCullTraverse --depth 2
+python tools/callgraph.py subtree bdSceneNodeDrawSingle   # blast radius
+python tools/callgraph.py hot                             # most call sites
+```
+
+What it says about the scene, and it is better news than expected:
+
+```
+bdSceneNodeCullTraverse            <- already hooked, for bd_cull_distance
+  bdSceneNodeDrawSingle            <- 2084 calls/frame, 23x the next consumer
+    bdSetSamplerState  x5          <- the guest ALREADY dedups these, see below
+    bdSetRenderState   x2
+    D3DDevice_SetTexture
+    D3DDevice_SetPixelShaderConstantB / SetVertexShaderConstantB
+    bdSceneNodeDrawIndexed -> D3DDevice_DrawIndexedVertices
+```
+
+- **`bdSceneNodeDrawSingle` has only two callers**: `bdSceneNodeCullTraverse` and `sub_82282608`.
+  The rewrite surface is small, which is what makes replacing it realistic.
+- **109 functions are reachable from it**, bottoming out at `D3DDevice_DrawIndexedVertices`.
+- **Do not bother deduplicating render or sampler state.** The guest already does it:
+  `bdSetSamplerState` computes `sampler*20 + state>>2`, loads the cached value from its own table
+  and returns early when unchanged. Those five calls a node are mostly no-ops. Read the recompiled
+  body before assuming a 360-era cost is real.
+
+So the per-node cost is the *work in the function*, not redundant state churn, and the modern
+replacement is to stop calling it per node at all: collect nodes, batch by pipeline, submit once.
+
 ### Rip out the X360 patterns. This is the top priority.
 
 The recompiled code still thinks in 360 terms - big-endian structs, 360 resource layouts, D3D9 call
