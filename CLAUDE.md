@@ -588,6 +588,17 @@ recompiled shader reads guest constants through `vk::RawBufferLoad` at a **64-bi
 one declares `OpCapability Int64`, and the device cannot compile it. **This file already recorded the
 fact from a Quest validation run and filed it as a curiosity; it is the blocker.**
 
+**The rewrite was implemented end to end and reverted; the gate passed and the frame went black.**
+`Int64` and `PhysicalStorageBufferAddresses` both drop to **0 / 141** with a `ByteAddressBuffer` and
+a packed 32-bit push constant, so the blocker is removable and this is the shape that removes it.
+But the constants then read as zero - draws unchanged, `gpu_total_ms` 6.37 -> 0.24, degenerate
+geometry. Seven suspects are eliminated by measurement in
+`research/20260830_0820_arm64-the-thor-renders-nothing.md`, including the layout, the push-constant
+bytes, the SPIR-V decorations and update-after-bind. **The descriptor *write* is what is left.**
+The prerequisite - descriptor bindings reserved ahead of the texture array - **is committed and
+verified**. Note `gpu/imgui_overlay_drawer.cpp` builds its own pipeline layout over the same
+texture set, so binding changes must be made in both.
+
 **`python tools/spv_caps.py <hlsl_dump>` is the gate.** It decodes every `OpCapability` in the
 dumped modules, because a driver that refuses a shader says nothing useful and declaring an
 unsupported capability is not a spec violation for validation to catch. Today it reads

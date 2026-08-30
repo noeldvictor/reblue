@@ -218,3 +218,50 @@ came from; a bound descriptor does. So the change starts there:
 Steps 1-3 touch the hottest path in the renderer and break desktop, Quest and Thor together if they
 are wrong. **Not started here**, deliberately: this session already produced one revert made on a
 false signal, and this is not the change to make tired.
+
+
+## The constant-heap rewrite: implemented end to end, reverted, and what it eliminated
+
+Written in full, measured, and rolled back. **The prerequisite half is committed and works**
+(`gpu: reserve descriptor bindings ahead of the bindless texture array`); the constant path itself
+is not.
+
+**The gate passes.** With guest constants read through a `ByteAddressBuffer` and a packed 32-bit
+push constant instead of a 64-bit device address:
+
+```
+141 SPIR-V modules
+  Int64                            0 / 141      <- was 141 / 141
+  PhysicalStorageBufferAddresses   0 / 141      <- was 141 / 141
+```
+
+So the ARM64 blocker *is* removable, and this is the shape that removes it.
+
+**And the frame goes black.** Draws are unchanged (~519 a frame) while `gpu_total_ms` collapses
+6.37 -> 0.24: the shaders run and emit degenerate geometry, which is what a zeroed view-projection
+looks like. The constants read as zero.
+
+**What was eliminated, all by measurement, none by argument:**
+
+| suspect | how it was ruled out |
+| --- | --- |
+| descriptor set layout wrong | RenderDoc: `binding 0 = STORAGE_BUFFER x8`, `binding 1 = SAMPLED_IMAGE x65536`. Exactly as intended |
+| push constants not reaching the shader | RenderDoc, byte level: `start=0/4/8 length=4`, values `chunk=0 offset=0, 4096, 8192...`. Correct, and the copy block still lands at 12 |
+| DXC put the buffer somewhere else | SPIR-V `OpDecorate`: `g_ConstantChunks set=0 binding=0` |
+| dynamic indexing of the chunk array | forcing a constant `g_ConstantChunks[0]` is equally black |
+| buffer missing `STORAGE` usage | added `RenderBufferFlag::STORAGE`; no change |
+| binding not updatable after bind | plume gives `UPDATE_AFTER_BIND` only to the boundless range, and chunks are created lazily *inside* a bound frame - a real spec problem, fixed, and still black |
+| pipeline creation failing | zero errors in the log, all pipelines create |
+
+**Found on the way and still true:** `gpu/imgui_overlay_drawer.cpp` builds its **own** pipeline
+layout (visible in a capture as a second `SAMPLED_IMAGE`/`SAMPLER` layout pair) while writing into
+the *shared* texture set. Any change to that set's bindings has to be made in both places, and the
+committed checkpoint has not done so - ImGui's own layout still expects textures at binding 0.
+
+**What is left to suspect** is narrow: the descriptor write itself. It is issued from `CreateChunk`,
+which runs on whichever thread first needs a chunk, into a set that the frame has already bound.
+The next attempt should capture with `vkUpdateDescriptorSets` in frame (create a chunk deliberately
+mid-capture), or bind the chunk buffers eagerly at device init before any frame begins, which side-
+steps the whole question.
+
+**Do not re-derive the eliminations above.** They cost a full session and they are all recorded.
