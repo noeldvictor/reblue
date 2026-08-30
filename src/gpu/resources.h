@@ -83,6 +83,9 @@ struct GuestTexture {
   std::unique_ptr<plume::RenderTextureView> layerView[2];
   // Bindless slots for the two single-slice views the resolve pass samples.
   u32 layerDescriptorIndex[2] = {~u32{0}, ~u32{0}};
+  // Which physical texture layerView was built against, so a pooled surface
+  // that gets re-pointed rebuilds them instead of sampling a dead image.
+  plume::RenderTexture *layerViewOf = nullptr;
   // Set when a draw lands on this surface, cleared by the resolve. Stops a
   // resolve firing on a target nothing has touched this frame.
   bool multiviewDirty = false;

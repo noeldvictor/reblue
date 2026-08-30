@@ -543,6 +543,12 @@ bool BuildFramebuffers(VideoState &s);
 bool BuildPresentSemaphores(VideoState &s);
 u32 AllocateSlot(VideoState &s);
 u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex);
+// Points an allocated bindless slot at an arbitrary view, with the renderer
+// lock already held. The multiview resolve needs this: it rebuilds its per-eye
+// views inside a locked section.
+void SetBindlessTextureLocked(VideoState &s, u32 slot,
+                              plume::RenderTexture *texture,
+                              plume::RenderTextureView *view);
 
 // Flattens a two-layer multiview target into its side-by-side companion. Call
 // with the renderer lock held, on the command list the guest is recording into.

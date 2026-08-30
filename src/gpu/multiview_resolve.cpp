@@ -104,9 +104,33 @@ void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
   plume::RenderPipeline *pipeline = ResolvePipelineFor(s, tex->format);
   if (!pipeline)
     return;
-  if (tex->layerDescriptorIndex[0] == kInvalidDescriptorIndex ||
-      tex->layerDescriptorIndex[1] == kInvalidDescriptorIndex)
-    return;
+  // Register the per-eye views here rather than at surface creation.
+  //
+  // surface_pool is a *pool*: a GuestTexture can be handed a different physical
+  // texture later, which leaves a view registered at creation pointing at an
+  // image the surface no longer owns - and a stale view samples black, which is
+  // exactly the symptom. Binding them against the texture that is live right
+  // now removes that whole class of bug.
+  for (u32 layer = 0; layer < 2; ++layer) {
+    if (tex->layerView[layer] && tex->layerViewOf == tex->texture)
+      continue;
+    plume::RenderTextureViewDesc eye;
+    eye.format = tex->format;
+    eye.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+    eye.mipLevels = 1;
+    eye.arraySize = 1;
+    eye.arrayIndex = layer;
+    tex->layerView[layer] = tex->texture->createTextureView(eye);
+    if (!tex->layerView[layer])
+      return;
+    if (tex->layerDescriptorIndex[layer] == kInvalidDescriptorIndex)
+      tex->layerDescriptorIndex[layer] = Video::AllocateBindlessTextureSlot();
+    if (tex->layerDescriptorIndex[layer] == kInvalidDescriptorIndex)
+      return;
+    SetBindlessTextureLocked(s, tex->layerDescriptorIndex[layer],
+                                    tex->texture, tex->layerView[layer].get());
+  }
+  tex->layerViewOf = tex->texture;
 
   // The array image has been rendered into and is about to be sampled; the
   // companion is about to be drawn into. Both have to move before either is

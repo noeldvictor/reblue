@@ -144,11 +144,27 @@ Everything except the trigger now exists and is verified:
 **So the guest never tells the host it is about to sample a render target.** That is the real
 blocker, and it is why the array reads black downstream even though the scene renders into it.
 
-Scanning `s.textures[]` and **following `sourceSurface`** - the hop `UploadSharedConstants` makes
-when it publishes descriptor indices - does finally make the resolve fire. It still resolves the
-wrong surfaces: the log shows `960x540` and `120x67`, the post chain, never the `1920x1080` scene
-target, which is either never bound as a texture through that array or is still the render target
-when it would be. Recorded rather than guessed at.
+**Correction: binds are not opaque.** `Video::SetTexture` replaces the guest's recompiled body and
+records `s.textures[index]`, and `UploadSharedConstants` hops through `sourceSurface` to reach the
+render surface behind a bound texture. Scanning that array and following the same hop makes the
+resolve fire. The "fetch constants are invisible" reading above was wrong.
+
+**What is still wrong is narrower, and four causes are eliminated.** The resolve pass runs - proven
+by `bd_mv_debug_clear`, which paints the companion magenta - and the copy draw runs, because it
+overwrites that magenta. It overwrites it with **black**: the draw samples nothing. Ruled out:
+
+- the render-target format mismatch (fixed: a resolve pipeline is now cached per format)
+- the trigger firing mid-scene (fixed: it fires when the surface is sampled)
+- the per-eye slots being unregistered (they are registered, and `bd_mv_debug_known_srv` exists to
+  sample the surface's own descriptor instead)
+- the views going stale against a pooled texture (they are now rebuilt lazily against the live
+  image, guarded by `layerViewOf`)
+
+So the fault is in what the per-eye view sees, or in the copy shader's sampler state, and the next
+step is a validation-layer run against the desktop build rather than another hypothesis.
+
+`bd_stereo_multiview` is **off by default**; `bd_stereo` is unregressed at `far +4, near -5,
+near - far = -9px`, checked again after all of the above.
 
 The next move is one of: hook the guest function that ends the scene pass and resolve there; make
 the fetch-constant path record which surfaces it binds so a sample point exists at all; or go to the

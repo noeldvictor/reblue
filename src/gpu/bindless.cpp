@@ -123,6 +123,15 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
 // the multiview resolve needs two more - one per array slice - registered
 // against the same image. Splitting that out is cheaper than teaching the
 // primary path about layers it otherwise never sees.
+void SetBindlessTextureLocked(VideoState &s, u32 slot,
+                              plume::RenderTexture *texture,
+                              plume::RenderTextureView *view) {
+  if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
+    return;
+  s.texture_descriptor_set->setTexture(
+      slot, texture, plume::RenderTextureLayout::SHADER_READ, view);
+}
+
 void Video::SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
                                plume::RenderTextureView *view) {
   auto &s = state();
