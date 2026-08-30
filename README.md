@@ -113,6 +113,13 @@ number. Three things carry that load now, and all three run with nobody in the h
 - `tools/stereo_check.py` turns "does stereo have depth" into one command, and is checked against the
   three real captures that produced its three verdicts. `--raw` reads a capture already on disk, so
   it runs on a desktop build with no headset attached.
+- **`bd_ab_flag` runs an A/B inside one run.** It flips a boolean cvar every `bd_ab_period` frames
+  and labels each frame with its arm, so `tools/perf_summary.py` compares two populations from the
+  same run, scene and thermal state. This workload drifts far more than comparing whole runs can
+  survive - the same binary in the same configuration has measured 68% apart minutes later - and two
+  changes written up from paired runs were corrected by it the same day: one from "a third of the
+  frame" to **+2.9% slower**, the other from -18% to **-5.6%**. A sound mechanism does not make a
+  number right.
 - `bd_sample_profiler` plus `tools/symbolize_profile.py` - **a sampling profiler that works on a
   Quest**, which `simpleperf` does not: Horizon OS refuses shell perf on this device whatever
   `perf_event_paranoid` says, so `tools/profile_quest.py` had never produced a profile. A process
