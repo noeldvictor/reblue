@@ -140,10 +140,16 @@ bool BuildPipelineLayout(VideoState &s) {
   // constant chunks take bindings 0 and the textures move to 1. Every texture
   // descriptor index shifts by kConstantChunkDescriptors as a result, which is
   // what TextureDescriptor() applies.
-  if (kConstantChunkDescriptors > 0)
-    tex_set_builder.addByteAddressBuffer(0, kConstantChunkDescriptors);
-  tex_set_builder.addTexture(kConstantChunkDescriptors > 0 ? 1 : 0,
-                             kBindlessTextureCount);
+  // Vertex, pixel and shared guest constants, as dynamic uniform buffers: one
+  // buffer bound for the life of the device, re-based per draw with an offset.
+  // A uniform read goes through Adreno's constant path; the device address this
+  // replaces was an uncached global load per invocation.
+  if (kConstantChunkDescriptors > 0) {
+    tex_set_builder.addConstantBufferDynamic(0);
+    tex_set_builder.addConstantBufferDynamic(1);
+    tex_set_builder.addConstantBufferDynamic(2);
+  }
+  tex_set_builder.addTexture(kConstantChunkDescriptors, kBindlessTextureCount);
   BD_INFO("[device] tex_set_builder.end");
   tex_set_builder.end(true, kBindlessTextureCount);
 

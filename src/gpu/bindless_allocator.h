@@ -56,7 +56,7 @@ constexpr u32 kBindlessSamplerCount = 1024;
 #if defined(REBLUE_D3D12)
 constexpr u32 kConstantChunkDescriptors = 0;
 #else
-constexpr u32 kConstantChunkDescriptors = 8;
+constexpr u32 kConstantChunkDescriptors = 3;
 #endif
 
 // Where texture slot `slot` actually lives in the physical descriptor set.

@@ -6,7 +6,7 @@
 
 #ifdef __spirv__
 
-#define g_vParam BD_CLOAD_F4(g_PushConstants.PixelShaderChunk, g_PushConstants.PixelShaderOffset, 432)
+#define g_vParam g_PSC[27]
 
 #else
 

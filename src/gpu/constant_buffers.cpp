@@ -50,32 +50,35 @@ namespace {
 
 constexpr u32 kCBVAlignment = 256;
 
-constexpr u32 kUploadChunkSize = 16 * 1024 * 1024;
+// Per frame slot. A draw costs at most 4096 (vertex) + 3584 (pixel) + 512
+// (shared, padded) bytes, so 32 MiB carries about 4000 draws - well past the
+// ~2100 a desktop field frame records.
+constexpr u32 kSlotSpan = 32 * 1024 * 1024;
+constexpr u32 kUploadChunkSize = kSlotSpan * kNumFrames;
 
 // 256 vector4f registers = 4 KiB. Shaders reference the full window, so the
 // upload spans the whole range every flush.
 constexpr u32 kConstantRegisterCount = 256;
 constexpr u32 kConstantBlockBytes = kConstantRegisterCount * 16;
+// The pixel stage's register file is smaller, and a dynamic uniform buffer is
+// validated on offset + range, so the descriptor must not claim more.
+constexpr u32 kPixelConstantRegisterCount = 224;
+constexpr u32 kPixelConstantBlockBytes = kPixelConstantRegisterCount * 16;
 
 struct UploadChunk {
   std::unique_ptr<plume::RenderBuffer> buffer;
   u8 *mapped = nullptr;
   u64 gpuBase = 0;
-  // Slot in the bindless set's leading ByteAddressBuffer range, which is what
-  // the shader indexes as g_ConstantChunks[]. Assigned once at creation; a
-  // chunk is never destroyed before device teardown, so it stays valid.
-  u32 descriptorIndex = 0;
-  bool descriptorBound = false;
 };
 
 // One upload chunk list per in-flight frame slot, rewound only after that
 // slot's GPU fence is awaited, so the GPU never reads bytes the CPU has
 // overwritten.
 struct FrameUpload {
-  std::vector<UploadChunk> chunks;
-  u32 chunkIndex = 0;
+  // Offset within this slot's span of the shared buffer.
   u32 chunkOffset = 0;
-  u32 peakChunkCount = 0;
+  u32 peakOffset = 0;
+  bool overflowed = false;
 };
 
 // DecodeFromFetch + ResolveSlotLocked (mutex + hash lookup) run per bound slot
@@ -93,9 +96,8 @@ struct SamplerSlotCache {
 struct UploadState {
   FrameUpload frames[kNumFrames];
   u32 cursor = 0;
-  // Hands out slots in the g_ConstantChunks range. Chunks belong to a frame
-  // slot but the descriptor range is global, so the counter is too.
-  u32 nextChunkDescriptor = 0;
+  // Backs every frame slot. Created once, bound once.
+  UploadChunk buffer;
   SharedConstants shared{};
   SharedConstants lastUploaded{};
   SamplerSlotCache samplerSlots[16];
@@ -174,23 +176,23 @@ bool CreateChunk(UploadChunk &chunk) {
   chunk.gpuBase = chunk.buffer->getDeviceAddress();
 
 #if !defined(REBLUE_D3D12)
-  // Publish it into the bindless range the shader reads. D3D12 keeps its root
-  // descriptor and reserves none of these, so this is Vulkan-only.
-  auto &st = upload_state();
-  if (st.nextChunkDescriptor >= bd::gpu::kConstantChunkDescriptors) {
-    BD_ERROR("constant_buffers: out of chunk descriptors ({} reserved). Raise "
-             "kConstantChunkDescriptors - every texture index shifts with it.",
-             bd::gpu::kConstantChunkDescriptors);
+  // Bind it into the three dynamic uniform buffer descriptors the shader reads.
+  // Once, for the life of the device: every draw re-bases it with a dynamic
+  // offset instead, so no descriptor is ever rewritten while a submitted frame
+  // might still be reading it.
+  //
+  // The range is the block the shader declares, not the buffer - a dynamic
+  // uniform buffer is validated as offset + range against the buffer size, and
+  // Adreno's maxUniformBufferRange is far below 32 MiB.
+  if (auto *set = bd::gpu::Video::TextureDescriptorSet()) {
+    set->setBuffer(0, chunk.buffer.get(), kConstantBlockBytes);
+    set->setBuffer(1, chunk.buffer.get(), kPixelConstantBlockBytes);
+    set->setBuffer(2, chunk.buffer.get(), sizeof(SharedConstants));
+  } else {
+    BD_ERROR("constant_buffers: no texture descriptor set to bind the guest "
+             "constant buffer into; shaders will read nothing");
     chunk.buffer.reset();
     return false;
-  }
-  chunk.descriptorIndex = st.nextChunkDescriptor++;
-  if (auto *set = bd::gpu::Video::TextureDescriptorSet()) {
-    set->setBuffer(chunk.descriptorIndex, chunk.buffer.get(), kUploadChunkSize);
-    chunk.descriptorBound = true;
-  } else {
-    BD_ERROR("constant_buffers: no texture descriptor set to publish the "
-             "constant chunk into; shaders will read stale constants");
   }
 #endif
   return true;
@@ -204,33 +206,34 @@ ConstantAllocation Allocate(UploadState &s, u32 size, u32 alignment) {
              size, kUploadChunkSize);
     return {};
   }
+  if (!s.buffer.buffer && !CreateChunk(s.buffer))
+    return {};
+
   FrameUpload &up = s.frames[s.cursor];
   u32 off = (up.chunkOffset + alignment - 1) & ~(alignment - 1);
-  if (off + size > kUploadChunkSize) {
-    ++up.chunkIndex;
+  if (off + size > kSlotSpan) {
+    // Wrapping corrupts constants the GPU may still be reading, but the
+    // alternative is dropping the draw entirely. Say so once - a silent wrap
+    // reads as a rendering bug with no cause.
+    if (!up.overflowed) {
+      up.overflowed = true;
+      BD_ERROR("constant_buffers: slot {} exhausted its {} MiB span at {} bytes "
+               "- constants will wrap and some draws will read the wrong ones. "
+               "Raise kSlotSpan.",
+               s.cursor, kSlotSpan / (1024 * 1024), off + size);
+    }
     off = 0;
   }
-  if (up.chunks.size() <= up.chunkIndex) {
-    up.chunks.resize(up.chunkIndex + 1);
-  }
-  auto &chunk = up.chunks[up.chunkIndex];
-  if (!chunk.buffer) {
-    if (!CreateChunk(chunk))
-      return {};
-    const u32 total = up.chunkIndex + 1;
-    if (total > up.peakChunkCount) {
-      up.peakChunkCount = total;
-      BD_DEBUG("constant_buffers: slot {} grew to {} chunk(s) ({} MiB total)",
-               s.cursor, total, total * (kUploadChunkSize / (1024 * 1024)));
-    }
-  }
+  const u32 base = s.cursor * kSlotSpan + off;
   up.chunkOffset = off + size;
+  if (up.chunkOffset > up.peakOffset)
+    up.peakOffset = up.chunkOffset;
+
   ConstantAllocation a;
-  a.memory = chunk.mapped + off;
-  a.ref = plume::RenderBufferReference(chunk.buffer.get(), off);
-  a.gpuAddress = chunk.gpuBase + off;
-  a.binding[0] = chunk.descriptorIndex;
-  a.binding[1] = off;
+  a.memory = s.buffer.mapped + base;
+  a.ref = plume::RenderBufferReference(s.buffer.buffer.get(), base);
+  a.gpuAddress = s.buffer.gpuBase + base;
+  a.dynamicOffset = base;
   a.size = size;
   return a;
 }
@@ -359,9 +362,9 @@ bool TryInit() {
     return true;
   s.cursor = 0;
   for (auto &up : s.frames) {
-    up.chunkIndex = 0;
     up.chunkOffset = 0;
-    up.peakChunkCount = 0;
+    up.peakOffset = 0;
+    up.overflowed = false;
   }
   for (auto &slot : s.samplerSlots)
     slot.valid = false;
@@ -377,7 +380,6 @@ void ResetFrame(u32 slot) {
     return;
   s.cursor = slot;
   FrameUpload &up = s.frames[slot];
-  up.chunkIndex = 0;
   up.chunkOffset = 0;
   RecomputeShadowPcfScale(s);
 }

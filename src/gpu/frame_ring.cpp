@@ -66,9 +66,14 @@ void BeginCommandList(VideoState &s) {
   }
   // Every host pipeline shares s.pipeline_layout, so switches keep these.
   s.command_list->setGraphicsPipelineLayout(s.pipeline_layout.get());
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 0);
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 1);
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 2);
+  // Spaces 0/1/2 are the same physical set, so all three carry the layout's
+  // three dynamic constant ranges and every bind must supply offsets. Only
+  // space 0's are ever read - the shader declares its cbuffers there - so 1 and
+  // 2 take zeroes and are never rebound; space 0 is re-based per draw.
+  const u32 zero_offsets[3] = {0, 0, 0};
+  s.command_list->setGraphicsDescriptorSetDynamic(s.texture_descriptor_set.get(), 0, zero_offsets, 3);
+  s.command_list->setGraphicsDescriptorSetDynamic(s.texture_descriptor_set.get(), 1, zero_offsets, 3);
+  s.command_list->setGraphicsDescriptorSetDynamic(s.texture_descriptor_set.get(), 2, zero_offsets, 3);
   s.command_list->setGraphicsDescriptorSet(s.sampler_descriptor_set.get(), 3);
   FrameBegin(s.device.get(), s.command_list, cur);
   s.command_list_open = true;

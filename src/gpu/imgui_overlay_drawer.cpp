@@ -168,9 +168,15 @@ bool ImGuiOverlayDrawer::TryInitDeviceResources() {
   // Own layout (reblue's shared layout lacks the VERTEX ortho push constant
   // b0,space2). Never .create() the set builders: that exhausts plume's single
   // global heap.
+  // Must mirror the shared texture set's layout exactly: this binds
+  // state().texture_descriptor_set, and a set may only be bound against a
+  // layout it is compatible with. That set now leads with the three dynamic
+  // guest-constant ranges, so the texture array sits at kConstantChunkDescriptors.
   plume::RenderDescriptorSetBuilder tex_b;
   tex_b.begin();
-  tex_b.addTexture(0, kSharedTextureSlots);
+  for (u32 i = 0; i < bd::gpu::kConstantChunkDescriptors; ++i)
+    tex_b.addConstantBufferDynamic(i);
+  tex_b.addTexture(bd::gpu::kConstantChunkDescriptors, kSharedTextureSlots);
   tex_b.end(true, kSharedTextureSlots);
 
   plume::RenderDescriptorSetBuilder samp_b;
@@ -306,8 +312,12 @@ void ImGuiOverlayDrawer::Begin(rex::ui::UIDrawContext &ctx, float coord_w,
   // layout active and sets bind against whatever layout is current.
   cmd_->setGraphicsPipelineLayout(layout_.get());
   cmd_->setPipeline(pipeline_.get());
-  cmd_->setGraphicsDescriptorSet(bd::gpu::state().texture_descriptor_set.get(),
-                                 0);
+  // The overlay never reads guest constants, but the layout declares them, so
+  // the bind still has to supply an offset for each.
+  const u32 zero_offsets[3] = {0, 0, 0};
+  cmd_->setGraphicsDescriptorSetDynamic(
+      bd::gpu::state().texture_descriptor_set.get(), 0, zero_offsets,
+      bd::gpu::kConstantChunkDescriptors);
   cmd_->setGraphicsDescriptorSet(bd::gpu::state().sampler_descriptor_set.get(),
                                  1);
 

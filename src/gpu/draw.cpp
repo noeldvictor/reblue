@@ -153,6 +153,22 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 }
 } // namespace
 
+// Re-base the three guest constant blocks for the next draw.
+//
+// The blocks live at moving offsets inside one buffer that is bound for the
+// life of the device, so a draw changes an offset, never a descriptor. That is
+// what a D3D12 root descriptor does, and it is why the shader can read them as
+// uniform buffers instead of dereferencing a 64-bit device address per
+// invocation.
+static void BindGuestConstants(VideoState &s) {
+#if !defined(REBLUE_D3D12)
+  if (s.texture_descriptor_set && s.command_list) {
+    s.command_list->setGraphicsDescriptorSetDynamic(
+        s.texture_descriptor_set.get(), 0, s.constant_dyn_offsets, 3);
+  }
+#endif
+}
+
 // Re-uploads the vertex constants with an eye skew and rebinds them, for the
 // second and subsequent views of one recorded draw. FlushRenderState has
 // already uploaded and bound the unskewed block by this point, so the caller
@@ -169,9 +185,8 @@ void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
 #if defined(REBLUE_D3D12)
   s.command_list->setGraphicsRootDescriptor(alloc.ref, 0);
 #else
-  s.command_list->setGraphicsPushConstants(kGuestPushConstantRangeIndex,
-                                           alloc.binding, 0,
-                                           sizeof(alloc.binding));
+  s.constant_dyn_offsets[0] = alloc.dynamicOffset;
+  BindGuestConstants(s);
 #endif
 }
 
@@ -310,9 +325,7 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(vs_alloc.ref, 0);
 #else
-        s.command_list->setGraphicsPushConstants(
-            kGuestPushConstantRangeIndex, vs_alloc.binding, 0,
-            sizeof(vs_alloc.binding));
+        s.constant_dyn_offsets[0] = vs_alloc.dynamicOffset;
 #endif
       }
     }
@@ -323,9 +336,7 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(ps_alloc.ref, 1);
 #else
-        s.command_list->setGraphicsPushConstants(
-            kGuestPushConstantRangeIndex, ps_alloc.binding,
-            sizeof(ps_alloc.binding), sizeof(ps_alloc.binding));
+        s.constant_dyn_offsets[1] = ps_alloc.dynamicOffset;
 #endif
       }
     }
@@ -339,11 +350,13 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
 #if defined(REBLUE_D3D12)
       s.command_list->setGraphicsRootDescriptor(sc_alloc.ref, 2);
 #else
-      s.command_list->setGraphicsPushConstants(
-          kGuestPushConstantRangeIndex, sc_alloc.binding,
-          2 * sizeof(sc_alloc.binding), sizeof(sc_alloc.binding));
+      s.constant_dyn_offsets[2] = sc_alloc.dynamicOffset;
 #endif
     }
+    // One bind carries all three blocks, after every upload that could have
+    // moved one. The VS and PS uploads are dirty-gated, so their offsets often
+    // carry over unchanged from the previous draw.
+    BindGuestConstants(s);
   }
 
   // Lens flare occlusion count: the counter UAV (root descriptor 3 on D3D12,

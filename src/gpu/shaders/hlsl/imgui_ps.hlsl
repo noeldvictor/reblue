@@ -1,6 +1,9 @@
 // ImGui overlay pixel shader (bindless). reblue_compile_shader passes -all-resources-bound
 // + HV 2021 so the unbounded arrays compile under SM6.0.
-Texture2D    gTextures[] : register(t0, space0);
+// Binding 3, behind the three dynamic guest-constant ranges the shared
+// texture set leads with. Without the explicit binding DXC would place this at
+// 0 and sample a uniform buffer.
+[[vk::binding(3, 0)]] Texture2D    gTextures[] : register(t0, space0);
 SamplerState gSamplers[] : register(s0, space1);
 
 // See the vertex shader's Ortho cbuffer for why this needs vk::push_constant (and

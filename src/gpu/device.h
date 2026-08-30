@@ -405,6 +405,10 @@ struct VideoState {
   // Slots 0..2 are valid null Texture2D/3D/Cube descriptors, and real
   // allocation starts after kNullTextureDescriptorCount.
   std::unique_ptr<plume::RenderDescriptorSet> texture_descriptor_set;
+  // Base offsets for the vertex, pixel and shared guest constant blocks inside
+  // the single constant buffer, supplied as dynamic uniform buffer offsets when
+  // set 0 is bound. Replaces three push-constant writes per draw.
+  u32 constant_dyn_offsets[3]{};
   std::vector<bool> descriptor_slot_used;
   std::unique_ptr<plume::RenderTexture>
       null_textures[kNullTextureDescriptorCount];
