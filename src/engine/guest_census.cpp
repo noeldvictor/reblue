@@ -150,6 +150,7 @@ void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }
 
 REXCVAR_DECLARE(f64, bd_cull_bias);
 REXCVAR_DECLARE(f64, bd_cull_distance);
+REXCVAR_DECLARE(bool, bd_cull_early);
 REXCVAR_DECLARE(f64, bd_cull_min_pixels);
 
 
@@ -167,7 +168,22 @@ thread_local bool g_cull_this_node = false;
 // did not move - and the census says node submission dominates it, so cutting
 // nodes is the lever. This is the cheapest form of that: one register, before a
 // call the guest already makes.
-void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
+// Returns true when the node is culled, and the hook table redirects to the
+// guest's own "not visible" continuation on true.
+//
+// It used to return void and merely record the decision for the hook after the
+// call to apply, deliberately, so that no control flow was redirected. That is
+// safe and it is also why the decision cost nothing to make and everything to
+// act on: the visibility test between the two hooks is sub_82287788, measured
+// at 7.5% of all CPU samples and the hottest function in the process, and the
+// distance cull rejects about 95% of nodes. We were computing full visibility
+// for 95% of the scene and then throwing it away.
+//
+// Jumping is safe here because the target is not a new path: the guest already
+// branches to loc_822825E0 from two earlier tests in the same traversal, before
+// it ever reaches the call, and nothing after that label reads the call's
+// result.
+bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   const f64 bias = REXCVAR_GET(bd_cull_bias);
   if (bias != 1.0)
     f1.f64 *= bias;
@@ -184,10 +200,10 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   g_cull_this_node = false;
   const f64 limit = REXCVAR_GET(bd_cull_distance);
   if (limit <= 0.0)
-    return;
+    return false;
   const u32 va = r3.u32;
   if (va == 0)
-    return;
+    return false;
   float c[3];
   for (int i = 0; i < 3; ++i) {
     const u32 bits = bd::mem::try_load<u32>(va + u32(i) * 4);
@@ -199,8 +215,14 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // object - a cliff, a building - does not pop out while the pebble beside it
   // stays.
   g_cull_this_node = (len - f1.f64) > limit;
-  if (g_cull_this_node)
-    return;
+  if (g_cull_this_node) {
+    g_culled_count.fetch_add(1, std::memory_order_relaxed);
+    g_tested_count.fetch_add(1, std::memory_order_relaxed);
+    // Off, the decision is still made and still applied - just after the
+    // visibility test rather than instead of it, which is what this used to do.
+    // Kept as a runtime switch so the two can be compared without a rebuild.
+    return REXCVAR_GET(bd_cull_early);
+  }
 
   // Detail culling: drop what is too small on screen to be worth a draw.
   //
@@ -216,12 +238,12 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // so there is no matrix and no space conversion to get wrong.
   const f64 min_px = REXCVAR_GET(bd_cull_min_pixels);
   if (min_px <= 0.0)
-    return;
+    return false;
   // +Z forward, D3D9-era left-handed. Anything at or behind the eye is either
   // already gone or degenerate here, and dividing by it would invert the test.
   const f64 z = f64(c[2]);
   if (z <= 1.0)
-    return;
+    return false;
 
   f32 half_v = 0.0f, aspect = 1.0f;
   const f64 tan_v = bd::xr::RenderFov(half_v, aspect) && half_v > 0.0f
@@ -233,13 +255,19 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   if (radius_px < min_px) {
     g_cull_this_node = true;
     g_detail_culled.fetch_add(1, std::memory_order_relaxed);
+    g_culled_count.fetch_add(1, std::memory_order_relaxed);
+    g_tested_count.fetch_add(1, std::memory_order_relaxed);
+    return REXCVAR_GET(bd_cull_early);
   }
+  return false;
 }
 
 // Zeroes the visibility result the guest is about to compare against 0, which
 // sends it down its own "not visible" path and skips the draw. Nothing is
 // redirected and no return address is needed.
 void bdSceneCullDistanceHook(PPCRegister &r3) {
+  // Only survivors reach here now - a culled node jumped past the call from the
+  // hook before it - so this is belt and braces plus the survivor count.
   if (g_cull_this_node) {
     r3.u64 = 0;
     g_culled_count.fetch_add(1, std::memory_order_relaxed);

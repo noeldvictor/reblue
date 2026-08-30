@@ -433,6 +433,13 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // Four clock reads and three atomics per draw. Measured at 3.4% of all CPU
 // samples at ~1200 draws a frame, which is why it is off by default; the
 // mutex/bindFB/flushState split in the [perf] line needs it.
+// Culled nodes jump straight to the guest's own "not visible" continuation,
+// skipping sub_82287788 - the per-node visibility test, 7.1% of all samples and
+// the hottest function in the process. The distance cull rejects ~95% of nodes,
+// so nearly all of that work was computed and discarded. Off reverts to
+// applying the same decision after the test instead of instead of it.
+REXCVAR_DEFINE_BOOL(bd_cull_early, true, kCvarGroup,
+                    "Skip the visibility test for distance-culled nodes.");
 REXCVAR_DEFINE_BOOL(bd_draw_phase_timing, false, kCvarGroup,
                     "Per-draw phase timing for the [perf] breakdown.");
 REXCVAR_DEFINE_BOOL(bd_sleep_spin, false, kCvarGroup,

@@ -91,6 +91,43 @@ shape.
 Naming `sub_82287788`, `sub_8272BE80` and `sub_82281D28` in `config/functions.toml` should come
 first, so the profile stops printing addresses.
 
+## Acted on: the visibility test was being computed and thrown away
+
+`sub_82287788` is the per-node **visibility test**, and the call site says so:
+
+```
+bdSceneCullBiasHook(f1, r3)    <- ours, before the call
+sub_82287788(ctx, base)        <- 7.4% of all samples
+bdSceneCullDistanceHook(r3)    <- ours, after; forces r3 = 0 to cull
+cmpwi r3,0 / beq loc_822825E0  <- 0 means skip this node
+```
+
+It takes a node pointer and a scaled radius, opens by returning 1 if a global
+"culling off" flag is set, and returns visible/not. Our distance cull ran *after*
+it and zeroed the result - deliberately, so that no control flow was redirected.
+Safe, and it meant the decision cost nothing to make and everything to act on:
+the distance cull rejects about **95% of nodes**, so we computed full visibility
+for 95% of the scene and discarded it.
+
+The hook now returns `bool` and the table carries
+`jump_address_on_true = 0x822825E0`. That is not a new path - the guest already
+branches there from two earlier early-outs in the same traversal, and nothing
+after the label reads the call's result.
+
+**Measured, same binary, cvar toggle, back to back:**
+
+| `bd_cull_early` | `other_ms` | draws | ms/1000 draws | `sub_82287788` |
+| --- | --- | --- | --- | --- |
+| false | 5.12 | 513 | 9.98 | 7.4% |
+| true | **4.20** | 505 | **8.32** | **absent from the top 30** |
+
+**-18% CPU.** Draw counts agree within 1.6%, which is the correctness signal:
+the same nodes are culled, the decision is just made before the expensive test
+instead of after it. A captured frame was looked at - a field scene with the
+character, foliage, cliffs and shadows all present and nothing popping.
+
+`bd_cull_early` reverts to the old ordering without a rebuild.
+
 ## Closed on the way
 
 **Memoising `FindPhysicalBufferByStruct` does not help.** It is 3.2-3.4% of samples, a mutex

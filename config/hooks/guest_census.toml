@@ -132,6 +132,12 @@ address = 0x82282598
 name = "bdSceneCullBiasHook"
 registers = ["f1", "r3"]
 after_instruction = false
+# On true, jump straight to the guest's own "not visible" continuation, skipping
+# sub_82287788 - the per-node visibility test, and the hottest function in the
+# process at 7.5% of samples. The distance cull rejects ~95% of nodes, so almost
+# all of that work was being computed and discarded. loc_822825E0 is where the
+# guest already goes from two earlier early-outs in the same traversal.
+jump_address_on_true = 0x822825E0
 
 # Distance culling (bd_cull_distance). The pair above computes the decision from
 # the node centre, which r3 points at and which is in view space with the camera
