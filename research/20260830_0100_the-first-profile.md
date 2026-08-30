@@ -149,6 +149,30 @@ EDRAM into textures, which a modern GPU has no reason to do at all. That is squa
 X360 pattern" target and it is now measurable, which it was not this morning: the column that would
 have shown it was stale.
 
+### And within the resolve, the cost is seeding
+
+Per field frame:
+
+```
+rs_eager        3.0     copies actually issued
+rs_lazy        18.0     deferred
+rs_deadelide   17.0     eliminated as dead        <- this already works
+rs_materialize  1.0
+rs_seed        14.0     fresh targets seeded      <- what is left
+bar_resolve    36.0
+```
+
+**Dead-resolve elimination is already doing its job** - 17 of 21 resolves never execute. The
+remaining GPU cost in this category is not the resolves at all, it is `rs_seed`: **14 full-surface
+copies a frame** from `SeedFreshColorTarget`, which copies prior content into a freshly acquired
+surface so that a pass reading untouched pixels sees what a Xenon's EDRAM tile would have held.
+
+That is the X360 artifact in its purest form - a copy that exists only to reproduce the persistence
+of a tile buffer that is not there - and it is the thing to attack in this category, not the resolve
+machinery around it. The question to answer first is how many of those 14 are seeding a surface the
+pass then completely overwrites, which is a copy for nothing. `bd_ab_flag` can settle whether
+removing them helps, now that a within-run A/B exists to measure it with.
+
 It also reframes the GPU's share. 5.83ms of a 16.67ms frame is a third, against a CPU side of
 5.42ms. The GPU is still not *the* bottleneck on a desktop, but it is no longer a rounding error,
 and on a Quest 2 - where the GPU is several times weaker and the CPU only somewhat - that 19% is
