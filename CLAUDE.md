@@ -700,7 +700,18 @@ diagnosing a slow build. The short version:
 - **`tools/stereo_check.py --raw <capture>` runs on a capture already on disk**, so the stereo
   regression test works in the desktop loop with no headset and no device. Verified after the
   2026-08-30 optimisation pass: `far +4, near -2, near - far = -6px`, crossed and correctly signed.
-- **`tools/stereo_check.py` answers "does stereo have depth" in one command.** It captures a frame
+- **RenderDoc captures a frame from inside the app, headlessly.** `bd_renderdoc` loads it before
+  the `VkInstance` (it hooks at load time) and `bd_renderdoc_after_s` triggers a capture once
+  autoplay is in a field scene - `renderdoccmd capture` waits on a keypress, which an unattended run
+  cannot supply. Then `renderdoccmd convert -f cap.rdc -c zip.xml -o frame.zip.xml` and
+  `python tools/rdc_outline.py frame.zip.xml` prints one line per render pass: size, **view mask**,
+  pipelines, viewports, draws. Khronos publishes **no Windows validation binaries**, so on the
+  desktop this is the instrument that exists - and it named a multiview bug in one line after ten
+  causes had been eliminated by inference without finding the eleventh.
+  **Read the view mask, not the layer count**: `VkFramebufferCreateInfo::layers` must be 1 under
+  multiview, so "0 framebuffers are layered" looks damning and means nothing.
+- **`tools/stereo_check.py` answers "does stereo have depth" in one command.** `--stacked` does the
+  same for a `bd_mv_capture_array` grab, whose two layers are stacked vertically. It captures a frame
   with `bd_capture_after_s`, matches the two eyes band by band and prints a verdict: **FLAT** (the
   eye offset is proportional to `clip.z` and divides out to a constant slide), **INVERTED** (crossed
   the wrong way, so the world renders pseudoscopic), or **OK**. It is checked against the three real
@@ -1703,7 +1714,35 @@ game composites into a headset at its native frame rate with working controllers
    See `research/20260830_0400_multiview-resolves-the-wrong-surface.md` for the trigger site and the
    three candidate causes.
 
-   **Multiview is still not usable, and is now one step further along.** The post chain was mono
+   **Multiview stereo works, and has verified depth.** `bd_stereo_separation=0.2`,
+   `bd_stereo_multiview=true`: `tools/stereo_check.py --stacked` reads **far -2, near -8** -
+   crossed, monotone with depth, correct. Two bugs, both two-line:
+
+   - **`bd_stereo` and `bd_stereo_multiview` were both on and nothing stopped that.** They are two
+     implementations of one thing. Together, each draw is submitted twice into half-width viewports
+     *and* replicated into both layers, so both layers carry the same side-by-side pair - the
+     "identical layers" symptom - and every triangle rasterises four times, which is why multiview
+     once measured *slower* than the path it replaces. **That number is void**, as is every other
+     multiview measurement taken here: the desktop profile had both set.
+   - **The per-eye sign was inverted.** View 0 is the left eye and takes the *positive* constant.
+
+   And three instruments were lying, which is why it took two sessions:
+   **`bd_mv_capture_array` decoded an `R16G16B16A16_FLOAT` scene target as RGBA8** (and overran its
+   readback buffer, and stacked the second slice half a slice early), so the standing figure
+   "the layers differ by mean 3.694, 23.2% of pixels" was misaligned halves of misinterpreted bytes;
+   a `[mv] SetRenderTarget` log sampled **every 4000th call of a per-slot function**, so it never
+   moved off one slot and reported `mv=false` for ever; and `[mv] resolved ... (N times)` prints at
+   the 1st and 501st, so two lines meant *501+* resolves, not two.
+
+   **A periodic sample whose period shares a factor with the thing sampled is not a sample** - the
+   companion rule to "a bounded log answers what happened first, never what happens".
+
+   Still open: **multiview needs ~7x the separation side-by-side does and nobody knows why.** Both
+   add the same constant to `clip.x`, and a multiview layer is 1920 wide against side-by-side's 960,
+   so it should need *half*, not seven times. See
+   `research/20260830_0700_multiview-has-depth.md`.
+
+   **Superseded, kept for the reasoning only:** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
    canvas - so the bloom and downsample targets were single-layer, took single-view pipelines, wrote
    layer 0 and collapsed the pair on the first post pass. That threshold is gone: every render
