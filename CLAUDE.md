@@ -1672,6 +1672,17 @@ game composites into a headset at its native frame rate with working controllers
    near - far = -9px` on the flat desktop, bit-identical to the measurement taken before any of the
    multiview work.
 
+   **Multiview: the pipelines were never the problem, the resolve runs on the wrong surface.**
+   Measured 2026-08-30 on the desktop, no headset:
+   `MULTIVIEW pipeline created, viewMask=3` (they are created), framebuffers get `viewMask=3`,
+   `SetRenderTarget` reports `mv=true` for the layered 1920x1080 surface, and there are no errors -
+   but the resolve fires **501 times on a 120x67 bloom target and never on the scene target**. The
+   scene renders into two layers correctly and the pass that flattens them never touches it. Note
+   that `[mv] N mono pipelines so far, 0 multiview` was read as proof pipelines were mono; that
+   counter only prints at its 40th and 200th, both during startup before a layered target is bound.
+   See `research/20260830_0400_multiview-resolves-the-wrong-surface.md` for the trigger site and the
+   three candidate causes.
+
    **Multiview is still not usable, and is now one step further along.** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
    canvas - so the bloom and downsample targets were single-layer, took single-view pipelines, wrote

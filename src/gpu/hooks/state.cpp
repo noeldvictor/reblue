@@ -116,6 +116,18 @@ void D3DDevice_SetRenderTarget_hook(
   bd::gpu::Video::SetDirtyValue<bool>(
       s.dirtyStates.pipelineState, s.pipelineState.multiview,
       surface != nullptr && surface->layers > 1);
+  {
+    // Diagnostic: pipelines all come out mono while framebuffers get
+    // viewMask=3, which is a render-pass incompatibility and renders black.
+    // This says whether the target is layered by the time it is bound.
+    static std::atomic<u32> n{0};
+    const u32 i = n.fetch_add(1, std::memory_order_relaxed);
+    if (i < 6 || (i % 4000) == 0)
+      BD_INFO("[mv] SetRenderTarget #{} surface={} {}x{} layers={} -> mv={}", i,
+              surface ? "yes" : "null", surface ? surface->width : 0u,
+              surface ? surface->height : 0u, surface ? surface->layers : 0u,
+              s.pipelineState.multiview);
+  }
   // Alpha test mode tied to sample count.
   bd::gpu::Video::SetAlphaTestMode(
       (s.pipelineState.specConstants & bd::gpu::kSpecConstantAlphaTest) != 0);
