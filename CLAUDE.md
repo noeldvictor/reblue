@@ -804,6 +804,9 @@ diagnosing a slow build. The short version:
   OpenXR runtime. It is the only way to exercise the camera modes and the character anchor, because
   without a runtime `ViewOverrideActive()` is false and they never compose. **Invoke the `vrsim`
   skill.**
+- **Never run two device measurements at once.** `verify_quest.sh` force-stops the app, reinstalls
+  the APK and clears the on-device artefacts, so a second run started while the first is settling
+  destroys it - the first produces no output at all and looks like a hang. One headset, one run.
 - **`bash tools/verify_quest.sh` is the whole device measurement in one command.** It picks the
   headset (not the other Android device that is often attached), installs the staged APK, runs
   autoplay into a field scene, and pulls back the frame breakdown, the per-frame CSV, the sampling

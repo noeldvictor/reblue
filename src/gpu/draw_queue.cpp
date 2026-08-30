@@ -34,7 +34,8 @@ u32 g_sequence = 0;
 struct EmitState {
   plume::RenderPipeline *pipeline = nullptr;
   u32 constant_offsets[3] = {~0u, ~0u, ~0u};
-  const plume::RenderBuffer *index_buffer = nullptr;
+  plume::RenderIndexBufferView index_view{plume::RenderBufferReference{}, 0,
+                                          plume::RenderFormat::R16_UINT};
   bool any = false;
 };
 
@@ -89,10 +90,15 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
     i = run;
   }
   if (d.has_index_buffer) {
-    const plume::RenderBuffer *ib = d.index_view.buffer.ref;
-    if (ib != st.index_buffer) {
+    // The whole view, not just the buffer pointer. Two draws can share a buffer
+    // at different offsets, sizes or index formats, and deduplicating on the
+    // pointer alone would silently keep the previous draw's format.
+    if (!st.any || d.index_view.buffer.ref != st.index_view.buffer.ref ||
+        d.index_view.buffer.offset != st.index_view.buffer.offset ||
+        d.index_view.size != st.index_view.size ||
+        d.index_view.format != st.index_view.format) {
       cmd->setIndexBuffer(&d.index_view);
-      st.index_buffer = ib;
+      st.index_view = d.index_view;
     }
   }
 
