@@ -362,6 +362,20 @@ bool Video::BindDrawFramebufferLocked() {
               rt ? rt->width : 0u, rt ? rt->height : 0u,
               rt ? rt->layers : 0u, ds->width, ds->height, ds->layers);
   }
+  // Flatten the previous layered target the moment the render target moves off
+  // it - the scene-to-post transition.
+  //
+  // The existing trigger in the draw hook fires when a dirty layered surface is
+  // *sampled as a texture*, which never caught the scene: measured, it resolved
+  // a 120x67 bloom target 501 times a frame and the 1920x1080 scene target not
+  // once. Doing it on the target change instead is what the comment there
+  // always described, and it happens before the first pass that reads the
+  // companion rather than at present, which is too late for the post chain.
+  if (s.bound_fb_rt && s.bound_fb_rt != rt && s.bound_fb_rt->layers > 1 &&
+      s.bound_fb_rt->multiviewDirty && s.bound_fb_rt->resolvedTexture) {
+    ResolveMultiviewSurfaceLocked(s, s.bound_fb_rt);
+  }
+
   plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, ds);
   if (!fb)
     return false;

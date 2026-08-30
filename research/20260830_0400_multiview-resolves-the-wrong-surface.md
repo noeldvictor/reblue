@@ -59,18 +59,27 @@ its draws execute, its source is correct, and **nothing lands in `resolvedFrameb
 
 Everything upstream is cleared. Everything downstream is faithfully carrying a black image.
 
-### The likely cause, and it is an ordering one
+### Ordering was not it either
 
-The extra resolve added this session is called from `RecordPresentPass`, which runs **at present** -
-after the post chain has already sampled the companion. That was the right place to make the resolve
-*happen at all* (it previously never ran on the scene target), but it is the wrong place for the post
-chain to benefit, and possibly the wrong place relative to the capture too.
+The draw hook's trigger fires when a dirty layered surface is *sampled as a texture*, which never
+caught the scene - it resolved a 120x67 bloom target 501 times a frame and the scene target not
+once. A second trigger was added on the **render target change** - resolve the previous target the
+moment the bind moves off it, which is the scene-to-post transition and happens before anything
+reads the companion. **The companion is still black.** So the resolve is not merely running too
+late; its draws genuinely write nothing.
 
-The resolve needs to run when the scene target stops being drawn into and **before** the first pass
-that samples it - not at present. The original trigger (render target changing away from a dirty
-layered surface) was the right idea and simply never fired for the scene, because the scene target is
-still bound at the end of the frame. Something has to notice the transition from "scene pass" to
-"first post pass" instead.
+### And `bd_mv_debug_known_srv` cannot answer what it was built to answer
+
+Worth knowing before anyone trusts it, because this session did twice. It makes the copy sample
+`tex->descriptorIndex` instead of the per-eye views - "the one the rest of the renderer uses and
+which is known to work". But `bd_mv_redirect_srv` defaults **on**, and that repoints a multiview
+surface's primary descriptor at *the resolved companion*. So the debug path samples the very texture
+it is writing into: a self-referential read that is black by construction and says nothing about the
+per-eye views.
+
+**Either test it with `bd_mv_redirect_srv=false`, or fix the debug path to sample the array's own
+view.** The per-eye view registration is therefore *not* eliminated - it is untested, and it is back
+at the top of the list.
 
 That is the next change, and the two capture cvars above verify it in one run.
 
