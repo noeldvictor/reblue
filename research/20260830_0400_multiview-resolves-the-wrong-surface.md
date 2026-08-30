@@ -241,6 +241,45 @@ the next thing to verify, and it is one log: print the plume texture pointer beh
 pointed at the resolved companion rather than array layer 0: the post chain, present and the capture
 all read the same texture the resolve writes. That chain is self-consistent.
 
+## The answer to "where does it go": nowhere. The array is empty.
+
+`bd_mv_capture_array` (added for this) photographs the layered array itself instead of the companion
+the resolve writes. present.cpp already had a both-slices path; it was only reachable when no
+companion existed, so this makes it selectable.
+
+Both layers, read separately out of the 1920x2160 stacked capture:
+
+```
+layer0: mean (0,0,0)  nonblack 0/576  max 0
+layer1: mean (0,0,0)  nonblack 0/576  max 0
+```
+
+**Max pixel value zero.** Nothing is written to either layer, ever.
+
+So the scene binds a two-layer colour target and a two-layer depth target, multiview pipelines with
+`viewMask=3` are bound into a framebuffer with `viewMask=3`, the draws are submitted - and not one
+pixel lands. Everything the resolve, the companion and the SRVs do downstream is faithful work on an
+empty image, which is why nine correct checks explained nothing.
+
+## What to do next, and it is not more inference
+
+This is a draw-time rejection that Vulkan is tolerating silently, and that is precisely what
+validation layers report. This project has already used them for exactly this: CLAUDE.md records
+that they "settled the multiview question in one run after three sessions of inference" on Android,
+and that they immediately surfaced an unrelated live bug (`Int64` declared by every shader while
+`shaderInt64` is not enabled) in the same run.
+
+They are not currently run on the desktop build, and they should be. That is the next step - not
+another probe reasoned from what a capture does not contain.
+
+The likely shapes, for what it is worth, all of which validation names outright:
+
+- A pipeline/render-pass incompatibility beyond the view mask - the depth attachment's format or
+  sample count differing between the pipeline and the framebuffer.
+- `multiviewGeometryShader` / `multiviewTessellationShader` or a `maxMultiviewViewCount` limit.
+- The vertex shader writing `SV_ViewID`-dependent output without the `MultiView` capability actually
+  enabled on the device, which plume was patched for and which is worth re-confirming here.
+
 ## Closing state, honestly
 
 Nine hypotheses checked, nine correct, frame still black:

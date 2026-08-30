@@ -261,6 +261,10 @@ REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
                     "Run the multiview resolve pass that flattens the two "
                     "layers into one side-by-side image.");
 
+// Capture the layered array itself, both slices, rather than the resolved
+// companion. Diagnostic: it answers whether the array has content at all.
+REXCVAR_DEFINE_BOOL(bd_mv_capture_array, false, kCvarGroup,
+                    "Capture the multiview array instead of its companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
                     "Point a multiview surface's sampled view at the resolved "
                     "companion rather than at array layer 0.");

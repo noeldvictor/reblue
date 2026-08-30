@@ -45,6 +45,7 @@
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(bool, bd_cel_shading);
+REXCVAR_DECLARE(bool, bd_mv_capture_array);
 REXCVAR_DECLARE(double, bd_capture_after_s);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 
@@ -967,7 +968,15 @@ void Video::Present(GuestTexture *frontBuffer) {
   // chain and the compositor actually see, and the array behind it is an
   // intermediate. Capturing the array instead photographs the wrong texture and
   // reads as a black frame even when the output is fine.
-  const bool resolved_rt = rt && rt->resolvedTexture && rt->layers > 1;
+  // bd_mv_capture_array photographs the layered array itself, both slices,
+  // instead of the companion the resolve writes. The whole multiview chain has
+  // now been verified correct end to end and the frame is still black, so the
+  // remaining question is whether the array has anything in it - and that is
+  // answered by looking at it rather than by inferring it from what leaves the
+  // resolve.
+  const bool force_array = REXCVAR_GET(bd_mv_capture_array);
+  const bool resolved_rt =
+      rt && rt->resolvedTexture && rt->layers > 1 && !force_array;
   const bool multiview_rt = rt && rt->texture && rt->layers > 1 && !resolved_rt;
   const bool capturing =
       CaptureDue() &&
