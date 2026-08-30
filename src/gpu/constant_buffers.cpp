@@ -586,6 +586,19 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
   s.shared.stereoConvergence =
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_convergence)) : 0.0f;
+  {
+    // Counts, not a capped log: the shader applies the skew wherever these are
+    // non-zero, so "how many draws got a non-zero separation" is the whole
+    // question when both eye layers come out identical.
+    static std::atomic<u64> on{0}, off{0};
+    (stereo_on ? on : off).fetch_add(1, std::memory_order_relaxed);
+    const u64 total = on.load(std::memory_order_relaxed) +
+                      off.load(std::memory_order_relaxed);
+    if ((total % 20000u) == 0u)
+      BD_INFO("[stereo] separation applied to {} draws, zero for {} (sep={})",
+              on.load(std::memory_order_relaxed),
+              off.load(std::memory_order_relaxed), s.shared.stereoSeparation);
+  }
 
   // Viewport extent, not the render target's: the NDC->pixel mapping this
   // cancels is the viewport's. +x/-y = half a pixel right and down.

@@ -337,6 +337,45 @@ different views* - which is the symptom CLAUDE.md recorded before this session b
 A day was spent walking past a correct diagnosis because the instrument pointed at the wrong
 texture. The nine "verified correct" checks were all real and all beside the point.
 
+## The shader side is correct, and the constant is non-zero
+
+Checked, because "SV_ViewID is not varying" has two halves and only one of them is the shader.
+
+**All 55 of 55 vertex shaders carry the skew** (`--target reblue_shader_hlsl_dump`), and it is
+well-formed and before the return:
+
+```hlsl
+in uint iViewID : SV_ViewID,
+...
+const float eyeSign = (iViewID == 0) ? -1.0f : 1.0f;
+oPos.x += eyeSign * (g_StereoSeparation - g_StereoConvergence * oPos.w);
+```
+
+So the "0 of 55 shaders" trap from a previous session is genuinely fixed, and DXC is invoked with
+`-fspv-target-env=vulkan1.1`, without which `SV_ViewID` cannot lower to `ViewIndex`.
+
+**And the constant is not zero.** Counting rather than sampling - which matters, given how many
+capped logs misled this investigation:
+
+```
+[stereo] separation applied to 1165758 draws, zero for 2514242 (sep=0.03)
+```
+
+A third of draws get a real separation, which is the scene-geometry share the `stereoEligible` gate
+is meant to select.
+
+So: the shader declares `SV_ViewID`, uses it, is compiled for an environment that supports it, all
+55 shaders have it, the constant feeding it is non-zero for scene draws, both layers render - and
+the layers are identical. **What is left is `SV_ViewID` itself not varying between views at
+execution**, which is below the HLSL: the SPIR-V's `BuiltIn ViewIndex`, or the driver's handling of
+it.
+
+Verifying that means reading the shipped SPIR-V. The HLSL dump does not compile standalone - it
+carries an `#if` selecting between `vk::RawBufferLoad` and cbuffer `packoffset` forms and needs the
+surrounding definitions - so the practical route is to decompress a shader out of the cache
+(smol-v) and look for `BuiltIn ViewIndex`, or to have XenosRecomp dump the SPIR-V alongside the HLSL
+it already dumps. **That is the next step, and it is a small tooling addition rather than a guess.**
+
 ## Where that leaves it
 
 The bug is what it was said to be: **`SV_ViewID` is not varying per view.** That is in XenosRecomp's
