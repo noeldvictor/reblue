@@ -392,9 +392,18 @@ and the tail of the file is a menu at ~20 draws a frame.
 
 **Select by content instead: `python tools/perf_summary.py <csv>`** keeps frames whose draw count
 says field scene (>=300; a menu is ~20). That is about **9,600 frames a run rather than 300**, at a
-consistent 520 draws, and two runs of an unchanged binary agree to **0.4%** on it where the tail
-window disagreed by 20%. Compare `us/draw` when the draw counts differ, since culling changes how
-many draws a frame has without changing what the frame costs.
+consistent 520 draws, and it removes the menu contamination entirely. Compare `us/draw` when the
+draw counts differ, since culling changes how many draws a frame has without changing what a frame
+costs.
+
+**It does not remove cross-run drift, and do not believe otherwise.** Two adjacent runs agreed to
+0.4% and that was briefly written up here as the new noise floor; across a whole session the same
+nominal configuration measured **3.75 to 6.84ms** `other_ms`. So the rule stands:
+
+- **Run A/B pairs, in both orders**, and believe a result only when the direction survives the
+  reversal. That is what makes `bd_host_sincos` (5.78 -> 4.10 and 6.84 -> 3.75) a result and
+  `bd_host_matrix_copy` (+9% in one pair, wrong direction) not one.
+- A single pair showing under ~10% is not evidence of anything.
 
 ### Building for the desktop, which does work
 

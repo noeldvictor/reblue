@@ -147,6 +147,15 @@ instructions that read their polynomial constants back through marshalled guest 
 version is two libm calls. `bd_host_sincos` is now on by default, with the stereo check and a
 captured frame confirming the world is still oriented correctly.
 
+**`bd_host_matrix_copy` was re-run against the field metric and stays off**: +9.1% in the wrong
+direction over one pair, which is inside the drift and certainly not a win.
+
+**And the field metric is not as tight as it first looked.** Two adjacent runs agreeing to 0.4% got
+written up as the noise floor; across the session the same nominal configuration ranged 3.75 to
+6.84ms. Field filtering removes the menu contamination, not the drift. Paired A/B in both orders is
+still the only thing that settles anything - which is exactly why the sincos result is trustworthy
+and the matrix one is not.
+
 **Everything else dismissed on this page was measured the same wrong way** and is worth re-running
 against the field-frame metric before staying closed - the matrix copy at "0.3%", the buffer memo,
 and the tile-traffic upper bound especially.
