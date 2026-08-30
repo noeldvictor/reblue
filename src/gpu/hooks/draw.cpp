@@ -707,6 +707,7 @@ u32 D3DDevice_DrawVerticesUP_hook(u32 device_guest, u32 primitiveType,
   args.is_up = ok;
   args.vertexOrIndexCount = vertexCount;
   args.startVertex = 0;
+  bd::gpu::NoteDrawKind(2);
   DispatchDraw(device_guest, primitiveType, "DrawVerticesUP", args);
   return 0;
 }
@@ -772,6 +773,7 @@ u32 D3DDevice_EndVertices_hook(u32 /*device_guest*/) {
   args.is_up = ok;
   args.vertexOrIndexCount = p.vertex_count;
   args.startVertex = 0;
+  bd::gpu::NoteDrawKind(3);
   DispatchDraw(p.device, p.primitive_type, "BeginVertices", args);
   return 0;
 }
@@ -786,6 +788,7 @@ u32 D3DDevice_DrawIndexedVertices_hook(u32 device_guest, u32 primitiveType,
   args.vertexOrIndexCount = indexCount;
   args.baseVertexIndex = static_cast<i32>(baseVertexIndex);
   args.startIndex = startIndex;
+  bd::gpu::NoteDrawKind(0);
   DispatchDraw(device_guest, primitiveType, "DrawIndexedVertices", args);
   return 0;
 }
@@ -872,6 +875,7 @@ u32 D3DDevice_DrawVertices_hook(u32 device_guest, u32 primitiveType,
   DrawArgs args{};
   args.vertexOrIndexCount = vertexCount;
   args.startVertex = startVertex;
+  bd::gpu::NoteDrawKind(1);
   DispatchDraw(device_guest, primitiveType, "DrawVertices", args);
   return 0;
 }

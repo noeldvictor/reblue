@@ -35,6 +35,14 @@ std::atomic<u32> g_draw_count{0};
 // per draw, and this is what separates "vertex processing is slow" from
 // "per-draw overhead is slow" - they have completely different fixes.
 std::atomic<u64> g_vert_count{0};
+// Draws split by guest entry point.
+//
+// The frame reports ~500 draws while the guest census counts only 91
+// bdSceneNodeDrawSingle calls, so ~400 draws a frame come from somewhere that
+// every note in this repo has been ignoring. `draws` alone cannot say where.
+// Order: DrawIndexedVertices, DrawVertices, DrawVerticesUP, BeginVertices.
+std::atomic<u32> g_draw_kind[4]{};
+
 std::atomic<u64> g_ph_lock{0};
 std::atomic<u64> g_ph_fb{0};
 std::atomic<u64> g_ph_state{0};
@@ -143,6 +151,16 @@ void UpdateFrameStats() {
       const u64 lk = g_ph_lock.exchange(0, std::memory_order_relaxed);
       const u64 fb = g_ph_fb.exchange(0, std::memory_order_relaxed);
       const u64 st = g_ph_state.exchange(0, std::memory_order_relaxed);
+      {
+        const u32 ki = g_draw_kind[0].exchange(0, std::memory_order_relaxed);
+        const u32 kv = g_draw_kind[1].exchange(0, std::memory_order_relaxed);
+        const u32 ku = g_draw_kind[2].exchange(0, std::memory_order_relaxed);
+        const u32 kb = g_draw_kind[3].exchange(0, std::memory_order_relaxed);
+        BD_INFO("[perf]   draws by entry: indexed {:.1f}, linear {:.1f}, UP "
+                "{:.1f}, beginVertices {:.1f} per frame",
+                double(ki) / ticks, double(kv) / ticks, double(ku) / ticks,
+                double(kb) / ticks);
+      }
       BD_INFO("[perf] {} draws/frame, {} verts/frame, {:.0f} verts/draw | "
               "per frame: mutex {:.1f}ms, bindFB {:.1f}ms, flushState {:.1f}ms",
               acc_d / ticks, acc_v / ticks,
@@ -234,6 +252,11 @@ void NoteDrawVertices(u32 count) {
 
 u32 FrameStatFrameCount() {
   return g_stat_frame_count.load(std::memory_order_relaxed);
+}
+
+void NoteDrawKind(u32 kind) {
+  if (kind < 4)
+    g_draw_kind[kind].fetch_add(1, std::memory_order_relaxed);
 }
 
 void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers,

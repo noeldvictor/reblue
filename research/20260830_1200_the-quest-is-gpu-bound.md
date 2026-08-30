@@ -386,3 +386,59 @@ splitting `draws` by entry point is one small change and it would say what the f
 Note also that `bd_cull_distance=350` rejects **95%** of nodes (838,050 of 880,950), so the
 `bdSceneNodeDrawSingle` figures in CLAUDE.md - 2084 calls/frame, "23x the next consumer" - do not
 describe this configuration at all.
+
+
+## Answered: the frame's draws do not come from bdSceneNodeDrawSingle
+
+Counting draws by guest entry point (new `[perf] draws by entry` line):
+
+```
+draws by entry: indexed 294-550, linear 15, UP 14-30, beginVertices 55-125
+total 382-720 draws/frame
+```
+
+Indexed draws dominate. And `D3DDevice_DrawIndexedVertices` has exactly one caller,
+`bdSceneNodeDrawIndexed`, which has **three**:
+
+```
+sub_8227F360              4 sites
+bdSceneNodeDrawSingle     1 site      <- 91 calls/frame per the census
+sub_82282910              1 site
+```
+
+`sub_8227F360`'s own callers are **`bdSceneSubmitRenderList`** and
+**`bdSceneNodeSetupRenderPass`** - both already named, both obviously the render-list submission
+path.
+
+**So the frame is submitted by `bdSceneSubmitRenderList` -> `sub_8227F360`, not by
+`bdSceneNodeDrawSingle`.** The latter accounts for 91 of roughly 450 indexed draws.
+
+### What this invalidates
+
+- **The host-replacement target in the approved plan.** It named `bdSceneNodeDrawSingle` as "the
+  dominant single function in the 77% of device CPU that is guest code" and proposed replacing it
+  first. On this configuration that would rewrite the path responsible for a fifth of the draws.
+- **CLAUDE.md's "2084 calls/frame, 23x the next consumer"** figure, which came from a run without an
+  aggressive distance cull. Here `bd_cull_distance=350` rejects **838,050 of 880,950 nodes (95%)`,
+  leaving 91.
+- Every plan in this repo that reasons from "the scene node draw is the frame".
+
+### What to do with it
+
+1. **Name `sub_8227F360` and `sub_82282910`** in `config/functions.toml` - naming is what makes a
+   function replaceable, and `sub_8227F360` is now the highest-value replacement candidate in the
+   port. Read its body first: `generated/reblue_recomp.84.cpp:8819`.
+2. **Re-derive the guest CPU story from the real submission path** before any more host-replacement
+   work. `bd_guest_census` tracks 14 functions and none of them is `sub_8227F360`; adding it would
+   have shown this months ago.
+3. Note this is a *draw-count* finding, not yet a *cost* finding. The device is GPU-bound and the
+   guest is 0.1% of samples, so which guest function submits the draws does not currently decide the
+   frame time. It decides where the work goes when the GPU stops being the wall.
+
+### The general lesson, which the owner called correctly
+
+This was found by asking "the census says 91 draws and the frame says 500 - where are the other
+400?" That question was available from the first device run and was not asked for many hours, while
+several conclusions were built on top of the gap. **A number that does not reconcile with another
+number is the most valuable thing in a profile, and it should be chased before anything is built on
+either.**

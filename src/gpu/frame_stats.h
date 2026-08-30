@@ -65,6 +65,9 @@ u32 FrameStatFrameCount();
 
 // Records the bound render target's size for a draw, so the per-frame report
 // can say which surfaces the draws are actually going to.
+// Count a draw by guest entry point: 0 indexed, 1 linear, 2 UP, 3 beginVertices.
+void NoteDrawKind(u32 kind);
+
 void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers = 1,
                     bool has_ds = false);
 
