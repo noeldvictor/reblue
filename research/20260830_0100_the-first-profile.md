@@ -128,7 +128,33 @@ character, foliage, cliffs and shadows all present and nothing popping.
 
 `bd_cull_early` reverts to the old ordering without a rebuild.
 
-## gpu_total_ms is unreliable: the query readback fails thousands of times a run
+## Fixed, and the first trustworthy GPU attribution this project has had
+
+With the readback repaired (below), the per-category split is valid for the first time. Desktop,
+field frames only, 6,605 of them:
+
+```
+dt_ms          16.67     (vsync)
+other_ms        5.42     CPU
+gpu_total_ms    5.83     GPU  - not the ~2.0 that was quoted all session
+  gpu_draw_ms   4.54     78%
+  gpu_resolve   1.12     19%   <- EDRAM emulation
+  gpu_inter     0.16      3%
+fence_ms        0.01
+draws            516
+```
+
+**19% of GPU time is the resolve path** - the emulation of the Xbox 360 copying render targets out of
+EDRAM into textures, which a modern GPU has no reason to do at all. That is squarely the "remove the
+X360 pattern" target and it is now measurable, which it was not this morning: the column that would
+have shown it was stale.
+
+It also reframes the GPU's share. 5.83ms of a 16.67ms frame is a third, against a CPU side of
+5.42ms. The GPU is still not *the* bottleneck on a desktop, but it is no longer a rounding error,
+and on a Quest 2 - where the GPU is several times weaker and the CPU only somewhat - that 19% is
+worth real milliseconds.
+
+## The bug: the query readback failed thousands of times a run
 
 Found by capturing `stderr`, which every run in this session had been sending to `/dev/null`:
 

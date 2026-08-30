@@ -816,9 +816,15 @@ candidates), or cutting work a VR port does not need the guest to do at all.
 - **`tools/profile_quest.py`** - simpleperf, no instrumentation, names all 27,080 recompiled
   functions directly.
 
-Treat `gpu_total_ms` in that CSV with suspicion: `MarkDraw` writes a timestamp per draw into a
-512-entry pool, so at 2,957 draws the pool saturates early and the column measures a fraction of the
-frame, not the frame.
+`gpu_total_ms` was stale until 2026-08-30 and is now correct. `FrameEnd` wrote its closing
+timestamp to a reserved high index, leaving unwritten queries in the middle of the pool, and
+`vkGetQueryPoolResults` returns `VK_NOT_READY` for a range containing any - so plume bailed and the
+previous frame's numbers were read as this frame's, 6913 times a run. Fixed on both sides; the
+figure went from a stale ~2.0ms to a real 5.83ms.
+
+**The split is now worth reading, and it names an X360 pattern**: desktop field frames give
+`gpu_draw 4.54ms (78%)`, **`gpu_resolve 1.12ms (19%)`**, `gpu_inter 0.16ms`. A fifth of GPU time is
+the EDRAM resolve - copying render targets into textures because a Xenon had to.
 
 ### What reading the code already found
 
