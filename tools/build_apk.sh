@@ -20,6 +20,27 @@ PLATFORM_JAR="${PLATFORM_JAR:-$SDK/platforms/android-33/android.jar}"
 NATIVE_DIR="${NATIVE_DIR:-out/build/android-arm64-release}"
 SDL_JAVA="${SDL_JAVA:-out/rexglue-src/thirdparty/sdl3/android-project/app/src/main/java}"
 OUT="${OUT:-out/apk}"
+OUT_BUILD_LOG="${TMPDIR:-/tmp}/reblue_apk_build.log"
+
+# Build first, and refuse to package if it fails.
+#
+# Without this the script happily packages whatever libreblue.so was left on
+# disk by the last *successful* build. Not hypothetical: a compile error in
+# plume produced "ninja: build stopped", this script then signed and installed
+# the previous binary, and its results were read as the new build's - the same
+# shape as the missing-loader trap below, and as the args.txt push failures that
+# made three perf experiments measure a stale file.
+#
+# cmake --build on an up-to-date tree is a no-op costing under a second, so this
+# is free in the common case. SKIP_BUILD=1 to package a binary built elsewhere.
+if [ -z "${SKIP_BUILD:-}" ] && [ -f "$NATIVE_DIR/build.ninja" ]; then
+  echo "==> building $NATIVE_DIR"
+  if ! cmake --build "$NATIVE_DIR" --target reblue > "$OUT_BUILD_LOG" 2>&1; then
+    tail -5 "$OUT_BUILD_LOG" >&2
+    echo "build failed - refusing to package a stale libreblue.so" >&2
+    exit 1
+  fi
+fi
 
 for f in "$BUILD_TOOLS/aapt2.exe" "$PLATFORM_JAR" "$NATIVE_DIR/libreblue.so" \
          "$NATIVE_DIR/librexruntime.so" "$SDL_JAVA/org/libsdl/app/SDLActivity.java"; do
