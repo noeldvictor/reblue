@@ -1000,11 +1000,38 @@ where the time goes.
 
 ## Start here if you are picking this up
 
-**`research/20260830_0500_what-is-true-now.md`** is the consolidated state as of 2026-08-30. It
-lists what this repo believed that turned out to be false (the frame is not fill-bound,
-`gpu_total_ms` was stale by 3x, `bdSceneNodeDrawSingle` is ~5% not 23x, encounters do not end
-autoplay runs), what was measured and holds, the tools that now exist, and what to do next in order.
-Read it before any older note it disagrees with.
+**Read `research/20260830_1200_the-quest-is-gpu-bound.md` first.** It is the newest and it corrects
+the two below wherever they disagree. The headline facts, all measured on a Quest 2 on 2026-08-30:
+
+- **The frame is GPU-bound, not CPU-bound.** `dt 142.8ms | gpu_draw 139.6ms | other_ms 25.6 |
+  fence 118.6`. The recompiled guest is **0.1% of profile samples**; the CPU is asleep waiting.
+  Every earlier note saying "the cost is the recompiled guest" was measured at `bd_render_scale=25`
+  with the side-by-side path, where the GPU was starved. Both are true of their own configuration.
+- **Why**: `surface_pool.cpp:467` gives **two layers to every render target** under
+  `bd_stereo_multiview`, not just the scene, so the whole post chain rasterises twice. The per-target
+  census shows three separate `1280x720x2L` targets, ~140 Mpix/frame.
+- **Stereo on the headset is UNVERIFIED for the current build.** Desktop is verified correct
+  (`far -4, near -26`). The one fresh device capture reads flat, and `bd_mv_capture_array` is broken
+  on device (writes a black single-layer surface), so the test that would settle it does not work
+  there yet. **Fix that instrument before tuning separation or the eye sign.**
+
+**Two traps that silently produce fake results, both hit on 2026-08-30:**
+
+- **`tools/verify_quest.sh` used to pull stale artefacts.** A run that crashed 33s in handed back the
+  *previous day's* capture and CSV, and they were reported as that day's result. It now clears remote
+  and local artefacts before the run and shouts on a fatal log line or a dead process. If you see a
+  number that seems too good, check the run did not crash.
+- **Neither an SDK header change nor an SDK codegen change reaches the guest on its own.** The 54
+  recompiled TUs do not rebuild from an `out/rexglue-src` header - delete
+  `CMakeFiles/reblue_recomp.dir/**/*.o` by hand. And codegen runs a **prebuilt** `rex::rexglue`, so a
+  `src/codegen/` change needs `cmake --build out/sdk-codegen-check --target rexglue` and a manual
+  `rexglue codegen reblue_manifest.toml` first. Verify in `generated/`, never in the source.
+
+**`research/20260830_0500_what-is-true-now.md`** is the earlier consolidated state. It lists what
+this repo believed that turned out to be false (the frame is not fill-bound, `gpu_total_ms` was stale
+by 3x, `bdSceneNodeDrawSingle` is ~5% not 23x, encounters do not end autoplay runs), what was
+measured and holds, the tools that now exist, and what to do next in order. Read it before any older
+note it disagrees with - and read the 1200 note before it.
 
 ## Research notes
 
