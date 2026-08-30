@@ -31,7 +31,6 @@
 
 REXCVAR_DECLARE(bool, bd_verify_guest_math);
 REXCVAR_DECLARE(bool, bd_host_sincos);
-REXCVAR_DECLARE(bool, bd_host_matrix_copy);
 
 namespace {
 
@@ -94,51 +93,4 @@ REX_HOOK_RAW(bdSinCos) {
           "cos={:+.6f}  |  r3~sin={} r3~cos={} r4~sin={} r4~cos={}",
           angle, a, b, s, c, std::fabs(a - s) < 1e-4f, std::fabs(a - c) < 1e-4f,
           std::fabs(b - s) < 1e-4f, std::fabs(b - c) < 1e-4f);
-}
-
-// bdMatrixCopyAligned(dst in r3, src in r4) - 64 bytes, four vectors. The guest
-// loads each with the lvlx/lvrx/vor unaligned idiom and stores it back through
-// a full byte-reverse mask, so the reversal on the way in is undone on the way
-// out and the net effect should be a plain byte copy. "Should be" is not good
-// enough to act on, so bd_verify_guest_math runs the original and then checks
-// the destination against the source byte for byte.
-//
-// A null source makes the guest substitute a default matrix from a global; that
-// path is left to the original rather than reimplemented, because it is rare
-// and getting the global's address wrong would be silent.
-REX_EXTERN(__imp__bdMatrixCopyAligned);
-REX_HOOK_RAW(bdMatrixCopyAligned) {
-  constexpr u32 kMatrixBytes = 64;
-  const u32 dst = ctx.r3.u32;
-  const u32 src = ctx.r4.u32;
-
-  if (REXCVAR_GET(bd_verify_guest_math)) {
-    __imp__bdMatrixCopyAligned(ctx, base);
-    static std::atomic<int> shown{0};
-    if (src && shown.fetch_add(1, std::memory_order_relaxed) < 6) {
-      const auto *d = bd::mem::try_at<const u8>(dst);
-      const auto *sp = bd::mem::try_at<const u8>(src);
-      const bool tail_ok = bd::mem::try_at<const u8>(dst + kMatrixBytes - 1) &&
-                           bd::mem::try_at<const u8>(src + kMatrixBytes - 1);
-      if (d && sp && tail_ok) {
-        BD_INFO("[matcopy] dst={:08X} src={:08X} identical={}", dst, src,
-                std::memcmp(d, sp, kMatrixBytes) == 0);
-      }
-    }
-    return;
-  }
-
-  if (REXCVAR_GET(bd_host_matrix_copy) && src && dst) {
-    auto *d = bd::mem::try_at<u8>(dst);
-    const auto *sp = bd::mem::try_at<const u8>(src);
-    // Both ends of both blocks, so a matrix straddling the end of a mapping
-    // falls back rather than reading or writing past it.
-    if (d && sp && bd::mem::try_at<const u8>(dst + kMatrixBytes - 1) &&
-        bd::mem::try_at<const u8>(src + kMatrixBytes - 1)) {
-      std::memcpy(d, sp, kMatrixBytes);
-      return;
-    }
-  }
-
-  __imp__bdMatrixCopyAligned(ctx, base);
 }
