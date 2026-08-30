@@ -264,4 +264,22 @@ The next attempt should capture with `vkUpdateDescriptorSets` in frame (create a
 mid-capture), or bind the chunk buffers eagerly at device init before any frame begins, which side-
 steps the whole question.
 
+An eighth, checked after the revert: **plume's flat-index mapping is correct.**
+`VulkanDescriptorSetLayout` builds `descriptorIndexBases` / `descriptorBindingIndices` per range
+(`plume_vulkan.cpp:1211`), so `setBuffer(0)` resolves to binding 0 element 0 and
+`setTexture(8 + slot)` to binding 1 element `slot`. Both ends are right.
+
+**So every link in the chain has been verified individually and the data still does not arrive.**
+That is an unusual place to be, and it points at something about the memory rather than the
+descriptor. The next two things to try, in order, are cheap:
+
+1. **`bd_constants_gpu_upload=false`** - a cvar, no rebuild. It forces the plain `UPLOAD` heap
+   instead of `GPU_UPLOAD` (`DEVICE_LOCAL | HOST_VISIBLE`). A device-address read and a storage-
+   buffer descriptor read of the same host-visible allocation are not obliged to behave the same
+   way, and this separates them for the price of one run.
+2. **Bind the chunk buffers eagerly at device init**, before any frame begins, rather than lazily
+   from `CreateChunk` inside a bound frame. This was going to be the next step and remains untested:
+   `UPDATE_AFTER_BIND` on every binding *should* make the lazy write legal, and adding it changed
+   nothing, which is itself a hint that the write is not the problem.
+
 **Do not re-derive the eliminations above.** They cost a full session and they are all recorded.
