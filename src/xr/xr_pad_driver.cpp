@@ -93,7 +93,12 @@ void ApplyAutoplay(PadState &pad) {
     pad.menu = true; // START
     return;
   }
-  // A for 200ms out of every 1.2s thereafter.
+  // A for 200ms out of every 1.2s, for ever - and the "for ever" is
+  // deliberate. Stopping it once walking begins was tried, on the theory that
+  // it was opening menus mid-run, and it made things worse: the character walks
+  // into a transition about 35s after setting off, something opens, and with no
+  // A there is nothing to dismiss it. The run then sits at 20 draws a frame for
+  // the rest of its life. Pressing A for ever is what lets a run recover.
   const double phase = std::fmod(t - 6.4, 1.2);
   pad.a = phase < 0.2;
 

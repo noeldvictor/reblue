@@ -385,8 +385,16 @@ eblue\Install`, `InstallRoot` plus
 CPU work per frame - 5.77ms in a field scene - and it is the desktop analogue of the Quest's ~62ms
 floor, which makes CPU changes measurable here. The CSV lands in `logs/perf/`.
 
-Averaging the whole file is wrong: loading frames drag the mean to 21.7 fps against a steady state
-of 60. Take the last few hundred rows.
+Averaging the whole file is wrong, and **so is taking the last few hundred rows**, which is what this
+file used to say and what every measurement here did until 2026-08-30. A run does not end in a
+steady state: the character walks into a transition about 35s after setting off, something opens,
+and the tail of the file is a menu at ~20 draws a frame.
+
+**Select by content instead: `python tools/perf_summary.py <csv>`** keeps frames whose draw count
+says field scene (>=300; a menu is ~20). That is about **9,600 frames a run rather than 300**, at a
+consistent 520 draws, and two runs of an unchanged binary agree to **0.4%** on it where the tail
+window disagreed by 20%. Compare `us/draw` when the draw counts differ, since culling changes how
+many draws a frame has without changing what the frame costs.
 
 ### Building for the desktop, which does work
 
