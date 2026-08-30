@@ -561,10 +561,14 @@ against a float class shader input is a D3D12 contract violation" - and
 `gpu/vertex_declaration.cpp:199-208` overrides `SNORM` back to `*_UINT` for `kTexCoord`, breaking
 it. The `!g_mvk` guard beside it describes the correct behaviour.
 
-The fix is `SSCALED` (float-class and unnormalised, so no shader-side sign extension), which plume
-does not yet expose. Specified step by step in
-`research/20260830_0820_arm64-the-thor-renders-nothing.md`. **Not written**: it crosses two repos and
-changes what every texcoord-reading shader receives.
+**Fixed, and it is not enough.** `SSCALED` was the obvious answer and **Adreno does not expose it as
+a vertex format at all** (`VUID-VkVertexInputAttributeDescription-format-00623`) - do not retry it.
+What works is binding **SNORM** and having `sintTexcoord` multiply by 32767 instead of sign-extending
+raw bits. Pipeline failures **21,615 -> 5,449**, pipeline-creation validation errors to **zero**, and
+the desktop image and stereo verdict are unchanged. **The Thor still renders nothing**, so at least
+one more cause remains - and validation does not flag it, leaving only
+`AdrenoVK-0: Shader compilation failed`. See
+`research/20260830_0820_arm64-the-thor-renders-nothing.md`.
 
 **Read this before trusting any Quest number too**: the same declaration is undefined behaviour
 there, it just happens to work.

@@ -58,7 +58,54 @@ about. The override is guarded `if (!g_mvk)`, and the MoltenVK comment beside it
 correct behaviour: *"Metal already converts raw signed 16-bit to float, so MoltenVK needs no
 shader-side recovery."*
 
-## The fix, specified but not written
+## The fix, written and measured
+
+**SSCALED was the obvious answer and Adreno does not have it.** Float-class and unnormalised is
+exactly what a SHORT texcoord wants, so the first attempt added `R16G16_SSCALED` /
+`R16G16B16A16_SSCALED` to plume and bound those. The Thor traded one violation for another:
+
+```
+VUID-VkVertexInputAttributeDescription-format-00623
+```
+
+- the format is not allowed as a vertex buffer format on that device at all. Reverted; recorded so
+nobody spends the same hour.
+
+**SNORM plus a multiply is what works.** `ConvertDeclType(kShort4)` already returns
+`R16G16B16A16_SNORM`; the override to `*_UINT` is removed, and `sintTexcoord` in
+`XenosRecomp/shader_common.h` changes from sign-extending raw bits to `value * 32767.0f`. Exact for
+every value the driver can deliver - `32767 * (v / 32767)` round-trips inside a float32 mantissa -
+and only -32768 is lost, clamping to -32767.
+
+Measured:
+
+| | before | after |
+| --- | --- | --- |
+| pipeline failures (70s run) | 21,615 | **5,449** |
+| pipeline-creation validation errors | 10+ per run | **none** |
+| Thor renders | no | **still no** |
+| desktop stereo verdict | far -4, near -26, OK | **far -4, near -26, OK** |
+| desktop image | rope, wood grain, rivets, foliage | **unchanged** |
+
+So the violation is gone and **the Thor still draws nothing**. There is at least one more cause,
+and it is not one the validation layers flag - the remaining failures come back clean, with only
+`AdrenoVK-0: Shader compilation failed for shaderType: 0` beside them. That is the next thread.
+
+## A revert on a false signal, which is worth recording
+
+Between those two states the desktop capture came back **entirely black** and I reverted the whole
+change, believing I had broken the working path. I had not. Those runs captured the **swapchain**
+(`bd_mv_capture_resolved=false`), and the flat present is black under `bd_stereo_multiview`
+regardless of this change - a separate, pre-existing gap, since the multiview path composites
+through the resolve and the mirror is not wired for it. Every earlier good capture had read the
+array.
+
+**Two captures of the same frame are not the same measurement.** The rule that would have caught it:
+when a result changes, check that the *instrument* is the one that produced the baseline, before
+concluding the code changed. Re-applied and verified through `bd_mv_capture_array`, the path every
+earlier reading used, the image and the stereo verdict are byte-comparable to the baseline.
+
+## The original diagnosis, for the record
 
 The tension is real: `SNORM` is spec-legal but divides by 32767, and a texcoord wants the raw
 integer. The format that is both float-class and unnormalised is **`SSCALED`** -

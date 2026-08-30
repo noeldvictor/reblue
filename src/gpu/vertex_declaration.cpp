@@ -196,14 +196,21 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
       // Metal already converts raw signed 16-bit to float, so MoltenVK needs
       // no shader-side recovery. Vulkan and D3D12 keep UINT plus shader-side
       // sign extension.
+      // SNORM, not UINT. An integer-class vertex format against the float4
+      // these shaders declare is the violation format.cpp already names two
+      // cases up - "an integer class IA format against a float class shader
+      // input is a D3D12 contract violation" - and the Adreno 740 enforces it,
+      // failing every affected pipeline and leaving a blank screen. SSCALED
+      // would preserve the magnitude exactly and Adreno does not expose it as a
+      // vertex format, so the shader multiplies by 32767 instead.
       if (type == D3DDeclType::kShort2) {
         if (!g_mvk) {
-          input.format = plume::RenderFormat::R16G16_UINT;
+          input.format = plume::RenderFormat::R16G16_SNORM;
           decl->sintTexcoords |= 1u << usage_index;
         }
       } else if (type == D3DDeclType::kShort4) {
         if (!g_mvk) {
-          input.format = plume::RenderFormat::R16G16B16A16_UINT;
+          input.format = plume::RenderFormat::R16G16B16A16_SNORM;
           decl->sintTexcoords |= 1u << usage_index;
         }
       }
