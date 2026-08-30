@@ -446,12 +446,16 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // against the recompiled one, not by reading the polynomial, and a captured
 // frame confirms the world is oriented correctly with it on.
 //
-// Off by default because it is correct but not proven faster: on x86 it
-// measured 8.46 -> 8.55 ms per 1000 draws, inside noise, because libm sin and
-// cos carry range reduction the guest's straight-line polynomial does not.
-// Worth re-measuring on ARM64, where the guest version's polynomial constants
-// are marshalled guest loads and cost relatively more.
-REXCVAR_DEFINE_BOOL(bd_host_sincos, false, kCvarGroup,
+// On by default. It was first recorded as "correct but not proven faster",
+// measured at 8.46 -> 8.55 ms per 1000 draws - and that measurement was taken
+// on the tail of the perf CSV, which is a menu the run gets stuck in and where
+// almost nothing calls sin. Re-measured over field frames only
+// (tools/perf_summary.py), across two pairs run in both orders at identical
+// draw counts: other_ms 5.78 -> 4.10 and 6.84 -> 3.75, so between a third and
+// a half of the main thread's time. The guest version is 222 recompiled
+// instructions reading its polynomial constants back through marshalled guest
+// loads; the host version is two libm calls.
+REXCVAR_DEFINE_BOOL(bd_host_sincos, true, kCvarGroup,
                     "Compute bdSinCos on the host instead of the guest.");
 // bdMatrixCopyAligned is 2.0% of samples and copies 64 bytes with four rounds
 // of the unaligned-vector idiom. Whether that is exactly a byte copy is checked

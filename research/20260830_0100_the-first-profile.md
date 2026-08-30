@@ -128,6 +128,29 @@ character, foliage, cliffs and shadows all present and nothing popping.
 
 `bd_cull_early` reverts to the old ordering without a rebuild.
 
+## Correction: host bdSinCos is a 30-45% win, and was dismissed by bad measurement
+
+Recorded below as "correct but not proven faster". That was wrong, and the reason is the reason
+everything else below it needs re-reading: it was measured on **the tail of the perf CSV**, which is
+a menu the run gets stuck in and where almost nothing calls sin.
+
+Re-measured over field frames only (`tools/perf_summary.py`), two pairs run in both orders, ~9,000
+field frames each, identical draw counts:
+
+| | host sincos ON | OFF | draws |
+| --- | --- | --- | --- |
+| pair 1 | 4.10ms | 5.78ms | 521 / 519 |
+| pair 2 | 3.75ms | 6.84ms | 523 / 523 |
+
+**Between a third and a half of the main thread's time.** The guest version is 222 recompiled
+instructions that read their polynomial constants back through marshalled guest loads; the host
+version is two libm calls. `bd_host_sincos` is now on by default, with the stereo check and a
+captured frame confirming the world is still oriented correctly.
+
+**Everything else dismissed on this page was measured the same wrong way** and is worth re-running
+against the field-frame metric before staying closed - the matrix copy at "0.3%", the buffer memo,
+and the tile-traffic upper bound especially.
+
 ## The measurement floor, which decides what is worth trying next
 
 Cross-run variance on the desktop is around +/-20%: the same binary measured 4.20, 5.93 and 6.69ms
