@@ -51,6 +51,7 @@ REXCVAR_DECLARE(bool, bd_mv_capture_array);
 REXCVAR_DECLARE(bool, bd_mv_capture_resolved);
 REXCVAR_DECLARE(double, bd_capture_after_s);
 REXCVAR_DECLARE(i32, bd_capture_min_draws);
+REXCVAR_DECLARE(bool, bd_debug_present_clear);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 
 namespace bd::gpu {
@@ -296,6 +297,13 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
                            plume::RenderTextureBarrier(
                                back, plume::RenderTextureLayout::COLOR_WRITE));
   s.command_list->setFramebuffer(back_fb);
+
+  // Splits "present is broken" from "the blit produces nothing", which reading
+  // the code has not settled. Magenta on screen means the swapchain acquire,
+  // present and layout transitions all work and the gamma blit draws nothing;
+  // still black means the frame never reaches the display at all.
+  if (REXCVAR_GET(bd_debug_present_clear))
+    s.command_list->clearColor(0, plume::RenderColor(1.0f, 0.0f, 1.0f, 1.0f));
 
   // Fits what BD actually rendered rather than what the cvar asks for, so a
   // live aspect change or a resize cannot stretch the image: neither moves the

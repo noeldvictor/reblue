@@ -314,6 +314,14 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
 // On its own this changes nothing about the image - the draws come out in the
 // same order - and that is the point: it is the step that has to be proven
 // pixel-identical before bd_draw_sort is allowed to reorder anything.
+// Clear the back buffer to magenta before the gamma blit.
+//
+// The flat present path renders black on both the AYN Thor and the desktop
+// while the Quest's XR path is correct, and reading the code has not settled
+// whether the frame never reaches the display or the blit draws nothing.
+REXCVAR_DEFINE_BOOL(bd_debug_present_clear, false, kCvarGroup,
+                    "Clear the back buffer to magenta before the present blit.");
+
 REXCVAR_DEFINE_BOOL(bd_draw_defer, false, kCvarGroup,
                     "Defer draw submission to the end of the render pass.");
 

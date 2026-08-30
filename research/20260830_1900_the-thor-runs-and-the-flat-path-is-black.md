@@ -1,4 +1,8 @@
-# The AYN Thor runs now, and the flat renderer is what is black
+# The AYN Thor runs now; the flat renderer is black on the desktop and UNCONFIRMED on the Thor
+
+**CORRECTION, appended below.** The Thor half of the "flat path is black" claim does not hold up -
+its screenshot was taken on a dual-screen device where another app held focus. Read the correction
+before the table.
 
 2026-08-30.
 
@@ -72,3 +76,44 @@ That narrows it to what differs between "copy `back` into an XR image" and "pres
 swapchain acquire/present pairing, the image index, and the layout transitions around it. Note
 `have_rt_blit` skips the blit entirely for an MSAA render target and only logs at `BD_ERROR` five
 times - worth checking that it is not silently skipping.
+
+
+---
+
+## Correction: the Thor's black screen is not established
+
+`adb exec-out screencap` returned 0.0% non-black, and that was written up above as a second
+independent confirmation that the flat present path renders nothing. It is not one.
+
+`dumpsys window` says:
+
+```
+mCurrentFocus=Window{... com.odin.dualscreen.assistant}
+mFocusedApp=ActivityRecord{... com.android.launcher3/.secondarydisplay.SecondaryDisplayLauncher}
+```
+
+The AYN Thor is a **dual-screen** device with two HWC displays, and reblue - on `mDisplayId=0`,
+alive, window present - never takes focus. `am start` does not bring it forward, and
+`screencap -d 0` is rejected because the displays have 64-bit IDs rather than small indices. So the
+capture is of a display state that another app is driving, and a black result cannot be attributed
+to reblue's renderer.
+
+Pure black is *odd* for a launcher overlay, so this is not evidence the Thor renders fine either.
+It is simply not evidence in either direction.
+
+**What survives, and is solid** - it comes from the log rather than a screenshot:
+
+- `Int64` is gone, shader compilation failures are **0** (they were the blocker), and pipeline
+  failures went 21,615 -> 5,449 -> **245**.
+- The Thor runs a field scene at `dt 33.75ms | gpu_total 21.50ms | draws 833` - **29.6 fps**.
+- `OpenXR: no usable runtime (-51), staying on the flat renderer`, so that frame rate is the flat
+  path doing real work.
+
+**What is now single-source**: the flat path rendering black is established on the **desktop** only,
+where the instrument photographs reblue's own window by process handle and the in-app capture
+agrees. The claim "two very different GPUs agree" was overstated and is withdrawn.
+
+**To settle the Thor**, get a capture that cannot be confused by another display: run with
+`bd_capture_after_s` and `bd_capture_min_draws` and read the in-app capture, which photographs the
+back buffer directly and does not care what the compositor is doing. That run was started and the
+Quest disconnection ended the session before it completed.

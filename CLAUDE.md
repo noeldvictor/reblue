@@ -381,11 +381,14 @@ Not a desktop bug. Measured 2026-08-30 on three targets:
 | target | present path | renders |
 | --- | --- | --- |
 | Quest 2 | OpenXR, XR swapchain | **yes** |
-| AYN Thor (Adreno 740) | flat swapchain | **no** |
+| AYN Thor (Adreno 740) | flat swapchain | **unconfirmed** - see below |
 | Desktop Vulkan | flat swapchain | **no** |
 
-Two very different GPUs and three independent instruments (`adb exec-out screencap`,
-`tools/shot_window.ps1`, the in-app capture) agree. It predates the constant rewrite. See
+**Established on the desktop only.** The Thor row is NOT confirmed: it is a dual-screen device
+where `com.odin.dualscreen.assistant` holds focus, reblue never comes forward, and
+`screencap -d <n>` is rejected because its displays have 64-bit IDs - so a black screenshot there
+cannot be attributed to the renderer. Use the in-app capture on that device, which photographs the
+back buffer and does not care what the compositor is doing. It predates the constant rewrite. See
 `research/20260830_1900_the-thor-runs-and-the-flat-path-is-black.md`.
 
 **The AYN Thor is otherwise unblocked and fast.** `Int64` is gone, so shader compilation failures
