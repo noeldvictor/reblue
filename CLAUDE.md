@@ -1349,9 +1349,22 @@ game composites into a headset at its native frame rate with working controllers
      sprite stride, and doubling one squashes the whole source into half the target. Only
      `pVertexData == kTextQuadBatchEA` separates them.
 
-     Still open: the credits text ("Akira Toriyama") lands in one eye, so it does not come through
-     the glyph batch either. Finding its path is the remaining half. The proper VR answer for all
-     of it is a head-locked layer, which `bd_vr_hud_mode` already exists for.
+     **The right discriminator is known and is not a vertex shape.** The call graph names the
+     guest's own 2D path: `Visual__DrawSortedQueues` -> `Visual__DrawVerticesUP` (0x82425710, only
+     two callers) is where Blue Dragon flushes its sorted 2D queues - sprites, the intro credits,
+     the HUD - and it wraps `D3DDevice_BeginVertices`/`EndVertices`. Bracketing that call marks
+     every draw inside it as an overlay. `VideoState::overlay2DScope` exists for it and is read.
+
+     **What blocks it is a config detail, not the design.** `REX_HOOK_RAW(Visual__DrawVerticesUP)`
+     fails to link with `duplicate symbol` - the recompiler still emits a body for it, where it does
+     not for e.g. `bdSoundBankPlayCue`, which the same macro replaces cleanly. Find what marks a
+     function as host-implemented and this lands; failing that, a pair of midasm hooks on its entry
+     and its `blr` does the same job with the mechanism `config/hooks/*.toml` already uses.
+
+     Still open until then: the credits text ("Akira Toriyama") lands in one eye. The proper VR
+     answer for all of it is a head-locked layer - `bd_vr_hud_mode` is defined, stored in
+     `xr::Settings`, and **read by nothing that renders**, so that is dead config waiting on the
+     same discriminator.
    - **The CPU cost is the recompiled guest, not the renderer and not draw submission.** Measured on
      the desktop, RTX 3060, 1920x1080, VR + stereo: `dt 17.9ms, fence 0.35ms, draws 2070`, and the
      renderer's own share of that frame is `mutex 0.1ms, bindFB 0.3ms, flushState 2.1ms` - about

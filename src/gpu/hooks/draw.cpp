@@ -311,7 +311,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // viewports like scene geometry, but **no eye offset**: an overlay belongs at
   // the same place in both eyes, where it fuses at screen depth. Parallax here
   // would push the HUD into the world.
-  const bool overlay_2d = s.overlay2D;
+  const bool overlay_2d = s.overlay2D || s.overlay2DScope;
   s.overlay2D = false;
   if (!REXCVAR_GET(bd_stereo) || (!scene_pass && !overlay_2d)) {
     // Counted, because "stereo does nothing" has three different causes and

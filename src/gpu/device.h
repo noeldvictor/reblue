@@ -288,6 +288,12 @@ struct VideoState {
   // an eye offset; post blits, which arrive through the same path, must not be
   // doubled at all.
   bool overlay2D = false;
+  // True for the whole of Visual__DrawVerticesUP, which is where the guest
+  // flushes its sorted 2D queues - sprites, the intro credits, the HUD. That
+  // is a far better discriminator than the shape of the vertices, because a
+  // full-screen post blit is the same shape as a UI sprite and must not be
+  // doubled.
+  bool overlay2DScope = false;
 
   // 'interface' is a Windows.h macro (#define interface struct).
   std::unique_ptr<plume::RenderInterface> render_iface;
