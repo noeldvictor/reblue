@@ -17,6 +17,32 @@ and was worn: the report was "blurry gibberish, I can see shit". Quarter resolut
 3664x1920 panel is unusable, and a frame-time number that ignores that is worthless. Readability
 first, then earn the frame rate back from the CPU.
 
+### The route to 72Hz, from the numbers and from what the platform vendors say
+
+The measured frame is `~2000 draws, ~320k verts, fence 0.2-0.35ms, CPU ~20ms`. The GPU is idle, so
+every one of these attacks the CPU, in order of expected return:
+
+1. **Instancing.** Meta's own Quest optimisation guidance is blunt about this: combining objects
+   into a single draw call is worth it *even when no geometry is saved*, because the cost is
+   preparing and issuing the draw, not the triangles. Instancing puts the per-copy transforms in GPU
+   memory so they batch into one call. **We have the repeats already**: 2083 `bdSceneNodeDrawSingle`
+   calls take only **1270 distinct first arguments**, so roughly 800 draws a frame are duplicates of
+   something already submitted.
+2. **Batch by pipeline.** 715 PSO switches against 2070 draws. Sorting collapses most of those and
+   the descriptor rebinds that ride along with them.
+3. **Multi-threaded command recording** via secondary command buffers. The renderer records on one
+   guest thread today. Vulkan's guidance is to divide recording across a *small* number of secondary
+   buffers - their invocation is not free, so a handful, not one per object.
+4. **Command pool discipline.** `vkResetCommandPool` resets every buffer it allocated in one go and
+   lets the pool reuse its memory, which is cheaper than per-buffer resets.
+
+Two things the same sources rule out for us, so nobody spends a day on them: shader and texture
+work, because the GPU finishes in a third of a millisecond; and anything that trades image quality
+for frame time, because the first headset session failed on *readability*, not speed.
+
+Sources: Meta's "Showdown on Quest" optimisation write-up, Qualcomm's Adreno mobile best practices,
+and the Vulkan docs on command buffer usage and multi-threaded recording.
+
 ## THE RULE. Read this before anything else, and never break it.
 
 **The most critical priority in this repository is rebuilding the foundation of Blue Dragon's
