@@ -170,18 +170,28 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
 
   // Flatten any two-layer surface this draw is about to sample.
   //
-  // This is the only honest "about to be read" point available. The texture
-  // bind hook never sees these - Blue Dragon binds through sampler fetch
-  // constants written by unhooked recompiled code - and the render-target
-  // change is too early: the scene surface is bound and unbound several times
-  // a frame, so resolving there fired on a half-drawn array and then marked
-  // itself done, and the big scene target was never resolved at all.
+  // **Follow sourceSurface.** A bound slot holds a *texture*, and the render
+  // surface behind it hangs off `sourceSurface` - UploadSharedConstants does
+  // exactly this hop when it publishes descriptor indices. Checking the slot
+  // itself matches nothing, which is what made an earlier version of this
+  // resolve zero times and read as "the guest never tells us".
   //
-  // Here the writes are provably finished, because something is sampling it.
-  for (bd::gpu::GuestTexture *bound : s.textures) {
-    if (bound && bound->layers > 1 && bound->multiviewDirty &&
-        bound != s.render_target && s.command_list_open) {
-      bd::gpu::ResolveMultiviewSurfaceLocked(s, bound);
+  // This is the honest "about to be read" point: the writes are provably
+  // finished, because something is sampling it. The render-target change is
+  // too early - the scene surface is bound and unbound several times a frame,
+  // so resolving there fires on a half-drawn array.
+  if (s.command_list_open) {
+    for (bd::gpu::GuestTexture *bound : s.textures) {
+      if (!bound)
+        continue;
+      bd::gpu::GuestTexture *surf =
+          (bound->sourceSurface && bound->sourceSurface->texture)
+              ? bound->sourceSurface
+              : bound;
+      if (surf->layers > 1 && surf->multiviewDirty &&
+          surf != s.render_target && surf != s.depth_stencil) {
+        bd::gpu::ResolveMultiviewSurfaceLocked(s, surf);
+      }
     }
   }
 

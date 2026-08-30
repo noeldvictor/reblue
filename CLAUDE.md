@@ -68,6 +68,34 @@ was measured at 20.6ms against side-by-side's 18.3ms and reported as slower - wh
 counts once per *guest* draw, before the per-eye loop, so that column cannot see the doubling at
 all. The measurement was both prohibited and meaningless.
 
+### Rip out the X360 patterns. This is the top priority.
+
+The recompiled code still thinks in 360 terms - big-endian structs, 360 resource layouts, D3D9 call
+semantics - and the renderer still translates them one for one. **It has to think in modern ARM64
+(Quest, AYN Thor) and PC terms instead.** These are the replacements, and they are the work:
+
+| X360 pattern | modern replacement |
+| --- | --- |
+| one guest draw -> one Vulkan draw | batch by pipeline, indirect draws |
+| per-draw 8 KB constant swap | persistent UBO, dirty-tracked |
+| fetch constants opaque to host | record binds so the renderer knows what is sampled |
+| draw everything, cull by distance | GPU occlusion culling |
+| render twice for stereo | multiview |
+
+**The entry points cannot be deleted** - the recompiled game calls `D3DDevice_*` by address, and
+removing them means rewriting the game's own rendering code. That is not what this asks for. Keep
+the signature, replace the insides: a hook may batch, defer, cull or fold several guest draws into
+one, as long as the guest cannot tell.
+
+Note none of this is Direct3D. Those names are the 360's own D3D9-derived ABI, mapped to host C++ in
+`config/functions.toml`, and every one of them already drives plume -> Vulkan. The D3D9 shape is the
+*interface*, not the backend - which is exactly why the insides are free to change.
+
+**`fetch constants opaque to host` is the one blocking other work right now.** Blue Dragon binds
+textures through sampler fetch constants written by unhooked recompiled code, so the renderer cannot
+tell when a render target is about to be sampled - which is why the multiview resolve has nowhere to
+hook, and why anything that needs to know what a draw reads is currently blind.
+
 Where the work goes:
 
 | technique | state | the seam |
@@ -102,6 +130,12 @@ Everything except the trigger now exists and is verified:
 
 **So the guest never tells the host it is about to sample a render target.** That is the real
 blocker, and it is why the array reads black downstream even though the scene renders into it.
+
+Scanning `s.textures[]` and **following `sourceSurface`** - the hop `UploadSharedConstants` makes
+when it publishes descriptor indices - does finally make the resolve fire. It still resolves the
+wrong surfaces: the log shows `960x540` and `120x67`, the post chain, never the `1920x1080` scene
+target, which is either never bound as a texture through that array or is still the render target
+when it would be. Recorded rather than guessed at.
 
 The next move is one of: hook the guest function that ends the scene pass and resolve there; make
 the fetch-constant path record which surfaces it binds so a sample point exists at all; or go to the
