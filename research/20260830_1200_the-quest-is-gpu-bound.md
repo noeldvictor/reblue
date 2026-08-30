@@ -75,6 +75,47 @@ shipped PSO residual holds 929 entries and **none of them has `multiview` set**,
 `ResidualKey` (`src/gpu/pipeline/pso_recorder.cpp:68-75`) masks only `sampleCount` and
 `enableAlphaToCoverage` - so under `bd_stereo_multiview` every scene pipeline is a genuine miss.
 
+## Where the 139ms of draw goes: every target is two-layer
+
+The per-target census from the same run:
+
+```
+target 1280x720x2L:  52 draws/frame,  47 Mpix/frame
+target 1280x720x2L:  52 draws/frame,  47 Mpix/frame
+target 1280x720x2L:  50 draws/frame,  46 Mpix/frame
+target 1376x720x2L:   7 draws/frame,   6 Mpix/frame
+target  344x193x2L:  37 draws/frame,   2 Mpix/frame  (x2)
+```
+
+**Three separate 1280x720 targets, and every one of them is `2L`** - roughly 140 Mpix/frame of
+potential fill. `surface_pool.cpp:467-468` gives **two layers to every render target** when
+`bd_stereo_multiview` is on, not just to the scene, so the entire post chain rasterises twice.
+
+That was a deliberate change and it was correct at the time: a single-layer post target takes a
+single-view pipeline, writes layer 0 and collapses the stereo pair, which cost a session and a half
+to find. But the design note it superseded
+(`research/20260829_1900_multiview-needs-a-resolve-not-an-array-heap.md`) called for the opposite
+shape - render the *scene* with multiview, resolve once into a side-by-side single-layer image, and
+run the post chain mono over it, exactly as `bd_stereo` already does. On a desktop the difference
+measured 4.9% of GPU. On a tiler at 140 Mpix it is the frame.
+
+**48 of the 83 barrier calls come from `TransitionResolveSources`** (`bar_drawfb 48`, `bar_resolve
+32`, `bar_occlusion 3`), and each one ends the active render pass - a full tile store and reload of a
+two-layer target. That is a second, smaller cost riding on the same decision.
+
+## Two things this run could not settle
+
+- **A cross-run render-scale comparison does not work here.** At `bd_render_scale=50` the game runs
+  at 39fps and **never reaches a field scene** in 200 seconds - autoplay presses buttons on a fixed
+  wall-clock schedule, so a faster frame rate desynchronises it and the run sits in a menu at ~115
+  draws. Two attempts, 100s and 200s, both stuck. Any A/B that changes frame rate has this problem;
+  the within-run `bd_ab_flag` mechanism exists precisely because of it, and `bd_render_scale` is not
+  a bool so it cannot use it.
+- **Whether the recompiled guest matters** at a configuration where the GPU is not the wall. At
+  `render_scale=25` earlier notes measured it as ~77% of device CPU. Here it is 0.1% of samples,
+  because the CPU is asleep waiting on the fence. Both can be true; the recomp case has to be
+  re-measured once the GPU stops being the ceiling.
+
 ## What this does not change
 
 The stereo work stands: multiview renders correct crossed depth, verified from a capture, and the
