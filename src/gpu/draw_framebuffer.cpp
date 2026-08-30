@@ -9,6 +9,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include <atomic>
+#include "gpu/draw_queue.h"
 #include "gpu/frame.h"
 
 #include <mutex>
@@ -198,6 +199,11 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
   }
   if (!sampled_count)
     return;
+  // The barrier ends the render pass, so anything queued has to come out first
+  // or it would be emitted against a pass that no longer exists. Same
+  // null-framebuffer guard as above.
+  if (s.draw_framebuffer_bound)
+    bd::gpu::DrawQueueFlush(s.command_list);
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, sampled,
                            sampled_count);
   NoteBarrierCall(sampled_count, BarrierSite::DrawFb);
@@ -370,6 +376,16 @@ bool Video::BindDrawFramebufferLocked() {
   if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds) {
     return true;
   }
+  // Anything queued belongs to the framebuffer that is about to be replaced -
+  // emit it while that framebuffer is still bound.
+  //
+  // Only when one actually is. plume starts a render pass lazily on the first
+  // draw, from the bound framebuffer, so emitting with none bound dereferences
+  // a null framebuffer inside getRenderPass - which is what the first four
+  // attempts at this crashed on, at address 0x10.
+  if (s.draw_framebuffer_bound)
+    bd::gpu::DrawQueueFlush(s.command_list);
+
   // The pass is about to end regardless, so any barrier issued here is free.
   if (REXCVAR_GET(bd_barrier_hoist))
     FlushWriteLayoutToRead(s, rt, ds);

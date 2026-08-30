@@ -8,6 +8,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include <algorithm>
 #include "gpu/frame.h"
 
 #include <cstddef>
@@ -162,6 +163,15 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 // invocation.
 static void BindGuestConstants(VideoState &s) {
 #if !defined(REBLUE_D3D12)
+  if (s.deferring_draw) {
+    // Recorded, not bound. The three offsets are the draw's whole material -
+    // transform, parameters, and every texture and sampler descriptor index -
+    // so capturing them captures what the draw reads.
+    s.pending.constant_offsets[0] = s.constant_dyn_offsets[0];
+    s.pending.constant_offsets[1] = s.constant_dyn_offsets[1];
+    s.pending.constant_offsets[2] = s.constant_dyn_offsets[2];
+    return;
+  }
   if (s.texture_descriptor_set && s.command_list) {
     static bool told = false;
     if (!told && (s.constant_dyn_offsets[0] || s.constant_dyn_offsets[1] ||
@@ -313,7 +323,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // residual nor predictor covered it. Warns once per pipeline, and
     // REBLUE_PSO_CAP builds also capture it for the residual/template tooling.
     RecordPipelineState(lookup, CurrentRenderPassId(), built);
-    s.command_list->setPipeline(pso);
+    if (!s.deferring_draw)
+      s.command_list->setPipeline(pso);
     NotePSOSwitch();
     s.current_pso = pso;
   } else if (!s.current_pso) {
@@ -389,14 +400,50 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   if (s.dirtyStates.vertexStreamFirst <= s.dirtyStates.vertexStreamLast) {
     const u32 first = s.dirtyStates.vertexStreamFirst;
     const u32 count = u32{s.dirtyStates.vertexStreamLast} - first + 1u;
-    s.command_list->setVertexBuffers(first, s.vertex_views + first, count,
-                                     s.input_slots + first);
+    // The union, not the latest range. The immediate path binds only what
+    // changed, so the binding a draw actually sees is everything bound since
+    // the command list began - which is what a deferred draw has to replay.
+    const u32 last = first + count - 1u;
+    if (s.bound_vertex_count == 0) {
+      s.bound_vertex_first = first;
+      s.bound_vertex_count = count;
+    } else {
+      const u32 lo = std::min(s.bound_vertex_first, first);
+      const u32 hi = std::max(s.bound_vertex_first + s.bound_vertex_count - 1u,
+                              last);
+      s.bound_vertex_first = lo;
+      s.bound_vertex_count = hi - lo + 1u;
+    }
+    if (!s.deferring_draw) {
+      s.command_list->setVertexBuffers(first, s.vertex_views + first, count,
+                                       s.input_slots + first);
+    }
   }
 
   // Re-binds only when SetIndices changed buffer/size/format, or
   // BeginCommandList force-dirtied after a command list reset.
-  if (s.dirtyStates.indices && s.index_view.buffer.ref != nullptr) {
+  if (s.deferring_draw) {
+    // Unconditional, unlike the immediate path: the dirty flag says "changed
+    // since the last draw", which is meaningless once draws are reordered.
+    s.pending.index_view = s.index_view;
+    s.pending.has_index_buffer = s.index_view.buffer.ref != nullptr;
+  } else if (s.dirtyStates.indices && s.index_view.buffer.ref != nullptr) {
     s.command_list->setIndexBuffer(&s.index_view);
+  }
+
+  if (s.deferring_draw) {
+    // The complete binding, not the delta. Copied by value because the guest
+    // overwrites its own views between draws and a queued draw is replayed
+    // long after that.
+    s.pending.pipeline = s.current_pso;
+    const u32 first = s.bound_vertex_first;
+    const u32 count = s.bound_vertex_count;
+    for (u32 i = first; i < first + count && i < 16u; ++i) {
+      s.pending.vertex_views[i] = s.vertex_views[i];
+      s.pending.input_slots[i] = s.input_slots[i];
+    }
+    s.pending.vertex_first = first;
+    s.pending.vertex_count = count;
   }
 
   s.dirtyStates = DirtyStates(false);

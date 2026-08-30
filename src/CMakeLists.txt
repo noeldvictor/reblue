@@ -8,6 +8,7 @@ set(reblue_backend_only
     gpu/device_pipelines.cpp
     gpu/draw.cpp
     gpu/draw_framebuffer.cpp
+    gpu/draw_queue.cpp
     gpu/dred.cpp
     gpu/frame_ring.cpp
     gpu/gpu_profiling.cpp

@@ -9,6 +9,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include "gpu/draw_queue.h"
 #include "gpu/frame.h"
 
 #include <algorithm>
@@ -1032,6 +1033,12 @@ void Video::Present(GuestTexture *frontBuffer) {
     AbandonFrame(s, lock);
     return;
   }
+
+  // By here the queue must already be empty: every render pass ends at a
+  // framebuffer change or a barrier, and both flush. Emitting here instead
+  // would be wrong rather than late - there is no bound framebuffer to emit
+  // against, and no pipeline layout, which is an access violation and was one.
+  bd::gpu::DrawQueueDiscardStragglers();
 
   // Reopens a closed list, so end() below always has one.
   BeginCommandList(s);

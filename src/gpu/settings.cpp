@@ -308,6 +308,25 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
 // photographs a menu or a loading screen as often as the scene, and a black
 // grab is indistinguishable from a rendering bug. A desktop field scene is
 // ~2000 draws and a Quest one ~550; a menu is 20-800.
+// Collect a render pass's draws and emit them at the end of the pass instead of
+// one at a time as the guest submits them.
+//
+// On its own this changes nothing about the image - the draws come out in the
+// same order - and that is the point: it is the step that has to be proven
+// pixel-identical before bd_draw_sort is allowed to reorder anything.
+REXCVAR_DEFINE_BOOL(bd_draw_defer, false, kCvarGroup,
+                    "Defer draw submission to the end of the render pass.");
+
+// Sort the deferred draws: opaque grouped by pipeline and near-to-far, blended
+// left in submission order behind them.
+//
+// Grouping collapses pipeline switches (~114 against ~553 draws). Near-first is
+// what lets Adreno's low-resolution Z reject a hidden fragment before shading
+// it, which is why this is a GPU win and not only a CPU one. Requires
+// bd_draw_defer.
+REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
+                    "Sort deferred draws by pipeline and depth.");
+
 REXCVAR_DEFINE_INT32(bd_capture_min_draws, 0, kCvarGroup,
                      "Delay bd_capture_after_s until a frame has this many "
                      "draws, so the capture lands on a scene not a menu.")

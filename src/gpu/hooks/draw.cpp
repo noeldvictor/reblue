@@ -205,8 +205,23 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     }
   }
 
+  // Arm deferral before the flush, because the flush is what resolves a draw
+  // into the handful of things worth recording.
+  //
+  // Not on the side-by-side stereo path: that submits the same draw twice with
+  // different viewports, and a queued draw carries no viewport. Multiview needs
+  // no such loop - the hardware replicates - so the headset path defers fine.
+  // Not on the quad-list path either, which rewrites the index binding itself.
+  const bool side_by_side = REXCVAR_GET(bd_stereo) &&
+                            !REXCVAR_GET(bd_stereo_multiview);
+  s.deferring_draw = bd::gpu::DrawQueueEnabled() && !side_by_side &&
+                     primitive_type != 13;
+  if (s.deferring_draw)
+    s.pending = bd::gpu::QueuedDraw{};
+
   const auto t_fb = phase_timing ? bd::gpu::DrawPhaseNow() : 0;
   if (!bd::gpu::Video::FlushRenderStateLocked(device_guest)) {
+    s.deferring_draw = false;
     return; // FlushRenderState logs its own reason
   }
   if (phase_timing) {
@@ -259,6 +274,26 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // the result is the same image twice, side by side. That is deliberate - it
   // separates "can the renderer emit every draw twice" from "are the per-eye
   // matrices right", and the matrices are the part that already has unit tests.
+  if (s.deferring_draw) {
+    bd::gpu::QueuedDraw &q = s.pending;
+    q.indexed = args.indexed;
+    q.count = args.vertexOrIndexCount;
+    q.start_index = args.startIndex;
+    q.base_vertex = args.baseVertexIndex;
+    q.start_vertex = args.startVertex;
+    // D3D9's "no blend" is ONE/ZERO. Anything else depends on what is already
+    // in the framebuffer, so it keeps submission order when the queue sorts.
+    q.blended = !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
+                  s.pipelineState.destBlend == plume::RenderBlend::ZERO);
+    // Depth is not populated yet, so sorting currently groups by pipeline only.
+    // Front-to-back needs a view-space distance per node, which is the next
+    // piece and comes from the same place bd_cull_distance reads.
+    q.depth = 0.0f;
+    bd::gpu::DrawQueuePush(q);
+    s.deferring_draw = false;
+    return;
+  }
+
   const auto emit = [&]() {
   if (primitive_type == 13) {
     u32 quads = args.vertexOrIndexCount / 4;

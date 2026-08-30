@@ -30,6 +30,8 @@ namespace rex::ui {
 class Window;
 }
 
+#include "gpu/draw_queue.h"
+
 namespace bd::gpu {
 
 class Video {
@@ -421,6 +423,19 @@ struct VideoState {
   // the single constant buffer, supplied as dynamic uniform buffer offsets when
   // set 0 is bound. Replaces three push-constant writes per draw.
   u32 constant_dyn_offsets[3]{};
+
+  // While true, FlushRenderState resolves a draw's state into `pending` instead
+  // of binding it, and DispatchDraw queues the draw rather than emitting it.
+  // See gpu/draw_queue.h.
+  // The vertex stream range currently bound, as opposed to the range that
+  // changed this draw. Deferral has to record the whole binding: the dirty
+  // range is "what changed since the last draw", which stops meaning anything
+  // the moment draws are reordered.
+  u32 bound_vertex_first = 0;
+  u32 bound_vertex_count = 0;
+
+  bool deferring_draw = false;
+  QueuedDraw pending{};
 
   // Surfaces currently in a write layout, so they can all be flipped to
   // SHADER_READ in one batch when the render target changes. See
