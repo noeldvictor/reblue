@@ -43,6 +43,8 @@ REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
 
+REXCVAR_DECLARE(bool, bd_draw_phase_timing);
+
 namespace {
 
 namespace xe = rex::graphics::xenos;
@@ -131,14 +133,21 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   //
   // Kept permanently rather than deleted after use - this is the number that
   // decides every renderer optimisation, and it was expensive to not have.
-  const auto t_enter = bd::gpu::DrawPhaseNow();
+  //
+  // Gated, because the estimate above was wrong by a factor of 25. It reasoned
+  // clock_gettime at ~25ns and ~100us a frame; the first real profile of the
+  // process put NoteDrawPhases at 3.4% of all CPU samples, because it is four
+  // clock reads and three atomics on every one of ~1200 draws. The capability
+  // is worth keeping and the default cost is not.
+  const bool phase_timing = REXCVAR_GET(bd_draw_phase_timing);
+  const auto t_enter = phase_timing ? bd::gpu::DrawPhaseNow() : 0;
 
   // One lock across the whole recording sequence: loader threads record texture
   // uploads and Present records under the same mutex, and the per-frame command
   // list they all write is single-producer.
   auto &s = bd::gpu::state();
   std::unique_lock<std::mutex> lock(s.mutex);
-  const auto t_locked = bd::gpu::DrawPhaseNow();
+  const auto t_locked = phase_timing ? bd::gpu::DrawPhaseNow() : 0;
   bd::gpu::Video::OpenCommandListLocked();
 
   // PSO key includes topology, so set it before any flush.
@@ -195,12 +204,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     }
   }
 
-  const auto t_fb = bd::gpu::DrawPhaseNow();
+  const auto t_fb = phase_timing ? bd::gpu::DrawPhaseNow() : 0;
   if (!bd::gpu::Video::FlushRenderStateLocked(device_guest)) {
     return; // FlushRenderState logs its own reason
   }
-  const auto t_state = bd::gpu::DrawPhaseNow();
-  bd::gpu::NoteDrawPhases(t_enter, t_locked, t_fb, t_state);
+  if (phase_timing) {
+    const auto t_state = bd::gpu::DrawPhaseNow();
+    bd::gpu::NoteDrawPhases(t_enter, t_locked, t_fb, t_state);
+  }
 
   // Which target is this draw hitting, and how big is it? The GPU counters say
   // ~167M fragments a frame across ~2822 draws - about 59,000 fragments per

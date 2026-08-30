@@ -430,6 +430,11 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // tools/profile_quest.py has never produced a profile. This samples ourselves.
 // Restores the old precision-spin tail on guest Sleep. Measured at 15.9% of
 // all CPU samples, which is why it is off.
+// Four clock reads and three atomics per draw. Measured at 3.4% of all CPU
+// samples at ~1200 draws a frame, which is why it is off by default; the
+// mutex/bindFB/flushState split in the [perf] line needs it.
+REXCVAR_DEFINE_BOOL(bd_draw_phase_timing, false, kCvarGroup,
+                    "Per-draw phase timing for the [perf] breakdown.");
 REXCVAR_DEFINE_BOOL(bd_sleep_spin, false, kCvarGroup,
                     "Busy-wait the tail of a guest Sleep for precision.");
 REXCVAR_DEFINE_BOOL(bd_sample_profiler, false, kCvarGroup,

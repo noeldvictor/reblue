@@ -131,20 +131,27 @@ def symbolize_pe(image, offsets):
                           "--demangle", "--output-style=LLVM"],
                          input=stdin, capture_output=True, text=True,
                          errors="ignore")
-    names, cur = {}, 0
+    names = {}
     lines = out.stdout.splitlines()
     i = 0
     for off in offsets:
-        name = None
-        # each record is: name, file:line, blank
+        # A record is one or more (name, file:line) pairs then a blank line;
+        # the pairs are an inline stack, innermost first. Attribute to the
+        # OUTERMOST one - the function that actually got called - or a flat
+        # profile blames std::atomic::fetch_add instead of the code doing the
+        # counting, which is how the first read of this profile went wrong.
+        frames = []
         while i < len(lines):
             ln = lines[i]
             i += 1
             if ln.strip() == "":
                 break
-            if name is None:
-                name = ln.strip()
-        names[off] = name or "<unresolved>"
+            if not ln.strip():
+                continue
+            # names and file:line alternate; a file:line has a trailing :N:N
+            if not re.search(r":\d+:\d+$", ln.strip()):
+                frames.append(ln.strip())
+        names[off] = frames[-1] if frames else "<unresolved>"
     return names
 
 
