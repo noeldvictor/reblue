@@ -582,8 +582,37 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // which is the same gate the host's side-by-side patch already uses, and its
   // absence is why multiview slid the whole image instead of adding depth.
   const bool stereo_on = REXCVAR_GET(bd_stereo_multiview) && vs.stereoEligible;
+  // One cvar, one meaning. bd_stereo_separation is calibrated on the
+  // side-by-side path, and the multiview shader needs ~23x the same number to
+  // produce the same parallax - so without this conversion the knob means two
+  // different things depending on a second cvar, which is exactly the trap
+  // bd_stereo/bd_stereo_multiview already sprang.
+  //
+  // Measured in one field scene, both paths, same build (the only comparison
+  // that means anything here - see the +/-30% cross-run note):
+  //
+  //   side-by-side, sep 0.03  ->  far +4  near  -7   spread 11px of a 960 eye
+  //   multiview,    sep 0.2   ->  far -2  near  -8   spread  6px of a 1920 layer
+  //   multiview,    sep 0.7   ->  far -4  near -26   spread 22px of a 1920 layer
+  //
+  // Linear in between (3.5x the input, 3.67x the output), and 22px over 1920
+  // is the same angle as 11px over 960 - so multiview 0.7 matches
+  // side-by-side 0.03 and the ratio is 23.3.
+  //
+  // WHY it is 23 and not 1 is NOT understood. Both paths add a constant to
+  // clip.x - the host at `m[0] += eye_skew`, the shader at
+  // `oPos.x += eyeSign * g_StereoSeparation` - and a multiview layer is twice
+  // the width of a side-by-side eye, so multiview should need *half*, not
+  // twenty-three times. The likeliest suspect is the host's constant landing
+  // on a coefficient of a position component that is not w, which would scale
+  // it by a typical guest coordinate; Blue Dragon units are centimetres, so
+  // that is the right order of magnitude. Not chased, because it would change
+  // the path that already works.
+  constexpr float kMultiviewSeparationScale = 23.3f;
   s.shared.stereoSeparation =
-      stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
+      stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_separation)) *
+                      kMultiviewSeparationScale
+                : 0.0f;
   s.shared.stereoConvergence =
       stereo_on ? static_cast<float>(REXCVAR_GET(bd_stereo_convergence)) : 0.0f;
   {

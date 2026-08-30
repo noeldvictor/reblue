@@ -95,14 +95,33 @@ side-by-side path already had:
 | 0.2, old sign | +2 | +8 | INVERTED, monotone with depth |
 | 0.2, corrected | **-2** | **-8** | **OK: crossed, near separating more than far** |
 
-## Open
+## The scale factor, measured
 
-**Multiview needs about seven times the separation side-by-side does, and that is unexplained.**
-Both add the same constant to `clip.x` - the host at `m[0] += eye_skew`, the shader at
-`oPos.x += eyeSign * (g_StereoSeparation - g_StereoConvergence * oPos.w)` - and a multiview layer is
-1920 wide against side-by-side's 960 eye, so multiview should show *twice* the pixel disparity for
-the same value, not a seventh. Something is scaling it. The range cap was 0.2, which was both the
-only working value and the largest legal one; it is now 1.0 so there is headroom to find out.
+The "7x" above was a first estimate against a figure from another scene on another day. Measured
+properly - both paths, one field scene, one build, which is the only comparison that means anything
+given the +/-30% cross-run spread:
+
+| path | separation | far | near | spread |
+| --- | --- | --- | --- | --- |
+| side-by-side | 0.03 | +4 | -7 | 11px of a 960-wide eye |
+| multiview | 0.2 | -2 | -8 | 6px of a 1920-wide layer |
+| multiview | 0.7 | -4 | -26 | 22px of a 1920-wide layer |
+
+Linear in between - 3.5x the input gives 3.67x the output - and 22px over 1920 is the same angle as
+11px over 960. **So multiview 0.7 matches side-by-side 0.03: a ratio of 23.3.**
+
+`bd_stereo_separation` therefore meant two different things depending on a second cvar, which is
+exactly the trap `bd_stereo`/`bd_stereo_multiview` had just sprung. It is now converted at the
+multiview seam, so one knob means one thing and **the stock default produces correct stereo on the
+multiview path**: far -4, near -26, crossed.
+
+**Why it is 23 and not 1 is still not understood**, and is the one thing left open here. Both paths
+add a constant to `clip.x` - the host at `m[0] += eye_skew`, the shader at
+`oPos.x += eyeSign * g_StereoSeparation` - and a multiview layer is twice the width of a
+side-by-side eye, so multiview should need *half*, not twenty-three times. The likeliest suspect is
+the host's constant landing on a coefficient of a position component that is not `w`, which would
+scale it by a typical guest coordinate - and Blue Dragon units are centimetres, which is the right
+order of magnitude. Not chased, because it would change the path that already works.
 
 **None of this is measured on ARM64.** Every number here is desktop. The Quest 2 has not been
 attached this session.
