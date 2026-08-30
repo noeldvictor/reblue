@@ -510,6 +510,16 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
         // be flattened into a normal texture before the post chain touches it.
         plume::RenderTextureDesc resolved_desc = desc;
         resolved_desc.arraySize = 1;
+        // Single-sample, always. The companion is what the resolve *writes* and
+        // what the post chain samples, and the resolve pipeline is built without
+        // multisampling - so inheriting the scene's sample count from `desc`
+        // leaves the pipeline and the companion's render pass mismatched, which
+        // Vulkan calls undefined.
+        //
+        // Correct on its own terms, and **not** the cause of the black
+        // companion: forcing it changed nothing. Recorded so the next person
+        // does not spend the run finding that out again.
+        resolved_desc.multisampling.sampleCount = plume::RenderSampleCount::COUNT_1;
         surface->resolvedHolder =
             CreateHostTexture(device, resolved_desc, "rt-surface-resolved");
         surface->resolvedTexture = surface->resolvedHolder.get();

@@ -77,9 +77,31 @@ surface's primary descriptor at *the resolved companion*. So the debug path samp
 it is writing into: a self-referential read that is black by construction and says nothing about the
 per-eye views.
 
-**Either test it with `bd_mv_redirect_srv=false`, or fix the debug path to sample the array's own
-view.** The per-eye view registration is therefore *not* eliminated - it is untested, and it is back
-at the top of the list.
+Tested properly, with `bd_mv_redirect_srv=false` so the descriptor points at the array rather than
+the companion: **still black.** So the per-eye views are not the cause either - the resolve draw
+writes nothing to the companion whatever it is given to sample.
+
+### Also not it: the companion's sample count
+
+`resolved_desc = desc` copies the scene surface's `multisampling.sampleCount`, and the resolve
+pipeline is built without multisampling, so with `bd_msaa` defaulting to 4 the pipeline and the
+companion's render pass were mismatched - undefined, and exactly the shape that draws nothing. The
+companion is now forced single-sample, which is correct on its own terms since it is a resolve
+target. **It changed nothing.**
+
+### So: the resolve draw cannot write the companion, and the reason is still unknown
+
+Eliminated by measurement: the source (both the per-eye views and the array's own descriptor), the
+sample count, the trigger timing (both the sampling trigger and a new render-target-transition one),
+the ordering relative to present, and everything upstream of the resolve including the array itself,
+which holds two correct views.
+
+What has not been checked is the companion's **framebuffer and render pass** as objects - whether
+`resolvedFramebuffer`, built once at surface creation from `RenderFramebufferDesc(attach, 1)`,
+is still valid and still bound to the texture `resolvedTexture` names by the time the resolve runs,
+given the pool can hand a `GuestTexture` a different physical texture. The per-eye *views* carry a
+guard for exactly that (`layerViewOf`); the companion framebuffer carries none. That is the next
+thing to look at, and `bd_mv_capture_resolved` verifies any fix in one run.
 
 That is the next change, and the two capture cvars above verify it in one run.
 
