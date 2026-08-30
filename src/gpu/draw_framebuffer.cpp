@@ -340,6 +340,16 @@ bool Video::BindDrawFramebufferLocked() {
   if (discard_ds)
     s.command_list->discardTexture(ds->texture);
 
+  {
+    // What does the depth-tested scene pass actually bind? Every layered
+    // framebuffer seen so far had no depth, which means the scene's target is
+    // not among them.
+    static std::atomic<int> n{0};
+    if (ds && n.fetch_add(1, std::memory_order_relaxed) < 10)
+      BD_INFO("[mv] scene bind rt {}x{} layers={} | ds {}x{} layers={}",
+              rt ? rt->width : 0u, rt ? rt->height : 0u,
+              rt ? rt->layers : 0u, ds->width, ds->height, ds->layers);
+  }
   plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, ds);
   if (!fb)
     return false;

@@ -176,7 +176,49 @@ Tested, and it is neither. Logging every `GetFramebuffer` call that has a layere
 No `CACHE HIT` anywhere, so (2) is out. And **not one call has a depth attachment**, so the draw
 path never asks for a layered framebuffer *with depth* - which is what the scene needs.
 
-## What that actually means
+## Retracted: that was a log-budget artifact, and the scene binds layered targets
+
+The section that stood here concluded the scene was never rendered into a layered surface. **It is
+wrong.** Logging the depth-tested binds directly:
+
+```
+[mv] scene bind rt 1920x1080 layers=2 | ds 1920x1080 layers=2
+[mv] scene bind rt  480x270  layers=2 | ds  480x270  layers=2
+```
+
+The scene binds a two-layer colour target **and** a two-layer depth target. The earlier
+`GetFramebuffer` log showed only `ds=null` calls because it was capped at ten and the present-path
+calls, which legitimately pass no depth, consumed every slot before a scene bind was reached.
+
+**That is the third wrong conclusion in this one investigation caused by a capped counter**, after
+`[mv] N mono pipelines so far, 0 multiview` (which only prints at its 40th and 200th, both during
+startup) and the framebuffer log before it. The lesson is worth more than the bug: **a bounded log
+answers "what happened first", never "what happens".** Count into a total and print the total, or
+filter to the case you care about before you cap, but do not read absence from a budget that
+something else spent.
+
+## Where it honestly stands
+
+Everything checked is correct:
+
+1. Surfaces are two-layer, colour and depth, scene and post chain.
+2. The scene binds both of them.
+3. Framebuffers get `viewMask=3`.
+4. Pipelines are multiview, `viewMask=3`.
+5. `PipelineState::multiview` follows the bound target.
+6. The resolve runs on the scene target every frame (fixed this session).
+7. The resolve pass and its draws execute.
+8. Sampling through the surface's own known-good descriptor is equally black.
+
+And the frame is still black. **I do not have the cause.** What is left unchecked is the one thing
+none of these touch: whether the *geometry* reaches the layered target - whether the draws that
+should fill it are being submitted at all under multiview, or are being culled, or are landing in
+layer 0 of something that is then not what is read. The next probe should be a colour, not a
+deduction: clear the scene target to magenta at the start of the frame and see whether the capture
+comes back magenta, black, or the scene. That distinguishes "nothing is drawn" from "something is
+drawn and then lost" in one run, and it does not depend on any counter.
+
+
 
 **When the scene draws, `rt->layers` is 1.** The whole post chain is layered - 1920x1080 down to
 120x67, all `layers=2`, exactly as `bd_stereo_multiview` intends - and the surface the guest binds
