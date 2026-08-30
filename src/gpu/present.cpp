@@ -207,6 +207,22 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // is provably open.
   if (rt && rt->layers > 1 && rt->multiviewDirty && rt->resolvedTexture)
     ResolveMultiviewSurfaceLocked(s, rt);
+  {
+    // Which surface does present actually hand the resolve, and is it the one
+    // the scene drew into? Sampling it through its own known-good descriptor
+    // still gives black, so the suspicion is that these are different objects.
+    static std::atomic<u32> n{0};
+    const u32 i = n.fetch_add(1, std::memory_order_relaxed);
+    if (i == 300 || i == 600) {
+      auto *drawn = s.last_drawn_rt[s.recording_slot()];
+      BD_INFO("[mv] present rt={:012X} {}x{} layers={} desc={} | last_drawn={:012X} "
+              "layers={} | back={:012X}",
+              u64(uintptr_t(rt)), rt ? rt->width : 0u, rt ? rt->height : 0u,
+              rt ? rt->layers : 0u, rt ? rt->descriptorIndex : 0u,
+              u64(uintptr_t(drawn)), drawn ? drawn->layers : 0u,
+              u64(uintptr_t(s.back_buffer_surface)));
+    }
+  }
 
   if (rt->layout != plume::RenderTextureLayout::COLOR_WRITE &&
       rt->layout != plume::RenderTextureLayout::SHADER_READ) {

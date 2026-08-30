@@ -89,12 +89,40 @@ renderer uses and which is known to work - instead of the per-eye views this fil
 black.** So the per-eye view registration is not the fault either, which is the fifth candidate
 eliminated and the one most people would have reached for.
 
-What is left is that the layered surface being resolved has no content in it at all. The scene is
-drawn with multiview pipelines into a `viewMask=3` framebuffer, and the surface present hands the
-resolve is apparently not the surface that received it. `SelectPresentSource` picks between
-`last_drawn_rt`, `back_buffer_surface`, `frontBuffer` and `last_resolved_dst`, and under multiview
-that chain has not been checked. **Start there**: log which surface `SelectPresentSource` returns and
-compare it against the one the scene draws bound, rather than assuming they are the same object.
+### And it is not the wrong surface either
+
+That was checked rather than assumed:
+
+```
+[mv] present rt=0001BBCB0310 1920x1080 layers=2 desc=163 | last_drawn=0001BBCB0310 layers=2
+```
+
+**Same object.** Present hands the resolve exactly the surface the scene drew into. Sixth cause
+eliminated.
+
+## Where it actually stands
+
+Six things are now ruled out, each by measurement rather than reading:
+
+1. Pipelines are multiview - `MULTIVIEW pipeline created, viewMask=3`.
+2. Framebuffers carry `viewMask=3`.
+3. `PipelineState::multiview` follows the bound target correctly.
+4. The resolve pass and its draws both execute (`bd_mv_debug_clear`).
+5. The per-eye views are not at fault (`bd_mv_debug_known_srv` is black too).
+6. Present resolves the same surface the scene drew into.
+
+So the layered surface genuinely has no content: the draws are issued, into a correctly-masked
+framebuffer, with correctly-masked pipelines, and nothing lands.
+
+**The next lead is the depth attachment.** The framebuffer log reads
+`rtLayers=2 dsLayers=0 -> viewMask=3` - colour is layered and there is no depth attachment on that
+framebuffer at all, while `[mv] layered surface 1920x1080 layers=2 depth=true` says a two-layer
+depth surface was created. Vulkan requires every attachment in a multiview render pass to have at
+least as many layers as the view mask needs, and a depth surface that is single-layer or absent
+where the pipeline expects one is another render-pass incompatibility of exactly the kind that
+already produced this symptom once (see the comment in `draw_framebuffer.cpp`, which records
+precisely this class of bug being found and fixed for the colour side). Check what `ds` is for the
+scene's framebuffer, and whether the depth surface it pairs with is the two-layer one.
 
 ## How to reproduce in 3 minutes, no device
 
