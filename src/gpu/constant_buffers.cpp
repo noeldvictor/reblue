@@ -30,7 +30,6 @@
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
 #include "gpu/d3d.h"
-#include "gpu/bindless_allocator.h"
 #include "gpu/device.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
@@ -175,26 +174,24 @@ bool CreateChunk(UploadChunk &chunk) {
   }
   chunk.gpuBase = chunk.buffer->getDeviceAddress();
 
-#if !defined(REBLUE_D3D12)
-  // Bind it into the three dynamic uniform buffer descriptors the shader reads.
-  // Once, for the life of the device: every draw re-bases it with a dynamic
-  // offset instead, so no descriptor is ever rewritten while a submitted frame
-  // might still be reading it.
+  // Bind it into the three dynamic uniform descriptors the shaders read, once
+  // for the life of the device: every draw re-bases it with a dynamic offset
+  // instead, so no descriptor is rewritten while a submitted frame might still
+  // be reading it.
   //
-  // The range is the block the shader declares, not the buffer - a dynamic
-  // uniform buffer is validated as offset + range against the buffer size, and
-  // Adreno's maxUniformBufferRange is far below 32 MiB.
-  if (auto *set = bd::gpu::Video::TextureDescriptorSet()) {
-    set->setBuffer(0, chunk.buffer.get(), kConstantBlockBytes);
-    set->setBuffer(1, chunk.buffer.get(), kPixelConstantBlockBytes);
-    set->setBuffer(2, chunk.buffer.get(), sizeof(SharedConstants));
-  } else {
-    BD_ERROR("constant_buffers: no texture descriptor set to bind the guest "
-             "constant buffer into; shaders will read nothing");
+  // Through the backend-only hook, NOT a "#if defined(REBLUE_D3D12)" here: this
+  // file is compiled once into reblue_common and linked into both Windows
+  // executables, so the guard resolved for one backend and silently disabled
+  // the binding in the other.
+  if (!bd::gpu::Video::BindGuestConstantBuffer(chunk.buffer.get(),
+                                               kConstantBlockBytes,
+                                               kPixelConstantBlockBytes,
+                                               sizeof(SharedConstants))) {
+    BD_ERROR("constant_buffers: could not bind the guest constant buffer; "
+             "shaders would read nothing");
     chunk.buffer.reset();
     return false;
   }
-#endif
   return true;
 }
 

@@ -883,6 +883,32 @@ plume::RenderDescriptorSet *Video::TextureDescriptorSet() {
   return state().texture_descriptor_set.get();
 }
 
+bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
+                                    u64 vertex_bytes, u64 pixel_bytes,
+                                    u64 shared_bytes) {
+#if defined(REBLUE_D3D12)
+  (void)buffer;
+  (void)vertex_bytes;
+  (void)pixel_bytes;
+  (void)shared_bytes;
+  return true; // root descriptors; nothing to publish
+#else
+  auto *set = state().texture_descriptor_set.get();
+  if (!set || !buffer)
+    return false;
+  // The range is the block the shader declares, not the buffer: a dynamic
+  // uniform buffer is validated as offset + range against the buffer size, and
+  // Adreno's maxUniformBufferRange is far below the buffer's size.
+  set->setBuffer(0, buffer, vertex_bytes);
+  set->setBuffer(1, buffer, pixel_bytes);
+  set->setBuffer(2, buffer, shared_bytes);
+  BD_INFO("[constants] bound guest constant buffer {} ranges {}/{}/{}",
+          static_cast<const void *>(buffer), vertex_bytes, pixel_bytes,
+          shared_bytes);
+  return true;
+#endif
+}
+
 u32 CurrentRenderPassId() {
   // g_currentRenderPassId (guest global, big-endian). Always-mapped XEX data,
   // but guard the translate anyway.

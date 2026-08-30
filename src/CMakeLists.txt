@@ -2,6 +2,7 @@ file(GLOB_RECURSE reblue_all RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
      CONFIGURE_DEPENDS "*.cpp" "*.h")
 
 set(reblue_backend_only
+    gpu/bindless.cpp
     gpu/device.cpp
     gpu/device_lost.cpp
     gpu/device_pipelines.cpp
@@ -18,7 +19,9 @@ set(reblue_backend_only
     gpu/pipeline/pipeline_cache.cpp
     gpu/present.cpp
     gpu/resolve.cpp
+    gpu/sampler_cache.cpp
     gpu/shaders/guest_shaders.cpp
+    gpu/texture_upload.cpp
     gpu/vertex_declaration.cpp
     platform/crash_handler.cpp
     reblue_app.cpp

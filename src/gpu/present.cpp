@@ -55,6 +55,28 @@ namespace bd::gpu {
 
 namespace {
 
+// Defined further down, next to the rest of the capture machinery. Declared
+// here because the only point at which the composited frame - game plus
+// overlay - actually exists is inside RecordPresentPass, and the capture has
+// to be recorded there.
+// Matches the back-buffer format chosen in Present below.
+#if defined(__ANDROID__)
+constexpr auto kCaptureFmt = plume::RenderFormat::R8G8B8A8_UNORM;
+constexpr bool kCaptureIsBgra = false;
+#else
+constexpr auto kCaptureFmt = plume::RenderFormat::B8G8R8A8_UNORM;
+constexpr bool kCaptureIsBgra = true;
+#endif
+
+bool CaptureDue();
+bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
+                   u32 height, plume::RenderFormat format, u32 layers,
+                   plume::RenderTextureLayout current);
+void ResolveCapture(bool bgra);
+// Set when the capture was taken inside the present pass, so the later
+// swapchain-sourced site does not fire as well.
+bool g_captured_in_pass = false;
+
 // setVsyncEnabled only assigns the bool the present path reads, so applying it
 // every frame is free and stops a resize (which rebuilds the swapchain with
 // vsync on) leaving a stale value.
@@ -337,6 +359,30 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   }
 
   s.command_list->setFramebuffer(nullptr);
+
+  // bd_capture_after_s, recorded HERE and not after the present.
+  //
+  // The old site sourced the swapchain image late in Present and came back
+  // all-zero on every path - desktop and device, both stereo modes, max 0
+  // across every pixel - which made the one instrument for "look at the frame"
+  // useless, and silently: a black capture reads exactly like a rendering bug.
+  // Here `back` provably holds the composited frame, because the gamma blit and
+  // the overlay hook both just wrote into it, and it is still in COLOR_WRITE.
+  //
+  // This is also the only site that can see the overlay at all. The screenshot
+  // service above deliberately runs before it.
+  // Stand aside when a specific guest surface was asked for. CaptureDue()
+  // latches on the first caller, so without this the composited grab silently
+  // consumes the one-shot and bd_mv_capture_array photographs nothing - which
+  // looks exactly like the scene target being black.
+  const bool wants_guest_surface = REXCVAR_GET(bd_mv_capture_array) ||
+                                   REXCVAR_GET(bd_mv_capture_resolved);
+  if (!wants_guest_surface && !g_captured_in_pass && CaptureDue()) {
+    g_captured_in_pass =
+        RecordCapture(s, back, swap_w, swap_h, kCaptureFmt, 1,
+                      plume::RenderTextureLayout::COLOR_WRITE);
+  }
+
   s.command_list->barriers(
       plume::RenderBarrierStage::GRAPHICS,
       plume::RenderTextureBarrier(back, plume::RenderTextureLayout::PRESENT));
@@ -464,14 +510,6 @@ bool EnsureOffscreen(VideoState &s, u32 width, u32 height,
 // one-shot, and threading the readback across frames to avoid a hitch would
 // buy nothing and be much easier to get subtly wrong.
 
-// Matches the back-buffer format chosen in Present below.
-#if defined(__ANDROID__)
-constexpr auto kCaptureFmt = plume::RenderFormat::R8G8B8A8_UNORM;
-constexpr bool kCaptureIsBgra = false;
-#else
-constexpr auto kCaptureFmt = plume::RenderFormat::B8G8R8A8_UNORM;
-constexpr bool kCaptureIsBgra = true;
-#endif
 
 // True exactly once, on the first frame at or after bd_capture_after_s.
 bool CaptureDue() {
@@ -546,6 +584,10 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
   g_capture_texel = texel;
   g_capture_format = format;
 
+  BD_INFO("[capture] recording {}x{} layers {} fmt {} texel {} row_texels {} "
+          "buffer {} bytes",
+          width, height, layers, u32(format), texel, row_texels, size);
+
   const plume::RenderTextureBarrier to_copy(
       back, plume::RenderTextureLayout::COPY_SOURCE);
   s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0,
@@ -577,6 +619,29 @@ void ResolveCapture(bool bgra) {
   if (!mapped) {
     BD_ERROR("[capture] map failed");
     return;
+  }
+
+  // Which half of "the capture is black" is true: the readback never got
+  // written, or it was written and decoded wrong. Every guess so far has been
+  // wrong, so measure it.
+  {
+    const u64 bytes =
+        u64(g_capture_row_texels) * g_capture_h * g_capture_texel;
+    const auto *p8 = static_cast<const u8 *>(mapped);
+    u64 first_nz = bytes;
+    u64 nz_count = 0;
+    for (u64 i = 0; i < bytes; ++i) {
+      if (p8[i]) {
+        if (first_nz == bytes)
+          first_nz = i;
+        ++nz_count;
+      }
+    }
+    BD_INFO("[capture] readback {} bytes, {} non-zero, first at {} | "
+            "{}x{} row_texels {} texel {} fmt {}",
+            bytes, nz_count, first_nz == bytes ? -1LL : i64(first_nz),
+            g_capture_w, g_capture_h, g_capture_row_texels, g_capture_texel,
+            u32(g_capture_format));
   }
 
   std::error_code ec;
@@ -1044,11 +1109,9 @@ void Video::Present(GuestTexture *frontBuffer) {
        : multiview_rt
            ? RecordCapture(s, rt->texture, rt->width, rt->height, rt->format,
                            rt->layers, plume::RenderTextureLayout::SHADER_READ)
-           : RecordCapture(s, back, s.swap_chain->getWidth(),
-                           s.swap_chain->getHeight(), kCaptureFmt, 1,
-                           XrCompositorPacing()
-                               ? plume::RenderTextureLayout::COLOR_WRITE
-                               : plume::RenderTextureLayout::PRESENT));
+           // The flat composited frame is captured inside RecordPresentPass
+           // instead, which is the only site that can see the ImGui overlay.
+           : false);
 
   const u32 cur = s.frame.load(std::memory_order_relaxed);
   FrameEnd(s.command_list);
@@ -1079,11 +1142,12 @@ void Video::Present(GuestTexture *frontBuffer) {
     pb.submit_ms = ms_since(t0);
   }
 
-  if (capturing) {
+  if (capturing || g_captured_in_pass) {
     // The one place this stalls. CaptureDue() has already latched, so a
     // failed capture cannot retry every frame for the rest of the session.
     s.queue->waitForCommandFence(s.fences[cur].get());
     ResolveCapture(kCaptureIsBgra);
+    g_captured_in_pass = false;
   }
   s.command_list_submitted[cur] = true;
   ApplyVsync(s);

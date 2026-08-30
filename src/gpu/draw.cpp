@@ -163,6 +163,14 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 static void BindGuestConstants(VideoState &s) {
 #if !defined(REBLUE_D3D12)
   if (s.texture_descriptor_set && s.command_list) {
+    static bool told = false;
+    if (!told && (s.constant_dyn_offsets[0] || s.constant_dyn_offsets[1] ||
+                  s.constant_dyn_offsets[2])) {
+      told = true;
+      BD_INFO("[constants] first non-zero dynamic offsets {} {} {}",
+              s.constant_dyn_offsets[0], s.constant_dyn_offsets[1],
+              s.constant_dyn_offsets[2]);
+    }
     s.command_list->setGraphicsDescriptorSetDynamic(
         s.texture_descriptor_set.get(), 0, s.constant_dyn_offsets, 3);
   }

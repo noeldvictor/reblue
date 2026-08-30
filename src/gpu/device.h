@@ -169,10 +169,22 @@ public:
   static plume::RenderPipelineLayout *MainPipelineLayout();
 
   // The bindless texture set. Its first kConstantChunkDescriptors entries are
-  // the guest constant chunks, which constant_buffers.cpp registers as it
-  // creates them - the shader reaches them through g_ConstantChunks rather than
-  // a 64-bit device address.
+  // the guest constant blocks.
   static plume::RenderDescriptorSet *TextureDescriptorSet();
+
+  // Publish the guest constant buffer into the three dynamic uniform
+  // descriptors the shaders read. Called once, when the buffer is created.
+  //
+  // This has to live in a backend-only TU. constant_buffers.cpp is compiled
+  // ONCE into reblue_common and linked into both Windows executables, so a
+  // "#if !defined(REBLUE_D3D12)" there is resolved for whichever backend
+  // happened to compile it - and when that was D3D12, reblue_vk.exe silently
+  // never bound its constants and rendered a black scene with a working
+  // overlay. D3D12 reaches guest constants through root descriptors and
+  // reserves none of these bindings, so there it is a no-op.
+  static bool BindGuestConstantBuffer(plume::RenderBuffer *buffer,
+                                      u64 vertex_bytes, u64 pixel_bytes,
+                                      u64 shared_bytes);
 
   // Allocate a bindless slot for host-owned 'tex' and bind its SHADER_READ
   // view. UINT32_MAX if full. Re-allocates only when descriptorIndex is still

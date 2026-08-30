@@ -10,6 +10,18 @@
  */
 #pragma once
 
+// kConstantChunkDescriptors below is chosen by REBLUE_D3D12, which makes this
+// header backend-conditional - and it had no guard, so it compiled happily into
+// the shared reblue_common library and resolved for whichever backend got there
+// first. gpu/bindless.cpp did exactly that: it wrote every texture descriptor at
+// TextureDescriptor(slot) using the D3D12 value of 0 while reblue_vk's pipeline
+// layout put the texture array at 3, so every texture in the Vulkan build was
+// sampled three slots away from where it was written and the whole scene
+// rendered black with a working overlay on top.
+#if defined(REBLUE_COMMON_TU)
+#error "backend-conditional: move this TU to reblue_backend_only in src/CMakeLists.txt"
+#endif
+
 #include <rex/types.h>
 #include <vector>
 
