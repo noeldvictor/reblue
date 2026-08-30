@@ -82,14 +82,27 @@ semantics - and the renderer still translates them one for one. **It has to thin
 | draw everything, cull by distance | GPU occlusion culling |
 | render twice for stereo | multiview |
 
-**The entry points cannot be deleted** - the recompiled game calls `D3DDevice_*` by address, and
-removing them means rewriting the game's own rendering code. That is not what this asks for. Keep
-the signature, replace the insides: a hook may batch, defer, cull or fold several guest draws into
-one, as long as the guest cannot tell.
+**Rewriting the game's rendering code is explicitly permitted, and is the point.** An earlier
+version of this file said the `D3DDevice_*` entry points "cannot be deleted" because the recompiled
+game calls them by address. That was wrong, and it was a self-imposed limit rather than a real one.
+
+`REX_FUNC(name)` replaces a *guest function wholesale* with host C++ - the recompiled body never
+runs. `config/functions.toml` already names 1608 candidates, and the mechanism is in use. So the
+game's rendering code is replaceable, one function at a time, by something that thinks in modern
+terms. The permission is standing:
+
+- **Rewrite the ABIs.** The 360's are not optimised for PC or ARM64 and carry a decade of legacy -
+  big-endian structs, fetch constants, a constant file, per-node draw submission. Design what these
+  functions *should* look like on a Quest and replace them with that.
+- **Collapse the guest/host split where it is only historical.** The CPU is native code already; the
+  boundary that remains is an ABI, and an ABI can be changed.
+- **Replace whole rendering paths, not just their insides.** Replacing `bdSceneNodeDrawSingle`
+  (2084 calls a frame, 23x the next consumer on device) with a host implementation *is* rewriting
+  the game's renderer, and it is the batching win.
 
 Note none of this is Direct3D. Those names are the 360's own D3D9-derived ABI, mapped to host C++ in
-`config/functions.toml`, and every one of them already drives plume -> Vulkan. The D3D9 shape is the
-*interface*, not the backend - which is exactly why the insides are free to change.
+`config/functions.toml`, and every one already drives plume -> Vulkan. The D3D9 shape is the
+*interface*, not the backend - which is exactly why it is free to be replaced.
 
 **`fetch constants opaque to host` is the one blocking other work right now.** Blue Dragon binds
 textures through sampler fetch constants written by unhooked recompiled code, so the renderer cannot

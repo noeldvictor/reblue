@@ -34,6 +34,7 @@
 
 REXCVAR_DECLARE(bool, bd_mv_resolve);
 REXCVAR_DECLARE(bool, bd_mv_debug_clear);
+REXCVAR_DECLARE(bool, bd_mv_debug_known_srv);
 
 namespace bd::gpu {
 
@@ -143,7 +144,15 @@ void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
     s.command_list->setScissors(
         plume::RenderRect(static_cast<i32>(x), 0,
                           static_cast<i32>(x + half), static_cast<i32>(h)));
-    ResolvePushConstants pc{tex->layerDescriptorIndex[eye], 0, 0.0f, 0.0f};
+    // bd_mv_debug_known_srv samples the surface's own descriptor - the one the
+    // rest of the renderer uses and which is known to work - instead of the
+    // per-eye views this file registers. If the output becomes the scene twice,
+    // the pass, the draw and the sampling are all fine and only the per-eye
+    // slot registration is wrong; if it stays black the fault is upstream.
+    const u32 src_desc = REXCVAR_GET(bd_mv_debug_known_srv)
+                             ? tex->descriptorIndex
+                             : tex->layerDescriptorIndex[eye];
+    ResolvePushConstants pc{src_desc, 0, 0.0f, 0.0f};
     s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &pc,
                                              kCopyPushConstantByteOffset,
                                              sizeof(pc));
