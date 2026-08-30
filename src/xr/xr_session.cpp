@@ -25,6 +25,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "core/logging.h"
+#include "core/threading.h"
 #include "xr/xr_game_camera.h"
 #include "xr/xr_pad.h"
 
@@ -489,6 +490,13 @@ bool Session::PollEvents() {
 }
 
 bool Session::BeginFrame(FrameState &out) {
+  // Guest threads are created and retired as scenes change, so this is a
+  // periodic sweep rather than a one-off. It only issues a syscall for a thread
+  // whose mask is already wrong.
+  static u32 policy_tick = 0;
+  if ((policy_tick++ % 120u) == 0u)
+    bd::ApplyThreadPolicy();
+
   static bool thread_registered = false;
   if (!thread_registered && session_) {
     thread_registered = true;

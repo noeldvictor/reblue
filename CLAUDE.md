@@ -1024,6 +1024,14 @@ idle, which is the opposite of what three sessions of GPU work had assumed. Read
 thread to cores 4-6 (the big cluster) while unpinned guest threads roam all eight and compete for
 exactly those three.
 
+`bd_thread_policy` (on by default, Android only) acts on what that shows: it walks
+`/proc/self/task` every ~120 frames and puts the guest main thread on the performance cores and the
+guest workers on the efficiency cores, leaving the render thread where the runtime pinned it. The
+clusters are **derived from `cpuinfo_max_freq`, never hardcoded** - a Quest 2 is 4+3+1 (masks
+`0x0f`/`0xf0`) and an AYN Thor is 3+4+1 (`0x07`/`0xf8`), so a fixed mask is wrong on one of them.
+`taskset` from adb cannot do this: the shell may not repin another app's threads, but a process may
+always repin its own.
+
 `simpleperf` would be better and does not work here: Horizon OS refuses shell perf on this device
 regardless of `perf_event_paranoid`. The app manifest now declares `profileable android:shell`,
 which was genuinely missing and is why `tools/profile_quest.py` had never produced a profile - but

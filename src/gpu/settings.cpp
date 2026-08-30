@@ -421,6 +421,11 @@ REXCVAR_DEFINE_INT32(bd_fov_offset, 0, kCvarGroup,
     .range(0, 75);
 
 REXCVAR_DEFINE_BOOL(bd_vsync, true, kCvarGroup, "Vertical sync.");
+// The runtime pins our render thread to the big cluster and leaves the guest
+// on all eight cores, so guest workers crowd out the renderer while the prime
+// core idles. Off restores whatever the scheduler chooses.
+REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
+                    "Place guest threads across the big.LITTLE clusters.");
 
 REXCVAR_DEFINE_INT32(bd_diag_verbosity, 0, kCvarGroup,
                      "Render diagnostic log verbosity: 0 silent, 1 fallback "

@@ -25,9 +25,18 @@
 #include <sys/resource.h>
 #endif
 
+#if defined(__ANDROID__)
+#include <cstdio>
+#include <cstring>
+#include <dirent.h>
+#include <sched.h>
+#endif
+
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
 #endif
+
+REXCVAR_DECLARE(bool, bd_thread_policy);
 
 namespace {
 std::once_flag g_timer_init;
@@ -71,6 +80,121 @@ void DemoteThreadToBackground() {
 #else
   // who=0 is the calling THREAD on Linux, not the process.
   ::setpriority(PRIO_PROCESS, 0, 10);
+#endif
+}
+
+void ApplyThreadPolicy() {
+#if defined(__ANDROID__)
+  if (!REXCVAR_GET(bd_thread_policy))
+    return;
+
+  // Derive the clusters from the hardware rather than hardcoding a layout.
+  // The Quest 2 is an XR2: four A55 at 1.80GHz, three A77 at 2.42GHz, one at
+  // 2.84GHz. An AYN Thor is an 8 Gen 2 and splits 3+4+1 instead, so a fixed
+  // mask that is right on one is wrong on the other.
+  static u64 g_little = 0, g_fast = 0;
+  static bool g_probed = false;
+  if (!g_probed) {
+    g_probed = true;
+    u32 freq[16] = {0};
+    u32 slowest = 0xFFFFFFFFu;
+    for (int c = 0; c < 16; ++c) {
+      char fp[96];
+      std::snprintf(fp, sizeof(fp),
+                    "/sys/devices/system/cpu/cpu%d/cpufreq/cpuinfo_max_freq", c);
+      if (FILE *f = std::fopen(fp, "r")) {
+        if (std::fscanf(f, "%u", &freq[c]) == 1 && freq[c] > 0 &&
+            freq[c] < slowest)
+          slowest = freq[c];
+        std::fclose(f);
+      }
+    }
+    for (int c = 0; c < 16; ++c) {
+      if (!freq[c])
+        continue;
+      if (freq[c] == slowest)
+        g_little |= (u64(1) << c);
+      else
+        g_fast |= (u64(1) << c);
+    }
+    // A uniform machine has nothing to place, and a mask of zero would pin a
+    // thread to no cores at all.
+    if (!g_little || !g_fast) {
+      g_little = g_fast = 0;
+      BD_INFO("[cpu] uniform core layout, thread policy disabled");
+    } else {
+      BD_INFO("[cpu] core clusters: efficiency mask {:#x}, performance mask "
+              "{:#x} (slowest {} kHz)",
+              g_little, g_fast, slowest);
+    }
+  }
+  if (!g_little || !g_fast)
+    return;
+  const u64 kLittle = g_little;
+  const u64 kBigPlusPrime = g_fast;
+
+  DIR *d = ::opendir("/proc/self/task");
+  if (!d)
+    return;
+  u32 moved_workers = 0, moved_main = 0;
+  while (dirent *e = ::readdir(d)) {
+    if (e->d_name[0] == '.')
+      continue;
+    const int tid = std::atoi(e->d_name);
+    if (tid <= 0)
+      continue;
+
+    char path[64];
+    std::snprintf(path, sizeof(path), "/proc/self/task/%d/comm", tid);
+    char name[64] = {0};
+    if (FILE *f = std::fopen(path, "r")) {
+      if (!std::fgets(name, sizeof(name), f))
+        name[0] = 0;
+      std::fclose(f);
+    }
+    if (!name[0])
+      continue;
+
+    // The guest's threads are the ones the SDK names "<name> (HHHHHHHH)", plus
+    // SDL's, which is where the guest main loop runs.
+    const bool is_guest_main = std::strncmp(name, "SDLThread", 9) == 0;
+    const bool is_guest_worker = std::strncmp(name, "Main Thread", 11) == 0 ||
+                                 std::strncmp(name, "XThread", 7) == 0;
+    if (!is_guest_main && !is_guest_worker)
+      continue;
+
+    cpu_set_t want;
+    CPU_ZERO(&want);
+    // The guest main thread is the frame pacer - it is the thread that was
+    // measured saturated - so it gets the prime core as well as the big
+    // cluster. The workers go to the little cores: they are not on the
+    // critical path, and leaving them free to roam is what starves the
+    // renderer.
+    const u64 mask = is_guest_main ? kBigPlusPrime : kLittle;
+    for (int c = 0; c < 16; ++c) {
+      if (mask & (u64(1) << c))
+        CPU_SET(c, &want);
+    }
+
+    cpu_set_t have;
+    CPU_ZERO(&have);
+    if (::sched_getaffinity(tid, sizeof(have), &have) == 0 &&
+        CPU_EQUAL(&have, &want))
+      continue; // already right, no syscall
+    if (::sched_setaffinity(tid, sizeof(want), &want) == 0) {
+      if (is_guest_main)
+        ++moved_main;
+      else
+        ++moved_workers;
+    }
+  }
+  ::closedir(d);
+
+  if (moved_main || moved_workers) {
+    BD_INFO("[cpu] thread policy: {} guest main -> mask {:#x}, {} guest "
+            "worker(s) -> mask {:#x}",
+            moved_main, kBigPlusPrime, moved_workers, kLittle);
+  }
 #endif
 }
 
