@@ -52,8 +52,19 @@ the order they are cheap to test:
    pool hands out pooled textures, and `ResolveMultiviewSurfaceLocked` already carries a comment
    about stale views from exactly that.
 
-If (1) is right the fix is to resolve at present as well as on target change, which is a small
-change and testable in one desktop run: the capture stops being black.
+(1) looks right, and the obvious fix does **not** work where it was first put.
+
+Calling `ResolveMultiviewSurfaceLocked` from `SelectPresentSource` crashes with an
+`ACCESS_VIOLATION`, at exactly the frame the capture was due. `SelectPresentSource` is a pure
+selector - it decides which surface present should read and is evidently called outside the window
+in which the command list is open for recording, so issuing a resolve there records into a list that
+is not accepting commands. The resolve has to go somewhere the command list is provably still open
+and the surface is still in `SHADER_READ`-able state, which means inside the present recording
+itself rather than in the routine that picks its source. Reverted.
+
+So the shape of the fix is known and its location is not: resolve the scene target once more before
+present reads it, from a point inside the recording. `RecordPresentPass` is the obvious candidate
+and was not tried.
 
 ## How to reproduce in 3 minutes, no device
 
