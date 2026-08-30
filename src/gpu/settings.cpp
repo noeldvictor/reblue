@@ -426,6 +426,13 @@ REXCVAR_DEFINE_BOOL(bd_vsync, true, kCvarGroup, "Vertical sync.");
 // core idles. Off restores whatever the scheduler chooses.
 REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
                     "Place guest threads across the big.LITTLE clusters.");
+// Horizon OS refuses shell perf on a Quest 2, so simpleperf cannot attach and
+// tools/profile_quest.py has never produced a profile. This samples ourselves.
+REXCVAR_DEFINE_BOOL(bd_sample_profiler, false, kCvarGroup,
+                    "Sample guest thread PCs into logs/guest_profile.txt.");
+REXCVAR_DEFINE_INT32(bd_sample_hz, 1000, kCvarGroup,
+                     "Sampling profiler rate in Hz.")
+    .range(50, 4000);
 
 REXCVAR_DEFINE_INT32(bd_diag_verbosity, 0, kCvarGroup,
                      "Render diagnostic log verbosity: 0 silent, 1 fallback "

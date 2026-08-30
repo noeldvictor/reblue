@@ -25,6 +25,7 @@
 #include <openxr/openxr_platform.h>
 
 #include "core/logging.h"
+#include "core/sampling_profiler.h"
 #include "core/threading.h"
 #include "xr/xr_game_camera.h"
 #include "xr/xr_pad.h"
@@ -496,6 +497,8 @@ bool Session::BeginFrame(FrameState &out) {
   static u32 policy_tick = 0;
   if ((policy_tick++ % 120u) == 0u)
     bd::ApplyThreadPolicy();
+
+  bd::SamplingProfilerTick();
 
   static bool thread_registered = false;
   if (!thread_registered && session_) {

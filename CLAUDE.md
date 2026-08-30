@@ -1032,6 +1032,21 @@ clusters are **derived from `cpuinfo_max_freq`, never hardcoded** - a Quest 2 is
 `taskset` from adb cannot do this: the shell may not repin another app's threads, but a process may
 always repin its own.
 
+**There is now an in-process sampling profiler, and it is the only one that works on a Quest.**
+`bd_sample_profiler=true` (plus `bd_sample_hz`, default 1000) makes a timer thread send `SIGPROF`
+to the guest threads and records the interrupted PC - a process may always signal its own threads,
+which is the whole trick. Nothing is symbolised on device: PCs are stored as offsets into
+`libreblue.so` and resolved on the host, so the on-device cost is a signal and a store.
+
+```sh
+adb pull /sdcard/Android/data/com.reblue/files/logs/guest_profile.txt
+python tools/symbolize_profile.py guest_profile.txt
+```
+
+It reads the **unstripped** `out/build/android-arm64-release/libreblue.so` (50,651 text symbols,
+17,054 of them recompiled guest functions) and prints demangled names ranked by share. A name it
+prints is a real function in `generated/` - grep `DEFINE_REX_FUNC(<name>)` to read its body.
+
 `simpleperf` would be better and does not work here: Horizon OS refuses shell perf on this device
 regardless of `perf_event_paranoid`. The app manifest now declares `profileable android:shell`,
 which was genuinely missing and is why `tools/profile_quest.py` had never produced a profile - but
