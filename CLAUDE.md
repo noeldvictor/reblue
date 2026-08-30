@@ -17,6 +17,35 @@ and was worn: the report was "blurry gibberish, I can see shit". Quarter resolut
 3664x1920 panel is unusable, and a frame-time number that ignores that is worthless. Readability
 first, then earn the frame rate back from the CPU.
 
+### Where the 15ms actually is, instruction by instruction
+
+`bdSceneNodeDrawSingle` executes **16 MB of guest code per frame** - 7,740 bytes x 2084 calls - and
+that is the bulk of the CPU. Its instruction mix, counted straight out of the recompiled body:
+
+| | per node |
+| --- | --- |
+| `stw` store word | 150 |
+| `lwz` load word | 108 |
+| `stfs` store float | 64 |
+| `lfs` load float | 45 |
+| `bl` call | 26 |
+
+**~370 guest memory operations per node, ~770,000 a frame**, every one byte-swapped through
+`volatile` accessors into the guest address space. That is the X360 shape in one table: the function
+marshals a transform and a material into guest memory in big-endian so that a Xenos command
+processor can read it back, and then our hooks read it back out again.
+
+The modern replacement is to stop round-tripping through guest memory at all - the per-node
+transform and material belong in a GPU buffer written once, not stored word by word into a
+big-endian struct. That is what "rip out the X360 patterns" means concretely, and it is why the win
+cannot come from the host renderer: `flushState` is 2.1ms of a ~20ms frame, so batching what we
+submit caps out at about 2.5ms. The other 15ms is inside that function.
+
+**Two routes are already closed, so do not retry them.** `REBLUE_RELAXED_GUEST_MEMORY` removes the
+`volatile` on those accesses and **hangs the game on ARM64** (and measured 0% on x86). And state
+deduplication is already done by the guest itself - `bdSetSamplerState` early-outs on an unchanged
+value.
+
 ### The route to 72Hz, from the numbers and from what the platform vendors say
 
 The measured frame is `~2000 draws, ~320k verts, fence 0.2-0.35ms, CPU ~20ms`. The GPU is idle, so
