@@ -90,6 +90,22 @@ plume::RenderPrimitiveTopology MapPrimitiveType(u32 prim) {
   }
 }
 
+// Whether a draw's vertex data is still valid at the end of the render pass.
+//
+// DrawVerticesUP and BeginVertices upload the guest's vertices into a scratch
+// buffer on the spot, and a later draw in the same pass reuses that scratch. A
+// deferred replay therefore reads whatever overwrote it - which on the Thor
+// produced a scene target full of NaN and a tenth of the GPU work, because the
+// geometry came out degenerate. Only draws that read a real guest vertex buffer
+// can wait.
+bool VertexDataOutlivesTheDraw(const char *name) {
+  // By name, explicitly. A character test is too clever here: "DrawVertices"
+  // and "DrawVerticesUP" agree on every letter up to the suffix that decides
+  // it, so any prefix check silently defers exactly the draws that must not be.
+  return std::strcmp(name, "DrawIndexedVertices") == 0 ||
+         std::strcmp(name, "DrawVertices") == 0;
+}
+
 void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
                   const DrawArgs &args = {}) {
 #if defined(REXGLUE_ENABLE_PROFILING)
@@ -215,7 +231,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   const bool side_by_side = REXCVAR_GET(bd_stereo) &&
                             !REXCVAR_GET(bd_stereo_multiview);
   s.deferring_draw = bd::gpu::DrawQueueEnabled() && !side_by_side &&
-                     primitive_type != 13;
+                     primitive_type != 13 && VertexDataOutlivesTheDraw(name);
+
+  // A draw that cannot wait forces out everything that was waiting, so the
+  // order the guest submitted in is preserved exactly. Without this, an
+  // immediate draw would land before draws the guest issued before it.
+  if (!s.deferring_draw && s.draw_framebuffer_bound)
+    bd::gpu::DrawQueueFlush(s.command_list);
   if (s.deferring_draw)
     s.pending = bd::gpu::QueuedDraw{};
 

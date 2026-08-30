@@ -75,3 +75,46 @@ The replayed frame renders incorrectly. Not yet diagnosed. Prime suspects, in or
 
 Fix (1) and (2), prove `bd_draw_defer` is pixel-identical to immediate submission, and only then
 turn on `bd_draw_sort`. Sorting an incorrect replay would produce a number that means nothing.
+
+
+---
+
+## Update: two more causes found on the AYN Thor, and it is now closer
+
+The Thor renders and is connected, so Track A got a correctness instrument that does not need the
+Quest: capture the **scene target** with `bd_mv_capture_array`, which photographs a guest texture
+and works on the flat path.
+
+**Cause 6: deferring a user-pointer draw replays overwritten vertices.** `DrawVerticesUP` and
+`BeginVertices` upload the guest's vertices into a scratch buffer on the spot, and a later draw in
+the same pass reuses that scratch. A deferred replay reads whatever overwrote it. On the Thor this
+produced a scene target full of **NaN** and `gpu_total_ms 2.90` against a baseline of 21.50 -
+degenerate geometry the rasteriser threw away.
+
+Only `DrawIndexedVertices` and `DrawVertices` read a real guest vertex buffer, so only those defer.
+The test is by explicit name: `"DrawVertices"` and `"DrawVerticesUP"` agree on every letter up to
+the suffix that decides it, so a prefix or character check silently defers exactly the draws that
+must not be - which is the bug the first attempt shipped.
+
+**Cause 7: mixing immediate and deferred draws reorders them.** A draw that cannot be deferred now
+flushes the queue first, so the guest's submission order is preserved exactly. That also removed
+the `2 draws still queued at present` warnings, which were UP draws issued after the last
+framebuffer change.
+
+### Where it stands
+
+| | baseline | deferred |
+| --- | --- | --- |
+| `dt_ms` | 33.75 | **29.08** |
+| draws | 833 | 820 |
+| queue errors | - | **0** |
+| NaN in scene target | no | **no** (was yes) |
+| scene target | correct | **black** |
+
+So: no crashes, no dropped draws, no NaN, and it is now *faster* than the immediate path rather
+than 1.5x slower. But the scene target comes out black, so something in the replay still does not
+land on the target the recording was made against. `gpu_total_ms` also reads as garbage
+(3.9e12), which suggests the frame's timestamp queries are being disturbed - worth reading as a
+clue rather than noise, because the queue changes where passes begin and end.
+
+Still default off.
