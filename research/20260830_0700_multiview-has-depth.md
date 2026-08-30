@@ -125,3 +125,39 @@ order of magnitude. Not chased, because it would change the path that already wo
 
 **None of this is measured on ARM64.** Every number here is desktop. The Quest 2 has not been
 attached this session.
+
+
+## What the fix did to the frame, and one open item it closed
+
+Two captures of a field scene, before and after the exclusivity fix, read with
+`tools/rdc_outline.py`:
+
+| | before | after |
+| --- | --- | --- |
+| `vkCmdSetViewport` | 503 | **65** |
+| draws (`vkCmdDraw` + `vkCmdDrawIndexed`) | 810 | 550 |
+| scene pass | 314 draws, viewports alternating `960x1080@0` / `@960` | 157 draws, **no viewport alternation** |
+
+The viewport count is the unambiguous one - scene content drifts between runs, but a per-draw
+viewport flip either happens or it does not. It does not any more.
+
+**And it closes "2D overlays land across the eye seam", which CLAUDE.md lists as one of two things a
+user spotted immediately.** The complaint was that a 2D element drawn once at full viewport width
+straddles the middle of a side-by-side frame, so each eye sees half of it. Under multiview it cannot:
+every content pass in the frame is `mask=3`, so the hardware replicates each 2D draw into both
+layers and each eye gets the whole overlay. The only mono passes left are the resolves and the final
+present blit:
+
+```
+  [  5] fb=14990  1920x1080 mask=3 STEREO pipes=8 draws=157     <- scene, no per-draw viewport
+  [  7] fb=14990  1920x1080 mask=3 STEREO pipes=0 draws= 15     <- 2D quads, replicated per eye
+  [ 10] fb=1577   1920x1080 mask=0 mono   draws=2 vp=960x1080@960   <- the resolve
+  ...                                                           <- 18 more post/resolve pairs
+  [ 47] fb=1541   1920x1080 mask=0 mono   draws=1 vp=1920x1080@0    <- present blit
+```
+
+So the fix for that item was not to route 2D onto a head-locked layer, as the note proposed - it was
+to stop running both stereo paths at once. `bd_vr_hud_mode` remains the right answer for *depth*
+placement of a HUD, which is a separate question from whether both eyes see it.
+
+**Not verified on ARM64.** Every number here is desktop.
