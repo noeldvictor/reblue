@@ -655,6 +655,9 @@ diagnosing a slow build. The short version:
   OpenXR runtime. It is the only way to exercise the camera modes and the character anchor, because
   without a runtime `ViewOverrideActive()` is false and they never compose. **Invoke the `vrsim`
   skill.**
+- **`tools/stereo_check.py --raw <capture>` runs on a capture already on disk**, so the stereo
+  regression test works in the desktop loop with no headset and no device. Verified after the
+  2026-08-30 optimisation pass: `far +4, near -2, near - far = -6px`, crossed and correctly signed.
 - **`tools/stereo_check.py` answers "does stereo have depth" in one command.** It captures a frame
   with `bd_capture_after_s`, matches the two eyes band by band and prints a verdict: **FLAT** (the
   eye offset is proportional to `clip.z` and divides out to a constant slide), **INVERTED** (crossed

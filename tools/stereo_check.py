@@ -210,7 +210,25 @@ def main():
     ap.add_argument("--out", default="stereo_capture",
                     help="basename for the .raw and .png written here")
     ap.add_argument("--keep-png", action="store_true", default=True)
+    ap.add_argument("--raw", default="",
+                    help="analyse an existing capture instead of driving a "
+                         "device - the desktop loop writes one to "
+                         "out/build/<preset>/logs/capture/")
     args = ap.parse_args()
+
+    # A capture already on disk needs no device at all, which is what makes this
+    # runnable in the desktop loop rather than only against a headset.
+    if args.raw:
+        img, w, h = load(args.raw)
+        if args.keep_png:
+            png = args.out + ".png"
+            img.convert("RGB").resize((w // 3, h // 3)).save(png)
+            print("wrote %s - look at it, do not just read the numbers\n" % png)
+        if args.mono:
+            print("mono control; no disparity to report")
+            return
+        report(img, w, h, args.search)
+        return
 
     serial = pick_device(args.serial)
 
@@ -246,8 +264,12 @@ def main():
         print("mono control captured; no disparity to report")
         return
 
+    report(img, w, h, args.search)
+
+
+def report(img, w, h, search):
     bands = [0.32, 0.44, 0.52, 0.62, 0.72, 0.82, 0.90, 0.95]
-    rows = disparity(img, w, h, bands, args.search)
+    rows = disparity(img, w, h, bands, search)
     print("band (y%)   disparity(px)      [top = distant, bottom = near]")
     for frac, shift in rows:
         print("   %4.0f%%        %+5d" % (frac * 100, shift))
