@@ -91,6 +91,20 @@ shape.
 Naming `sub_82287788`, `sub_8272BE80` and `sub_82281D28` in `config/functions.toml` should come
 first, so the profile stops printing addresses.
 
+## Closed on the way
+
+**Memoising `FindPhysicalBufferByStruct` does not help.** It is 3.2-3.4% of samples, a mutex
+acquire and a hash lookup reached a couple of times per draw, so a single-entry memo guarded by a
+generation counter looked free. Built and measured: **6.15us/draw against 6.28 and 6.14 without
+it**, and the function stayed at 3.2%. The struct VAs do not repeat consecutively, so the cache
+never hits - the cost is the hash lookup itself, not the lock. Reverted rather than carried.
+
+**Desktop runs vary by scene as much as device runs do.** One run of the same binary came back at
+12.38ms `other_ms` with `InsetQuadUVs` at 7.4% instead of 2.4% - autoplay had wandered into a
+HUD-heavy stretch. It had not crashed and nothing was wrong with it. Compare **microseconds per
+draw** rather than `other_ms`, check the sample count, and look at whether the profile's *shape*
+matches before believing a delta. The +/-30% warning in CLAUDE.md is not Quest-specific.
+
 ## How to take one
 
 ```sh
