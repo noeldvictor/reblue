@@ -46,6 +46,7 @@
 
 REXCVAR_DECLARE(bool, bd_cel_shading);
 REXCVAR_DECLARE(bool, bd_mv_capture_array);
+REXCVAR_DECLARE(bool, bd_mv_capture_resolved);
 REXCVAR_DECLARE(double, bd_capture_after_s);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 
@@ -979,6 +980,16 @@ void Video::Present(GuestTexture *frontBuffer) {
   // different surfaces - the post chain binds after the scene - and capturing
   // the latter is what made the array look empty for a whole investigation.
   if (force_array) {
+    if (GuestTexture *scene = s.last_scene_rt[s.recording_slot()])
+      rt = scene;
+  }
+  // The scene's *companion* - what the resolve writes and the post chain reads.
+  // With the array capture above this splits the remaining question in one run:
+  // the array is known good (two distinct views), so if the companion is good
+  // too the loss is in the post chain or present, and if it is black the resolve
+  // is at fault.
+  const bool capture_resolved = REXCVAR_GET(bd_mv_capture_resolved);
+  if (capture_resolved) {
     if (GuestTexture *scene = s.last_scene_rt[s.recording_slot()])
       rt = scene;
   }

@@ -69,19 +69,16 @@ Count into a total and print the total, or filter to the case you care about bef
    measured on ARM64, and the relative costs differ - CLAUDE.md already records
    `bdSceneNodeDrawSingle` measuring 23x on device against 1.9x on desktop. Every number above is a
    desktop number.
-2. **Multiview: the bug is what it was always said to be.** With the capture finally pointed at the
-   scene's target (`last_scene_rt`, the last bind carrying depth - not `last_drawn_rt`, which is the
-   end of the post chain), both layers are **populated and identical**: `mean (0,60,0)` in each.
+2. **Multiview: the scene renders in stereo; the resolve is what loses it.** The layered array
+   holds two genuinely different views - per-pixel difference mean 3.694, 23.2% of pixels - while the
+   resolved companion it feeds is black, max pixel 0, and stays black with `bd_mv_debug_known_srv`.
+   So pipelines, view masks, shaders, SPIR-V (`BuiltIn ViewIndex` in all 55) and constants are all
+   correct, and `ResolveMultiviewSurfaceLocked` writes nothing into `resolvedFramebuffer`.
 
-   So multiview renders; it just renders the same view twice. That is exactly what CLAUDE.md
-   recorded before this session - "the two layers come out identical, `SV_ViewID` is still not
-   varying the skew" - and a day went past it because the instrument was photographing the wrong
-   texture. The nine checks this session made on pipelines, view masks, the device feature,
-   framebuffers, the resolve and the SRVs were all correct and all beside the point.
-
-   The work is in XenosRecomp's emitted vertex shader and the per-eye constants, and the shader-cache
-   trap in CLAUDE.md must be read first - a previous session lost a day to the skew sitting in 0 of
-   55 shaders while the C++ looked right.
+   Likely an ordering problem: the resolve now runs from `RecordPresentPass`, which is at present,
+   after the post chain has already sampled the companion. It needs to run when the scene stops
+   being drawn into and before the first pass that samples it. `bd_mv_capture_array` and
+   `bd_mv_capture_resolved` verify any fix in one run.
 3. **The guest CPU**, which is still the largest share and still barely understood. Start from an
    on-device profile, not a desktop one.
 4. **Seeding**, worth 0.42ms of GPU. The provable case - a pending clear that overwrites the surface

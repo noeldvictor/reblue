@@ -42,17 +42,37 @@ Both cost hours and both are the same mistake in different clothing.
 
 **Measure the thing, not a statistic of the thing, and check that the thing is the thing you meant.**
 
-## Where to look next
+## Located: the resolve writes nothing into the companion
 
-The scene array is right and the composite is black, so: the resolve reads the array and writes the
-companion; the post chain reads the companion; present reads the end of that chain. One of those
-three loses it. `bd_mv_capture_array` now photographs the scene target, and the companion can be
-reached the same way - point a capture at `rt->resolvedTexture` for the *scene* surface and the
-question splits in one run.
+Split in one run with `bd_mv_capture_array` (the scene's layered source) and
+`bd_mv_capture_resolved` (the scene's companion, which the resolve writes and the post chain reads):
 
-Note the resolve was also fixed this session to actually run on the scene target - it previously
-fired 501 times a frame on a 120x67 bloom target and never on the scene - so any older reasoning
-about it predates a real bug being removed.
+| what | result |
+| --- | --- |
+| scene layered array | **good** - two distinct views, 23.2% of pixels differ |
+| scene resolved companion | **black**, max pixel 0 |
+| companion with `bd_mv_debug_known_srv` | **black** - so not the per-eye views |
+| final composite | black |
+
+So `ResolveMultiviewSurfaceLocked` runs - it logs `resolved 1920x1080 to side-by-side (501 times)` -
+its draws execute, its source is correct, and **nothing lands in `resolvedFramebuffer`**.
+
+Everything upstream is cleared. Everything downstream is faithfully carrying a black image.
+
+### The likely cause, and it is an ordering one
+
+The extra resolve added this session is called from `RecordPresentPass`, which runs **at present** -
+after the post chain has already sampled the companion. That was the right place to make the resolve
+*happen at all* (it previously never ran on the scene target), but it is the wrong place for the post
+chain to benefit, and possibly the wrong place relative to the capture too.
+
+The resolve needs to run when the scene target stops being drawn into and **before** the first pass
+that samples it - not at present. The original trigger (render target changing away from a dirty
+layered surface) was the right idea and simply never fired for the scene, because the scene target is
+still bound at the end of the frame. Something has to notice the transition from "scene pass" to
+"first post pass" instead.
+
+That is the next change, and the two capture cvars above verify it in one run.
 
 ---
 

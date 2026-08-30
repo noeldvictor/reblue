@@ -276,6 +276,10 @@ REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
 // attachment. Destroys the scene; a diagnostic only.
 REXCVAR_DEFINE_BOOL(bd_mv_test_clear, false, kCvarGroup,
                     "Magenta-clear the layered scene target (diagnostic).");
+// Capture the scene's resolved companion - what the resolve writes and the
+// post chain reads - rather than whatever present would have chosen.
+REXCVAR_DEFINE_BOOL(bd_mv_capture_resolved, false, kCvarGroup,
+                    "Capture the scene surface's resolved companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_capture_array, false, kCvarGroup,
                     "Capture the multiview array instead of its companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
