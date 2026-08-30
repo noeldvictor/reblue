@@ -53,7 +53,8 @@ fi
 if [ -n "${SERIAL:-}" ]; then
   for cand in $(MSYS_NO_PATHCONV=1 "$ADB" devices | awk '$2 == "device" {print $1}'); do
     [ "$cand" = "$SERIAL" ] && continue
-    echo "note: also attached, not used: $cand ($(MSYS_NO_PATHCONV=1 "$ADB" -s "$cand" shell getprop ro.product.model 2>/dev/null | tr -d ''))" >&2
+    echo "note: also attached, not used: $cand ($(MSYS_NO_PATHCONV=1 "$ADB" -s "$cand" shell getprop ro.product.model 2>/dev/null | tr -d '
+'))" >&2
   done
 fi
 
@@ -91,8 +92,20 @@ echo "== cvars =="; sed 'N;s/\n/ /' "$ARGS_LOCAL" | sed 's/^--/  /'
 # setting that does nothing.
 run_adb push "$ARGS_LOCAL" "/storage/emulated/0/Android/data/$PKG/files/args.txt" 2>&1 | tail -1
 
+FILES_PRE="/sdcard/Android/data/$PKG/files"
 run_adb shell "am force-stop $PKG"
 run_adb shell "am broadcast -a com.oculus.vrpowermanager.prox_close" > /dev/null
+# Delete every artefact this script is about to pull, BEFORE the run.
+#
+# Without this the script happily pulls a capture and a CSV from a previous
+# session and there is nothing in its output to say so. That is not
+# hypothetical: a run that crashed 33 seconds in was reported as a full
+# 170-second result, complete with a stereo verdict and a per-draw cost, all of
+# it read off files written by an earlier build on an earlier day. The freshness
+# checks after the run exist for the same reason.
+run_adb shell "rm -rf $FILES_PRE/logs/capture $FILES_PRE/logs/perf $FILES_PRE/logs/guest_profile.txt"
+
+RUN_STARTED_AT="$(run_adb shell "date +%s" | tr -d '\r')"
 run_adb shell "am start -n $PKG/.ReblueActivity" > /dev/null
 
 echo "== running ${SETTLE}s (field scene lands around 130s) =="
@@ -107,13 +120,29 @@ while [ "$elapsed" -lt "$SETTLE" ]; do
 done
 echo
 
-FILES="/sdcard/Android/data/$PKG/files"
+FILES="$FILES_PRE"
 LOG="$(run_adb shell "ls -t $FILES/logs/*.log | head -1" | tr -d '\r')"
 
 echo
-echo "== did the build actually start? =="
+echo "== did the build actually start, and did it survive? =="
 run_adb shell "grep -c 'args.txt added' '$LOG'" | tr -d '\r' | sed 's/^/  args.txt lines matched: /'
 run_adb logcat -d 2>/dev/null | grep -i "dlopen.*reblue" | tail -2
+
+# Did it crash? A crash mid-run leaves every artefact below short or absent, and
+# the numbers then describe a fraction of a run - or, if the pre-clean above is
+# ever removed, a previous one entirely.
+CRASH="$(run_adb shell "grep -cE 'ACCESS_VIOLATION|Fatal: reblue Crashed|SIGSEGV' '$LOG'" | tr -d '\r')"
+if [ "${CRASH:-0}" != "0" ]; then
+  echo "  *** CRASHED - $CRASH fatal line(s) in the log. Numbers below are a"
+  echo "  *** partial run at best. Crash tail:"
+  run_adb shell "grep -E 'ACCESS_VIOLATION|Fatal: reblue Crashed' '$LOG' | tail -2" | tr -d '\r' | sed 's/^/      /'
+fi
+
+# Is it even still alive? verify does not force-stop at the end, so a live pid
+# is the normal case and a dead one means it exited or crashed.
+if [ -z "$(run_adb shell "pidof $PKG" | tr -d '\r')" ]; then
+  echo "  *** process is NOT running at the end of the settle period"
+fi
 
 echo
 echo "== frame breakdown =="
@@ -130,9 +159,13 @@ PID="$(run_adb shell "pidof $PKG" | tr -d '\r')"
 
 OUT="out/device"
 mkdir -p "$OUT"
+# Clear the local side too, so a failed pull leaves nothing to misread as a
+# result. The remote side was cleared before the run; this closes the other end.
+rm -f "$OUT/perf.csv" "$OUT/guest_profile.txt" "$OUT/capture.raw"
 echo
 echo "== pulling artefacts to $OUT =="
 CSV="$(run_adb shell "ls -t $FILES/logs/perf/*.csv 2>/dev/null | head -1" | tr -d '\r')"
+[ -z "$CSV" ] && echo "  *** no perf CSV was written this run"
 # The WHOLE file, not its tail. Pulling `tail -400` here would hand
 # perf_summary exactly the window that made every measurement in this project
 # wrong until 2026-08-30: a run does not end in a steady state, and its last
@@ -144,6 +177,9 @@ run_adb shell "cat $FILES/logs/guest_profile.txt 2>/dev/null" > "$OUT/guest_prof
 CAP="$(run_adb shell "ls -t $FILES/logs/capture/*.raw 2>/dev/null | head -1" | tr -d '\r')"
 if [ -n "$CAP" ]; then
   run_adb pull "$CAP" "$OUT/capture.raw" > /dev/null 2>&1 && echo "  capture.raw"
+else
+  echo "  *** no capture was written this run - do NOT run stereo_check on a"
+  echo "  *** stale out/device/capture.raw and call it a result"
 fi
 
 echo

@@ -169,15 +169,56 @@ def main():
         sys.exit("%s not found - build the android-arm64-release preset first"
                  % args.so)
 
+    # The module map the profiler now writes alongside the samples.
+    #
+    # Samples are raw PCs, because an offset from libreblue.so cannot name a PC
+    # in any other library once ASLR has moved them independently - and on
+    # Android 90.8% of samples were in another library. Each "# MAP" line is a
+    # /proc/self/maps row for an executable file-backed mapping.
+    modules = []  # (lo, hi, file_offset, path)
     entries = []
     with open(args.profile, "r", errors="ignore") as fh:
         for line in fh:
+            if line.startswith("# MAP "):
+                row = line[6:].split()
+                if len(row) >= 6 and "-" in row[0]:
+                    lo, hi = (int(x, 16) for x in row[0].split("-", 1))
+                    modules.append((lo, hi, int(row[2], 16), row[-1]))
+                continue
             if line.startswith("#") or not line.strip():
                 continue
             parts = line.split()
             if len(parts) != 2:
                 continue
             entries.append((int(parts[0], 16), int(parts[1])))
+
+    def module_for(pc):
+        for lo, hi, foff, path in modules:
+            if lo <= pc < hi:
+                return path, pc - lo + foff
+        return None, None
+
+    if modules:
+        # Attribute by module first, so the share landing outside libreblue is
+        # visible even where we have no symbols for it.
+        per_module = collections.Counter()
+        for pc, count in entries:
+            path, _ = module_for(pc)
+            per_module[os.path.basename(path) if path else "<unmapped>"] += count
+        grand = sum(per_module.values()) or 1
+        print("samples by module")
+        for name, n in per_module.most_common(12):
+            print("  %-34s %8d %6.1f%%" % (name, n, 100.0 * n / grand))
+        print()
+        # Only libreblue offsets can be symbolised against --so.
+        ours = os.path.basename(args.so)
+        rebased = []
+        for pc, count in entries:
+            path, off = module_for(pc)
+            if path and os.path.basename(path) == ours:
+                rebased.append((off, count))
+        if rebased:
+            entries = rebased
 
     by_fn = collections.Counter()
     total = 0

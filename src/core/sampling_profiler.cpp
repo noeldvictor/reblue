@@ -71,16 +71,26 @@ void OnSigProf(int, siginfo_t *, void *ctx) {
     return;
   const auto *uc = static_cast<const ucontext_t *>(ctx);
   const uintptr_t pc = static_cast<uintptr_t>(uc->uc_mcontext.pc);
-  // A PC outside our module is the runtime, the driver or libc. Those are not
-  // what this is for and keeping them would just dilute the histogram.
-  if (pc < g_module_base)
-    return;
-  const u64 offset = static_cast<u64>(pc - g_module_base);
-  if (offset > 0x8000000ull)
-    return;
-
+  // The RAW pc, not an offset from libreblue.so.
+  //
+  // This used to discard anything below our own module base and anything more
+  // than 128 MB above it, on the reasoning that a PC outside libreblue is "the
+  // runtime, the driver or libc" and would dilute the histogram. On Android
+  // that reasoning is wrong twice over: librexruntime.so is a *separate* 9.7 MB
+  // object holding the SDK's kernel emulation, memory subsystem and threading -
+  // work the guest is directly paying for - and a PC that survives the filter
+  // but lands outside libreblue's 33.8 MB of text cannot be attributed to
+  // anything at all. Measured on a Quest 2: 90.8% of samples resolved to no
+  // symbol, and the single hottest address was 30% of the profile sitting
+  // between the two libraries. On desktop every one of those is linked into one
+  // image, so the identical filter keeps them - which is why this never showed
+  // up there.
+  //
+  // The dump writes /proc/self/maps alongside the histogram so the host can
+  // attribute each PC to a module. ASLR means an offset from one library is
+  // meaningless for another, so the map has to travel with the samples.
   const u32 slot = g_head.fetch_add(1, std::memory_order_relaxed) & kRingMask;
-  g_ring[slot].store(offset, std::memory_order_relaxed);
+  g_ring[slot].store(static_cast<u64>(pc), std::memory_order_relaxed);
   g_taken.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -241,19 +251,39 @@ void SamplingProfilerDump() {
   std::filesystem::create_directories(dir, ec);
   const std::string path = (dir / "guest_profile.txt").string();
   if (FILE *f = std::fopen(path.c_str(), "w")) {
-    std::fprintf(f, "# module-relative PCs from libreblue.so, most frequent "
-                    "first.\n# resolve with: python tools/symbolize_profile.py "
-                    "%s\n# samples=%llu unique=%zu\n",
+    std::fprintf(f, "# raw PCs, most frequent first, with the module map that\n"
+                    "# makes them attributable. resolve with:\n"
+                    "#   python tools/symbolize_profile.py %s\n"
+                    "# samples=%llu unique=%zu dropped=%llu\n",
                  path.c_str(), static_cast<unsigned long long>(taken),
-                 sorted.size());
+                 sorted.size(),
+                 static_cast<unsigned long long>(
+                     g_dropped.load(std::memory_order_relaxed)));
+
+    // The executable mappings, so a PC outside libreblue can still be named.
+    // Without this, ASLR makes every sample that left our own module
+    // unattributable - which was 90.8% of them.
+    std::fprintf(f, "# MODULES\n");
+#if defined(__ANDROID__)
+    if (FILE *m = std::fopen("/proc/self/maps", "r")) {
+      char line[512];
+      while (std::fgets(line, sizeof(line), m)) {
+        // Executable file-backed mappings only.
+        if (std::strstr(line, "r-xp") && std::strchr(line, '/'))
+          std::fprintf(f, "# MAP %s", line);
+      }
+      std::fclose(m);
+    }
+#endif
+    std::fprintf(f, "# SAMPLES\n");
     for (const auto &kv : sorted)
       std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(kv.first),
                    kv.second);
     std::fclose(f);
   }
 
-  BD_INFO("[profile] {} samples, {} unique addresses -> {}", taken,
-          sorted.size(), path);
+  BD_INFO("[profile] {} samples, {} unique addresses, {} dropped -> {}", taken,
+          sorted.size(), g_dropped.load(std::memory_order_relaxed), path);
 #endif
 }
 
