@@ -400,10 +400,14 @@ costs.
 0.4% and that was briefly written up here as the new noise floor; across a whole session the same
 nominal configuration measured **3.75 to 6.84ms** `other_ms`. So the rule stands:
 
-- **Run A/B pairs, in both orders**, and believe a result only when the direction survives the
-  reversal. That is what makes `bd_host_sincos` (5.78 -> 4.10 and 6.84 -> 3.75) a result and
-  `bd_host_matrix_copy` (+9% in one pair, wrong direction) not one.
-- A single pair showing under ~10% is not evidence of anything.
+- **Two whole runs cannot settle anything under about 50%, however carefully ordered.** Demonstrated
+  the hard way: `bd_host_sincos` measured 5.78 -> 4.10 and 6.84 -> 3.75 across two back-to-back
+  reversed pairs, was written up as worth a third to a half of the frame and made the default - and
+  a third pair minutes later read OFF 5.12, ON 5.18, OFF 8.62. **Two OFF runs, 68% apart, no config
+  change.** It was drift lining up twice.
+- **Alternate the two paths inside one run** - flip the cvar every N frames and compare the two
+  populations from the same run, scene and thermal state. That is the only method that works at this
+  scale, and it is why nothing sub-50% measured as two runs should be believed.
 
 ### Building for the desktop, which does work
 

@@ -446,16 +446,17 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // against the recompiled one, not by reading the polynomial, and a captured
 // frame confirms the world is oriented correctly with it on.
 //
-// On by default. It was first recorded as "correct but not proven faster",
-// measured at 8.46 -> 8.55 ms per 1000 draws - and that measurement was taken
-// on the tail of the perf CSV, which is a menu the run gets stuck in and where
-// almost nothing calls sin. Re-measured over field frames only
-// (tools/perf_summary.py), across two pairs run in both orders at identical
-// draw counts: other_ms 5.78 -> 4.10 and 6.84 -> 3.75, so between a third and
-// a half of the main thread's time. The guest version is 222 recompiled
-// instructions reading its polynomial constants back through marshalled guest
-// loads; the host version is two libm calls.
-REXCVAR_DEFINE_BOOL(bd_host_sincos, true, kCvarGroup,
+// Correct, and NOT proven faster. Two back-to-back pairs said it was worth a
+// third to a half of the main thread; a third pair, run OFF/ON/OFF minutes
+// later, measured 5.12 / 5.18 / 8.62ms. The two OFF runs differ by 68% from
+// each other with no configuration change at all, and the ON run sits between
+// them - so the earlier result was drift, not effect.
+//
+// Do not re-enable this on the strength of another pair of runs. The desktop
+// workload drifts far more than back-to-back pairing controls for, and the only
+// method that can settle a change this size is alternating the two paths
+// *within a single run*. See research/20260830_0100_the-first-profile.md.
+REXCVAR_DEFINE_BOOL(bd_host_sincos, false, kCvarGroup,
                     "Compute bdSinCos on the host instead of the guest.");
 REXCVAR_DEFINE_BOOL(bd_verify_guest_math, false, kCvarGroup,
                     "Compare host maths replacements against the guest.");

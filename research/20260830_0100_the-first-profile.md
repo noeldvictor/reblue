@@ -128,37 +128,47 @@ character, foliage, cliffs and shadows all present and nothing popping.
 
 `bd_cull_early` reverts to the old ordering without a rebuild.
 
-## Correction: host bdSinCos is a 30-45% win, and was dismissed by bad measurement
+## Retracted: the host bdSinCos "win" was drift, and so is desktop A/B at this scale
 
-Recorded below as "correct but not proven faster". That was wrong, and the reason is the reason
-everything else below it needs re-reading: it was measured on **the tail of the perf CSV**, which is
-a menu the run gets stuck in and where almost nothing calls sin.
+This section previously reported host `bdSinCos` as worth a third to a half of the main thread,
+measured over field frames across two back-to-back pairs run in both orders (5.78 -> 4.10 and
+6.84 -> 3.75). The default was changed on it. **It does not replicate.**
 
-Re-measured over field frames only (`tools/perf_summary.py`), two pairs run in both orders, ~9,000
-field frames each, identical draw counts:
+A third pair, OFF / ON / OFF, minutes later on the same binary:
 
-| | host sincos ON | OFF | draws |
-| --- | --- | --- | --- |
-| pair 1 | 4.10ms | 5.78ms | 521 / 519 |
-| pair 2 | 3.75ms | 6.84ms | 523 / 523 |
+```
+OFF   5.12ms
+ON    5.18ms     +1.1%  - no difference
+OFF   8.62ms     +68%   - and this is OFF again
+```
 
-**Between a third and a half of the main thread's time.** The guest version is 222 recompiled
-instructions that read their polynomial constants back through marshalled guest loads; the host
-version is two libm calls. `bd_host_sincos` is now on by default, with the stereo check and a
-captured frame confirming the world is still oriented correctly.
+**Two OFF runs differ by 68% from each other with no configuration change**, and the ON run sits
+between them. The earlier direction was the drift happening to line up twice.
 
-**`bd_host_matrix_copy` was re-run against the field metric and stays off**: +9.1% in the wrong
-direction over one pair, which is inside the drift and certainly not a win.
+The default is back to off, with a comment saying not to re-enable it on the strength of another
+pair of runs.
 
-**And the field metric is not as tight as it first looked.** Two adjacent runs agreeing to 0.4% got
-written up as the noise floor; across the session the same nominal configuration ranged 3.75 to
-6.84ms. Field filtering removes the menu contamination, not the drift. Paired A/B in both orders is
-still the only thing that settles anything - which is exactly why the sincos result is trustworthy
-and the matrix one is not.
+### What this costs, and what actually measures
 
-**Everything else dismissed on this page was measured the same wrong way** and is worth re-running
-against the field-frame metric before staying closed - the matrix copy at "0.3%", the buffer memo,
-and the tile-traffic upper bound especially.
+Three claims made today rest on paired desktop runs and all of them are now suspect at anything
+under about 50%:
+
+- The `-18%` cull redirect. Its draw counts matched within 1.6% and the mechanism is clear - it
+  stops computing a visibility test whose result is discarded for 95% of nodes - but the *number*
+  came from the same method and should be treated as directional rather than exact.
+- `bd_host_matrix_copy` at "+9.1%, wrong direction". Inside the drift. It says nothing.
+- `bd_host_sincos`, retracted above.
+
+Field-frame filtering was a real improvement - it removed the menu contamination that made the tail
+window meaningless - and it is **not sufficient**. Draw count holds steady at ~520 while the work
+behind those draws varies with what the camera happens to be looking at, and the drift over an hour
+is larger than any of the effects being chased.
+
+**The only method that can settle a sub-50% change here is alternating the two paths within a single
+run** - flip the cvar every N frames and compare the two populations from the same run, the same
+scene and the same thermal state. CLAUDE.md has said this since before today; today is the
+demonstration of why. Anything measured as two whole runs, however carefully ordered, is a guess
+dressed as a number.
 
 ## The measurement floor, which decides what is worth trying next
 
