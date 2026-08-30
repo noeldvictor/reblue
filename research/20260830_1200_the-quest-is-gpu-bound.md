@@ -123,3 +123,31 @@ The stereo work stands: multiview renders correct crossed depth, verified from a
 was the recompiled guest's per-draw ABI cost. On this evidence the first work is GPU-side and
 renderer-side, and the recomp case has to be re-made on a configuration where the GPU is not the
 wall.
+
+
+## First recomp change attempted, and it is a measured null
+
+`out/rexglue-src/include/rex/ppc/intrinsics.h` declared `VectorMaskL`, `VectorMaskR`,
+`VectorShiftTableL` and `VectorShiftTableR` as **mutable** `inline uint8_t[]`. They are read-only
+lookup tables for `lvlx`/`lvrx`/`stvlx`/`stvrx`/`lvsl`/`lvsr` - nothing anywhere writes one - and the
+theory was that as mutable globals the compiler cannot prove a guest store through `base` (a plain
+`uint8_t*`) does not alias them, so every guest store would invalidate a cached mask and force a
+reload at each of ~5,800 sites. On ARM64 that reload is `adrp`+`add`+`ldr q` where x86 gets a
+RIP-relative `movdqa` out of L1, so it looked like a large ARM64-only win for a one-word change.
+
+**Measured, and it is worth nothing.** Disassembling `libreblue.so` before and after, with all 54
+recompiled TUs force-rebuilt:
+
+```
+ldr 958025   adrp 138913   tbl 11775   ext 1675   rev32 184   rev64 60
+```
+
+Byte-identical in both. LLVM already treats these `inline` tables as immutable. The change is kept
+because const-correctness on read-only data is right, not because it does anything.
+
+**And a dev-loop trap found on the way: the 54 guest TUs do not rebuild when an SDK header changes.**
+After editing `intrinsics.h` the build reported 14 targets and finished; the guest objects still
+carried the *previous day's* timestamp and the change was completely inert. Only deleting
+`CMakeFiles/reblue_recomp.dir/**/*.o` by hand forced the 111-target rebuild that actually applied it.
+This is the same shape as the XenosRecomp two-step already in CLAUDE.md, in a new place: **after any
+`out/rexglue-src` header change, delete the guest objects or you are measuring the old build.**
