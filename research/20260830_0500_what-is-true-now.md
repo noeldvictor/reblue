@@ -71,9 +71,22 @@ Count into a total and print the total, or filter to the case you care about bef
    desktop number.
 2. **Multiview.** The array is empty - both layers, max pixel value zero - while pipelines,
    framebuffers, view masks, the device feature, the resolve and the SRVs are all verified correct.
-   Nine hypotheses checked, nine correct. Run **Vulkan validation layers**, which this project has
-   already used to settle a multiview question in one run after three sessions of inference. They
-   are not installed on this machine and are not run on the desktop build.
+   Nine hypotheses checked, nine correct.
+
+   The obvious tool is **Vulkan validation layers**, which this project has already used to settle a
+   multiview question in one run after three sessions of inference. Two obstacles, both checked:
+   they are not installed on this machine, and the Khronos
+   `Vulkan-ValidationLayers` releases publish **Android binaries only** - `android-binaries-*.zip`,
+   nothing for Windows. Desktop layers come inside the Vulkan SDK installer, which is a deliberate
+   decision to make rather than a download. On Android the existing route works:
+   `EXTRA_LIBS=/path/to/libVkLayer_khronos_validation.so bash tools/build_apk.sh`, which is a reason
+   to do this on the Quest rather than the desktop.
+
+   Without them, the discriminating test is a **host draw into the layered scene target** with a
+   multiview pipeline - the resolve already proves host draws into a *single-layer* target work. If
+   a known-good host draw into the layered one also produces nothing, the fault is the multiview
+   render path itself; if it appears, the fault is in the guest pipelines or state feeding it. That
+   separates the two halves without any layer.
 3. **The guest CPU**, which is still the largest share and still barely understood. Start from an
    on-device profile, not a desktop one.
 4. **Seeding**, worth 0.42ms of GPU. The provable case - a pending clear that overwrites the surface
