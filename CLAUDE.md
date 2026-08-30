@@ -241,12 +241,20 @@ Where the work goes:
 
 | technique | state | the seam |
 | --- | --- | --- |
-| **Multiview** | scene renders both layers correctly with multiview pipelines; **the resolve has nowhere to hook** | The resolve pass itself is built and proven to run. What is missing is a trigger - see below |
+| **Multiview** | **Working. Verified crossed stereo depth at the stock default** (desktop, 2026-08-30) | Resolved per surface at the render-target transition. See "multiview stereo works" above; everything from here to the end of this section is the trail that led there and is **superseded** |
 | **Fixed foveated rendering** | not started | `XR_FB_foveation`. Needs the scene rendered *into* the XR swapchain image, which it is not - present composites into it |
 | **Occlusion culling** | distance cull only (`bd_cull_distance`) | `bdSceneNodeCullTraverse` (0x82282490), already hooked |
-| **Batching** | none | ~1000 individually placed scene nodes a frame; `bdSceneNodeDrawSingle` is 23x the next consumer on device |
+| **Batching** | none | ~1000 individually placed scene nodes a frame. (The "`bdSceneNodeDrawSingle` is 23x the next consumer" figure is a **call count**, not time - it profiles at ~5%. The batching case rests on the node count, not on that number) |
 
 ### Multiview: the resolve is built, and the guest gives it nowhere to hook
+
+> **SUPERSEDED, 2026-08-30.** The resolve does hook, does run, and multiview stereo now measures
+> correct crossed depth at the stock separation - `far -4, near -26` from
+> `tools/stereo_check.py --stacked`. The two real bugs were `bd_stereo` and `bd_stereo_multiview`
+> both being active (they are alternatives) and an inverted per-eye sign; everything below was
+> chased through three instruments that were themselves wrong. Kept because the eliminations are
+> still sound and the reasoning is worth having. See
+> `research/20260830_0700_multiview-has-depth.md`.
 
 Everything except the trigger now exists and is verified:
 
@@ -1073,6 +1081,14 @@ table first, because it is the part that gets stale.
 | Tourist mode | **HP/MP top-up works** (verified desktop); encounter suppression only *watches* - `bdBattleEncounterBegin` has never fired |
 | Cel shading | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
+| **Multiview stereo** | **Correct crossed depth at the stock default** - desktop only, never on a headset |
+| **AYN Thor (Adreno 740)** | **Installs and runs; renders nothing.** `shaderInt64=0` against 141/141 shaders declaring `Int64` |
+
+**The state above is a Quest 2 (Adreno 650) column.** Where a row says "works", it was seen there.
+The Thor is a *different* GPU with a newer, stricter driver, and it is the only ARM64 device that
+has been touched since 2026-08-29 - so a Thor failure is not automatically a Quest failure, and the
+`shaderInt64` blocker in particular may not apply to the 650, which renders this game today.
+Do not merge the two columns.
 
 Three of those rows need saying plainly rather than being read past:
 
@@ -1650,6 +1666,26 @@ So the rule that generalises is not "use the simulator". It is **make it visible
 it**, which is the same lesson recorded in the devloop skill.
 
 ### Order of work
+
+**Start here, 2026-08-31 onwards.** In order, and the first two are cheap:
+
+1. **Attach the Quest 2 and run `bash tools/verify_quest.sh`.** Everything below the multiview
+   heading was verified on a desktop RTX 3060 and has never run on a headset. The script now also
+   names any other device it passed over, which is how an AYN Thor sat attached through a whole
+   session while the work reported itself as desktop-only.
+2. **Read the `[config]` lines first in any log that surprises you.** A setting that is silently
+   ignored is indistinguishable from one that does nothing, and a single TOML syntax error discards
+   the *entire* profile.
+3. **The constant heap, which is now two problems in one.** Binding the guest constant blocks as a
+   bound buffer indexed by a 32-bit offset removes `OpCapability Int64` - without which an Adreno
+   740 compiles no shader at all - *and* removes the per-invocation global loads that are the
+   largest known GPU cost in the port. The obstacle is that `constant_buffers.cpp` allocates from
+   chunks, so there is no single buffer to bind; and Adreno's four descriptor-set slots are all
+   taken, so it needs a binding on an existing set with DXC register shifting. Verify with
+   `python tools/spv_caps.py <hlsl_dump> --require-absent Int64`.
+4. **The occlusion descriptor set**, which is the same descriptor-pressure problem and a
+   prerequisite for 3: collapse spaces 0/1/2 into one physical set and a slot comes free.
+5. Everything in the older list below.
 
 Items 1-5 of the original plan are **done**: the plume OpenXR seam compiles and runs, the SDK
 cross-builds for `android-arm64`, `src/xr/` is complete on both sides of the OpenXR line, and the
