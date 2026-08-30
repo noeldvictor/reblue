@@ -1032,15 +1032,45 @@ clusters are **derived from `cpuinfo_max_freq`, never hardcoded** - a Quest 2 is
 `taskset` from adb cannot do this: the shell may not repin another app's threads, but a process may
 always repin its own.
 
+**The first profile, desktop, field scene, 17,332 samples, 99.4% resolved.** Nothing dominates -
+which is the headline, because the plan assumed one function did:
+
+```
+__imp__bdSceneNodeDrawSingle    5.3%     rex::ppc::CRRegister::compare  4.6%
+__imp__sub_82287788             4.6%     std::_Atomic_integral::fetch_  3.9%
+CopyByteSwap32Impl              3.2%     simde_mm_shuffle_epi8          3.0%
+InsetQuadUVs                    2.2%     __imp__sub_82281D28            2.2%
+__imp__sub_8272BE80             2.1%     __imp__bdSceneNodeCullTraverse 2.0%
+```
+
+`bdSceneNodeDrawSingle` is **5.3%, not the 23x-everything-else the call census implied** - a census
+counts calls, and these are cheap calls made often. Expect a rewrite of it to buy single digits, not
+a frame. `rex::ppc::CRRegister::compare` at 4.6% is recompiler *runtime*, not guest code, and
+`cr_as_local` is already on, so that is the cost of PowerPC condition registers existing at all.
+`sub_82287788` and `sub_82281D28` are unnamed and worth naming in `config/functions.toml`.
+
+**The first thing the profiler found was ours, not the guest's.** `Sleep_hook` was 15.9% of all
+samples - more than three times the hottest guest function - busy-waiting out a 1.5ms guard band for
+precision nothing needs. Removing the spin took `other_ms` from **8.49ms to 7.79ms** at an identical
+draw count and unchanged `logic_tps`. `bd_sleep_spin` restores the old behaviour.
+
 **There is now an in-process sampling profiler, and it is the only one that works on a Quest.**
 `bd_sample_profiler=true` (plus `bd_sample_hz`, default 1000) makes a timer thread send `SIGPROF`
 to the guest threads and records the interrupted PC - a process may always signal its own threads,
 which is the whole trick. Nothing is symbolised on device: PCs are stored as offsets into
 `libreblue.so` and resolved on the host, so the on-device cost is a signal and a store.
 
+It works on the **desktop** too, which is the fast loop: `SuspendThread`/`GetThreadContext` in
+place of `SIGPROF`, and a run is 170s with no APK, no install and no headset. That is where the
+profile below was taken, and the guest code being profiled is the same code.
+
 ```sh
+# device
 adb pull /sdcard/Android/data/com.reblue/files/logs/guest_profile.txt
 python tools/symbolize_profile.py guest_profile.txt
+
+# desktop - reads the PDB through llvm-symbolizer, since a PE keeps no symtab
+python tools/symbolize_profile.py out/build/win-amd64-release/logs/guest_profile.txt        --so out/build/win-amd64-release/reblue_vk.exe
 ```
 
 It reads the **unstripped** `out/build/android-arm64-release/libreblue.so` (50,651 text symbols,

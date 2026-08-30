@@ -20,6 +20,12 @@
 #include <unordered_map>
 #include <vector>
 
+#if defined(_WIN32)
+#include "core/windows_lean.h"
+#include <dbghelp.h>
+#include <tlhelp32.h>
+#endif
+
 #if defined(__ANDROID__)
 #include <csignal>
 #include <dirent.h>
@@ -30,12 +36,18 @@
 #include <unistd.h>
 #endif
 
+#if defined(__ANDROID__) || defined(_WIN32)
+#define BD_HAVE_SAMPLER 1
+#else
+#define BD_HAVE_SAMPLER 0
+#endif
+
 REXCVAR_DECLARE(bool, bd_sample_profiler);
 REXCVAR_DECLARE(i32, bd_sample_hz);
 
 namespace bd {
 
-#if defined(__ANDROID__)
+#if BD_HAVE_SAMPLER
 namespace {
 
 // Power of two so the wrap is a mask. Samples are dropped rather than blocking:
@@ -53,6 +65,7 @@ std::atomic<u64> g_dropped{0};
 uintptr_t g_module_base = 0;
 std::atomic<bool> g_running{false};
 
+#if defined(__ANDROID__)
 void OnSigProf(int, siginfo_t *, void *ctx) {
   if (!ctx)
     return;
@@ -80,7 +93,29 @@ bool IsInteresting(const char *name) {
          std::strncmp(name, "XThread", 7) == 0 ||
          std::strncmp(name, "Draw Thread", 11) == 0;
 }
+#endif
 
+#if defined(_WIN32)
+// No thread names to filter on here, so every thread in the process is
+// sampled. The histogram sorts that out: the guest dominates it because the
+// guest is what runs.
+void CollectTids(std::vector<int> &out) {
+  out.clear();
+  HANDLE snap = ::CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+  if (snap == INVALID_HANDLE_VALUE)
+    return;
+  THREADENTRY32 te{};
+  te.dwSize = sizeof(te);
+  const DWORD self = ::GetCurrentProcessId();
+  if (::Thread32First(snap, &te)) {
+    do {
+      if (te.th32OwnerProcessID == self)
+        out.push_back(static_cast<int>(te.th32ThreadID));
+    } while (::Thread32Next(snap, &te));
+  }
+  ::CloseHandle(snap);
+}
+#else
 void CollectTids(std::vector<int> &out) {
   out.clear();
   DIR *d = ::opendir("/proc/self/task");
@@ -105,13 +140,30 @@ void CollectTids(std::vector<int> &out) {
   }
   ::closedir(d);
 }
+#endif
+
+void RecordPc(uintptr_t pc) {
+  if (pc < g_module_base)
+    return;
+  const u64 offset = static_cast<u64>(pc - g_module_base);
+  if (offset > 0x8000000ull)
+    return;
+  const u32 slot = g_head.fetch_add(1, std::memory_order_relaxed) & kRingMask;
+  g_ring[slot].store(offset, std::memory_order_relaxed);
+  g_taken.fetch_add(1, std::memory_order_relaxed);
+}
 
 void SamplerThread() {
   const i32 hz = REXCVAR_GET(bd_sample_hz) > 0 ? REXCVAR_GET(bd_sample_hz) : 1000;
   const long period_ns = 1000000000L / hz;
-  const int pid = ::getpid();
   std::vector<int> tids;
   u64 iterations = 0;
+#if defined(__ANDROID__)
+  const int pid = ::getpid();
+#else
+  const DWORD self_pid = ::GetCurrentProcessId();
+  const DWORD self_tid = ::GetCurrentThreadId();
+#endif
 
   while (g_running.load(std::memory_order_relaxed)) {
     // Guest threads come and go with the scene, so the list is refreshed rather
@@ -120,15 +172,40 @@ void SamplerThread() {
     if ((iterations++ % 512) == 0)
       CollectTids(tids);
 
+#if defined(__ANDROID__)
     for (const int tid : tids) {
       // tgkill rather than pthread_kill: we have raw tids from /proc, and a
       // thread that has exited since the scan just returns ESRCH.
       if (::syscall(__NR_tgkill, pid, tid, SIGPROF) != 0)
         g_dropped.fetch_add(1, std::memory_order_relaxed);
     }
-
     timespec ts{0, period_ns};
     ::nanosleep(&ts, nullptr);
+#else
+    (void)self_pid;
+    for (const int tid : tids) {
+      if (static_cast<DWORD>(tid) == self_tid)
+        continue;
+      HANDLE h = ::OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT, FALSE,
+                              static_cast<DWORD>(tid));
+      if (!h) {
+        g_dropped.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
+      // Suspend/GetThreadContext/Resume is the Windows analogue of SIGPROF.
+      // The window is a few microseconds and the target is never left
+      // suspended on any path out of here.
+      if (::SuspendThread(h) != DWORD(-1)) {
+        CONTEXT ctx{};
+        ctx.ContextFlags = CONTEXT_CONTROL;
+        if (::GetThreadContext(h, &ctx))
+          RecordPc(static_cast<uintptr_t>(ctx.Rip));
+        ::ResumeThread(h);
+      }
+      ::CloseHandle(h);
+    }
+    ::Sleep(static_cast<DWORD>(period_ns / 1000000L > 0 ? period_ns / 1000000L : 1));
+#endif
   }
 }
 
@@ -136,7 +213,7 @@ void SamplerThread() {
 #endif
 
 void SamplingProfilerDump() {
-#if defined(__ANDROID__)
+#if BD_HAVE_SAMPLER
   const u64 taken = g_taken.load(std::memory_order_relaxed);
   if (!taken)
     return;
@@ -181,13 +258,22 @@ void SamplingProfilerDump() {
 }
 
 void SamplingProfilerTick() {
-#if defined(__ANDROID__)
+#if BD_HAVE_SAMPLER
   if (!REXCVAR_GET(bd_sample_profiler))
     return;
   static bool started = false;
   if (!started) {
     started = true;
 
+#if defined(_WIN32)
+    // The whole executable, so an offset here matches what a disassembler or
+    // llvm-nm reports for the same image.
+    g_module_base = reinterpret_cast<uintptr_t>(::GetModuleHandleW(nullptr));
+    if (!g_module_base) {
+      BD_ERROR("[profile] cannot find our own module base; sampling disabled");
+      return;
+    }
+#else
     Dl_info info{};
     if (!dladdr(reinterpret_cast<const void *>(&SamplingProfilerTick), &info) ||
         !info.dli_fbase) {
@@ -207,6 +293,7 @@ void SamplingProfilerTick() {
       BD_ERROR("[profile] sigaction(SIGPROF) failed; sampling disabled");
       return;
     }
+#endif
 
     g_running.store(true, std::memory_order_relaxed);
     std::thread(SamplerThread).detach();

@@ -33,6 +33,7 @@
 #include "gpu/gpu_profiling.h"
 
 #include "core/logging.h"
+#include "core/sampling_profiler.h"
 #include "engine/engine.h"
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
@@ -1007,6 +1008,10 @@ void Video::Present(GuestTexture *frontBuffer) {
   }
   pb.fence_ms = ms_since(wait_t0);
   RecordGPUWait(pb.fence_ms);
+  // Also ticked here, not only from the XR frame loop: a flat build has no
+  // xrBeginFrame, and the guest simulation this samples is identical either
+  // way - which is what makes the desktop the fast loop for guest CPU work.
+  bd::SamplingProfilerTick();
   const u32 reclaimed = s.frame.load(std::memory_order_relaxed);
   s.frame_present_committed = true;
   BD_FRAME_MARK();

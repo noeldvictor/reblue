@@ -88,6 +88,66 @@ def resolve(syms, starts, off):
     return name
 
 
+def find_symbolizer():
+    for c in ["C:/Program Files/LLVM/bin/llvm-symbolizer.exe", "llvm-symbolizer"]:
+        try:
+            subprocess.run([c, "--version"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, check=True)
+            return c
+        except (OSError, subprocess.CalledProcessError):
+            continue
+    return None
+
+
+def pe_image_base(path):
+    """A Windows build keeps its names in a PDB, not the image, so nm finds
+    nothing there. Offsets recorded on device are RVAs; llvm-symbolizer wants
+    virtual addresses, which is the preferred base plus the RVA."""
+    import struct
+    with open(path, "rb") as f:
+        f.seek(0x3c)
+        pe = struct.unpack("<I", f.read(4))[0]
+        f.seek(pe)
+        if f.read(4) != b"PE\0\0":
+            return None
+        f.seek(pe + 24)
+        magic = struct.unpack("<H", f.read(2))[0]
+        if magic != 0x20b:
+            return None
+        f.seek(pe + 24 + 24)
+        return struct.unpack("<Q", f.read(8))[0]
+
+
+def symbolize_pe(image, offsets):
+    """offsets -> {offset: name} via llvm-symbolizer, one batch."""
+    sym = find_symbolizer()
+    if not sym:
+        sys.exit("llvm-symbolizer not found; needed for a Windows build")
+    base = pe_image_base(image)
+    if base is None:
+        sys.exit("%s is not a 64-bit PE" % image)
+    stdin = "\n".join("0x%x" % (base + o) for o in offsets)
+    out = subprocess.run([sym, "--obj=" + image, "--functions=short",
+                          "--demangle", "--output-style=LLVM"],
+                         input=stdin, capture_output=True, text=True,
+                         errors="ignore")
+    names, cur = {}, 0
+    lines = out.stdout.splitlines()
+    i = 0
+    for off in offsets:
+        name = None
+        # each record is: name, file:line, blank
+        while i < len(lines):
+            ln = lines[i]
+            i += 1
+            if ln.strip() == "":
+                break
+            if name is None:
+                name = ln.strip()
+        names[off] = name or "<unresolved>"
+    return names
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -102,12 +162,7 @@ def main():
         sys.exit("%s not found - build the android-arm64-release preset first"
                  % args.so)
 
-    syms = load_symbols(args.so, find_nm())
-    starts = [s[0] for s in syms]
-
-    by_fn = collections.Counter()
-    total = 0
-    unresolved = 0
+    entries = []
     with open(args.profile, "r", errors="ignore") as fh:
         for line in fh:
             if line.startswith("#") or not line.strip():
@@ -115,7 +170,24 @@ def main():
             parts = line.split()
             if len(parts) != 2:
                 continue
-            off, count = int(parts[0], 16), int(parts[1])
+            entries.append((int(parts[0], 16), int(parts[1])))
+
+    by_fn = collections.Counter()
+    total = 0
+    unresolved = 0
+
+    if args.so.lower().endswith(".exe"):
+        names = symbolize_pe(args.so, [e[0] for e in entries])
+        for off, count in entries:
+            total += count
+            name = names.get(off, "<unresolved>")
+            if name == "<unresolved>":
+                unresolved += count
+            by_fn[name] += count
+    else:
+        syms = load_symbols(args.so, find_nm())
+        starts = [s[0] for s in syms]
+        for off, count in entries:
             total += count
             name = resolve(syms, starts, off)
             if name is None:

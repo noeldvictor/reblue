@@ -37,6 +37,7 @@
 #endif
 
 REXCVAR_DECLARE(bool, bd_thread_policy);
+REXCVAR_DECLARE(bool, bd_sleep_spin);
 
 namespace {
 std::once_flag g_timer_init;
@@ -233,16 +234,17 @@ u32 Sleep_hook(u32 ms) {
   auto target =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(u32(ms));
 
-#if defined(__ANDROID__)
-  // No busy-wait tail here. Sleep is a floor, not a deadline: the guest asked
-  // to be woken no earlier than ms, and Linux honours that to well under the
-  // 1.5ms guard band this used to spin out. Spinning it instead cost a full
-  // core per sleeping guest thread - with five of them the render thread could
-  // not get scheduled, which showed up as a 77ms "GPU fence wait" on a frame
-  // whose command buffer measured 2ms.
-  std::this_thread::sleep_for(std::chrono::milliseconds(u32(ms)));
-  (void)target;
-#else
+  // Sleep is a floor, not a deadline: the guest asked to be woken no earlier
+  // than ms. This used to sleep short by a 1.5ms guard band and then busy-wait
+  // out the remainder for precision nothing needs - and the first real profile
+  // of the process put Sleep_hook at 15.9% of all samples, more than three
+  // times the hottest guest function. A spinning sleep is a thread that could
+  // be off the core entirely.
+  if (!REXCVAR_GET(bd_sleep_spin)) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(u32(ms)));
+    return 0;
+  }
+
   if (ms >= 2) {
     std::this_thread::sleep_for(std::chrono::milliseconds(u32(ms)) -
                                 std::chrono::microseconds(1500));
@@ -252,7 +254,6 @@ u32 Sleep_hook(u32 ms) {
 
   while (std::chrono::steady_clock::now() < target)
     CpuPause();
-#endif
 
   return 0;
 }

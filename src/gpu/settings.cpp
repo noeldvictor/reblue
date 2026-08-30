@@ -428,6 +428,10 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
                     "Place guest threads across the big.LITTLE clusters.");
 // Horizon OS refuses shell perf on a Quest 2, so simpleperf cannot attach and
 // tools/profile_quest.py has never produced a profile. This samples ourselves.
+// Restores the old precision-spin tail on guest Sleep. Measured at 15.9% of
+// all CPU samples, which is why it is off.
+REXCVAR_DEFINE_BOOL(bd_sleep_spin, false, kCvarGroup,
+                    "Busy-wait the tail of a guest Sleep for precision.");
 REXCVAR_DEFINE_BOOL(bd_sample_profiler, false, kCvarGroup,
                     "Sample guest thread PCs into logs/guest_profile.txt.");
 REXCVAR_DEFINE_INT32(bd_sample_hz, 1000, kCvarGroup,
