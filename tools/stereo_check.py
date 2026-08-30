@@ -151,19 +151,58 @@ def capture(serial, cvars, at_seconds, out_raw):
 
 
 def load(path):
+    """Read a capture, honouring the texel format named in its header.
+
+    The first field is the format tag. A swapchain grab is RGBA8 and tagged
+    RGBA; the guest's scene target - which is what bd_mv_capture_array
+    photographs - is R16G16B16A16_FLOAT and tagged RGBA16F. Reading the latter
+    as RGBA8 yields plausible-looking noise with a doubled horizontal period,
+    which reads as a rendering bug rather than as a decode error, so the tag is
+    trusted here rather than assumed.
+    """
     from PIL import Image
     with open(path, "rb") as fh:
         header = fh.readline().decode().split()
-        w, h, order = int(header[1]), int(header[2]), header[3]
-        data = fh.read(w * h * 4)
-    img = Image.frombytes("RGBA", (w, h), data)
-    if order == "bgra":
+        tag, w, h, order = header[0], int(header[1]), int(header[2]), header[3]
+        bpp = 8 if tag == "RGBA16F" else 4
+        data = fh.read(w * h * bpp)
+    if bpp == 8:
+        import struct
+        # Half floats are scene-linear and unbounded; the point here is
+        # structure, not colour, so a plain clamp to [0,1] is enough to compare
+        # two eyes and is what a tone map would preserve anyway.
+        n = w * h * 4
+        halves = struct.unpack("<%de" % n, data[:n * 2])
+        img = Image.frombytes(
+            "RGBA", (w, h),
+            bytes(min(255, max(0, int(v * 255.0 + 0.5))) for v in halves))
+    else:
+        img = Image.frombytes("RGBA", (w, h), data)
+    if order == "bgra" and bpp == 4:
         b, g, r, a = img.split()
         img = Image.merge("RGBA", (r, g, b, a))
     return img, w, h
 
 
-def disparity(img, w, h, bands, search):
+def eyes(img, w, h, stacked):
+    """Split a capture into (left_eye, right_eye, eye_w, eye_h).
+
+    Two layouts, because the two stereo paths produce different pictures of the
+    same thing. bd_stereo writes a side-by-side frame, so the eyes are the left
+    and right halves. bd_mv_capture_array photographs a multiview array, whose
+    slices are stacked vertically - layer 0 above layer 1. Layer 0 is the left
+    eye in both, so everything downstream of here is shared and the verdict
+    means the same thing for either path.
+    """
+    grey = img.convert("L")
+    if stacked:
+        eh = h // 2
+        return grey.crop((0, 0, w, eh)), grey.crop((0, eh, w, h)), w, eh
+    ew = w // 2
+    return grey.crop((0, 0, ew, h)), grey.crop((ew, 0, w, h)), ew, h
+
+
+def disparity(img, w, h, bands, search, stacked=False):
     """Per-band horizontal shift that best aligns the right eye onto the left.
 
     A narrow central patch rather than the full width: a wide band spans mixed
@@ -171,10 +210,7 @@ def disparity(img, w, h, bands, search):
     tracking one.
     """
     from PIL import ImageChops
-    grey = img.convert("L")
-    ew = w // 2
-    left = grey.crop((0, 0, ew, h))
-    right = grey.crop((ew, 0, w, h))
+    left, right, ew, h = eyes(img, w, h, stacked)
     patch = min(520, ew - 40)
     x0 = (ew - patch) // 2
     out = []
@@ -205,6 +241,10 @@ def main():
     ap.add_argument("--at", type=int, default=DEFAULT_CAPTURE_AT,
                     help="seconds after launch to capture (default %d)"
                          % DEFAULT_CAPTURE_AT)
+    ap.add_argument("--stacked", action="store_true",
+                    help="the capture is a multiview array (layer 0 above "
+                         "layer 1), as bd_mv_capture_array writes, rather "
+                         "than a side-by-side frame")
     ap.add_argument("--search", type=int, default=90,
                     help="max |disparity| searched, px (default 90)")
     ap.add_argument("--out", default="stereo_capture",
@@ -227,7 +267,7 @@ def main():
         if args.mono:
             print("mono control; no disparity to report")
             return
-        report(img, w, h, args.search)
+        report(img, w, h, args.search, args.stacked)
         return
 
     serial = pick_device(args.serial)
@@ -264,12 +304,12 @@ def main():
         print("mono control captured; no disparity to report")
         return
 
-    report(img, w, h, args.search)
+    report(img, w, h, args.search, args.stacked)
 
 
-def report(img, w, h, search):
+def report(img, w, h, search, stacked=False):
     bands = [0.32, 0.44, 0.52, 0.62, 0.72, 0.82, 0.90, 0.95]
-    rows = disparity(img, w, h, bands, search)
+    rows = disparity(img, w, h, bands, search, stacked)
     print("band (y%)   disparity(px)      [top = distant, bottom = near]")
     for frac, shift in rows:
         print("   %4.0f%%        %+5d" % (frac * 100, shift))
