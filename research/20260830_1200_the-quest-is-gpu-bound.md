@@ -343,3 +343,46 @@ stayed at 48 in both arms and `gpu_draw_ms` moved -0.5%.
 The gate never fires, because texture bindings change on essentially every draw. Reverted. The 48
 are genuine render-target ping-pong - draw into a surface, sample it, draw into it again - and
 reducing them means changing that pattern, not gating the scan.
+
+
+## STOP: the "scene is rendered twice" claim is contradicted, and I did not fact-check it
+
+The guest census, run on the same configuration:
+
+```
+bdRenderViewSubmit         1 calls
+bdSceneNodeDrawSingle     91 calls      704340 bytes of guest code
+sceneNodeDrawSingle distinct r3=49 r4=32
+distance cull: 838050 of 880950 nodes rejected
+```
+
+**One view submit per frame, and 91 scene-node draws** - against a frame that reports ~443-560 draws
+in `bd_perf_csv`. Both of those contradict the section above, which concluded from four
+`1280x720x2L` rows at 0.50 binds/frame that the scene is rendered twice. That conclusion was drawn
+from target-tally arithmetic alone and never checked against what the guest says it is doing.
+
+**Corrected epistemic state.**
+
+Verified, measured, and cross-checked:
+
+- The frame is GPU-bound: `gpu_draw` 139-152ms of ~155ms, CPU 23-25ms, guest 0.1% of device samples.
+- Stereo is correct on the Quest: `far -2, near -25`, monotone, from a `--stacked` array grab.
+- Gating the resolve-source barriers does nothing: `bar_drawfb` 48 in both within-run A/B arms.
+- r11/f0 localisation: -1.37pp of guest CPU share on x86, no crash and no file-load fatal on device.
+
+Inferred and now doubtful - do not build on these:
+
+- "The scene is rendered twice per frame." Four target rows at 0.50 binds says two logical
+  double-buffered surfaces; `bdRenderViewSubmit = 1` says one view. Unresolved.
+- Every Mpix-of-fill figure in this note, since they all rest on that reading.
+- "The 48 barriers are render-target ping-pong." Never confirmed; it is a story that fits.
+
+**The question that was never asked, and should have been first: only 91 of ~500 draws are scene
+nodes. Where do the other ~400 come from?** The frame is mostly *not* the thing every note here has
+been theorising about. `D3DDevice_DrawIndexedVertices`, `DrawVertices` and `DrawVerticesUP` are
+separate entry points (`src/gpu/hooks/draw.cpp:697,780,869`) and none of them is counted separately -
+splitting `draws` by entry point is one small change and it would say what the frame actually is.
+
+Note also that `bd_cull_distance=350` rejects **95%** of nodes (838,050 of 880,950), so the
+`bdSceneNodeDrawSingle` figures in CLAUDE.md - 2084 calls/frame, "23x the next consumer" - do not
+describe this configuration at all.
