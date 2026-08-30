@@ -717,6 +717,25 @@ diagnosing a slow build. The short version:
   the wrong way, so the world renders pseudoscopic), or **OK**. It is checked against the three real
   captures that produced those states, so it is a regression test and not just a report. Run it
   after anything touching the camera, the projection or the shader recompiler.
+- **One syntax error in `profiles/<name>/reblue.toml` silently discards the WHOLE file.** Measured:
+  a single unquoted string value - `bd_ab_flag = bd_mv_resolve` instead of `= "bd_mv_resolve"` -
+  reverted `bd_xr_autoplay`, `bd_perf_csv`, `bd_stereo`, `bd_stereo_multiview` and
+  `bd_cull_distance` to their defaults. The run then boots to a title screen, writes no CSV, and
+  looks like an experiment that found nothing. A *value* rejection is different and much safer:
+  `bd_msaa = 1` or an out-of-range `bd_stereo_separation` drops only its own line.
+- **`bd::AuditProfileConfig` now says so at startup**, and it is the first thing to read in a log
+  that surprises you. It compares every line against the live cvar after load, so it catches an
+  unknown name, a dropped type, a range rejection and a `kRequiresRestart` refusal without needing
+  to know which happened:
+
+  ```
+  [config] 'bd_no_encounters' is not a cvar - this line does nothing
+  [config] 'bd_msaa' did not take effect: file says '1', live value is '4'
+  [config] 9 of 20 settings in reblue.toml did not take effect
+  ```
+
+  It found `bd_no_encounters` sitting in the desktop profile, where it had been for a whole session.
+  **There is no such cvar** - every run taken believing encounters were suppressed had them on.
 - **A within-run A/B reports GPU as well as CPU now.** `tools/perf_summary.py` used to compare only
   `us/draw`, which is CPU, and so was blind to anything render-side: the multiview resolve chain
   measures **+0.2% on CPU and +4.9% on `gpu_total_ms`** in the same run. It prints both per arm.
@@ -996,7 +1015,8 @@ table first, because it is the part that gets stale.
 | Mono projection layer - the "in the world" mode | Works, captured and looked at |
 | Character-anchored camera modes | Anchored off the follow camera; unit-tested, untuned |
 | Stereo, per-eye render | **Works on device.** far +3 / near -33px crossed, 28-30 fps |
-| Cel shading, tourist mode | Not started |
+| Tourist mode | **HP/MP top-up works** (verified desktop); encounter suppression only *watches* - `bdBattleEncounterBegin` has never fired |
+| Cel shading | Not started |
 | Sun occlusion descriptor set on Adreno | Dropped, not fixed |
 
 Three of those rows need saying plainly rather than being read past:

@@ -38,6 +38,7 @@
 #include "core/logging.h"
 #include "core/perf.h"
 #include "core/profiling.h"
+#include "core/config_audit.h"
 #include "core/settings.h"
 #include "core/settings_model.h"
 #include "core/shutdown.h"
@@ -334,6 +335,12 @@ void ReblueApp::OnPostInitLogging() {
   bd::xr::Settings::Get().Init();
 
   bd::engine::Achievements::Init();
+
+  // Immediately after every Settings object has adopted the config: a setting
+  // that was silently ignored is indistinguishable from a setting that does
+  // nothing, and this has now cost four separate measurements. See
+  // core/config_audit.cpp for the list.
+  bd::AuditProfileConfig(profile_root_ / "reblue.toml");
 
   // Devmode aims dumps and captures at the game folder, which the SDK mounts
   // read-only. Runtime::SetupVfs reads this flag once, after this hook. Moving
