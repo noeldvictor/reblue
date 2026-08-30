@@ -438,6 +438,23 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // the hottest function in the process. The distance cull rejects ~95% of nodes,
 // so nearly all of that work was computed and discarded. Off reverts to
 // applying the same decision after the test instead of instead of it.
+// Checks a host maths replacement against the recompiled original while both
+// exist. A diagnostic - it runs both - but it is what makes a host takeover a
+// fact rather than a reading of the disassembly.
+// bdSinCos is 2.4% of samples and is pure: an angle in, a sine through r3 and
+// a cosine through r4. The mapping was established by running the host version
+// against the recompiled one, not by reading the polynomial, and a captured
+// frame confirms the world is oriented correctly with it on.
+//
+// Off by default because it is correct but not proven faster: on x86 it
+// measured 8.46 -> 8.55 ms per 1000 draws, inside noise, because libm sin and
+// cos carry range reduction the guest's straight-line polynomial does not.
+// Worth re-measuring on ARM64, where the guest version's polynomial constants
+// are marshalled guest loads and cost relatively more.
+REXCVAR_DEFINE_BOOL(bd_host_sincos, false, kCvarGroup,
+                    "Compute bdSinCos on the host instead of the guest.");
+REXCVAR_DEFINE_BOOL(bd_verify_guest_math, false, kCvarGroup,
+                    "Compare host maths replacements against the guest.");
 REXCVAR_DEFINE_BOOL(bd_cull_early, true, kCvarGroup,
                     "Skip the visibility test for distance-culled nodes.");
 REXCVAR_DEFINE_BOOL(bd_draw_phase_timing, false, kCvarGroup,
