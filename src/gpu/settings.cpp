@@ -332,6 +332,13 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer, false, kCvarGroup,
 // what lets Adreno's low-resolution Z reject a hidden fragment before shading
 // it, which is why this is a GPU win and not only a CPU one. Requires
 // bd_draw_defer.
+// Flush the deferred queue after every draw. Functionally the same as immediate
+// submission, but through the record-and-replay path - which separates "the
+// state capture is wrong" from "the batching is wrong". Requires bd_draw_defer.
+REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
+                    "Flush the draw queue after every draw, to isolate capture "
+                    "correctness from batching.");
+
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 

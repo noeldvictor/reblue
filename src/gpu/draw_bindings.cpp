@@ -215,6 +215,32 @@ void Video::FlushViewport() {
   if (!s.command_list)
     return;
 
+  // While deferring, the viewport and scissor travel with the draw instead of
+  // being set now - see QueuedDraw. Computed unconditionally rather than under
+  // the dirty flags, because "unchanged since the last draw" stops meaning
+  // anything once draws are reordered.
+  if (s.deferring_draw) {
+    plume::RenderViewport vp = s.viewport;
+    if (vp.minDepth > vp.maxDepth)
+      std::swap(vp.minDepth, vp.maxDepth);
+    float sw = s.viewport.width;
+    float sh = s.viewport.height;
+    if (const i32 pct = REXCVAR_GET(bd_debug_fill_scale); pct < 100) {
+      sw = sw * float(pct) / 100.0f;
+      sh = sh * float(pct) / 100.0f;
+    }
+    s.pending.viewport = vp;
+    s.pending.scissor =
+        plume::RenderRect{static_cast<i32>(s.viewport.x),
+                          static_cast<i32>(s.viewport.y),
+                          static_cast<i32>(s.viewport.x + sw),
+                          static_cast<i32>(s.viewport.y + sh)};
+    s.pending.has_viewport = true;
+    s.dirtyStates.viewport = false;
+    s.dirtyStates.scissorRect = false;
+    return;
+  }
+
   if (s.dirtyStates.viewport) {
     plume::RenderViewport vp = s.viewport;
     if (vp.minDepth > vp.maxDepth)

@@ -8,6 +8,7 @@
 #include "gpu/draw_queue.h"
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 #include <rex/cvar.h>
@@ -36,6 +37,8 @@ struct EmitState {
   u32 constant_offsets[3] = {~0u, ~0u, ~0u};
   plume::RenderIndexBufferView index_view{plume::RenderBufferReference{}, 0,
                                           plume::RenderFormat::R16_UINT};
+  plume::RenderViewport viewport{};
+  plume::RenderRect scissor{};
   bool any = false;
 };
 
@@ -50,6 +53,15 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
     if (told++ < 8)
       BD_ERROR("[draw-queue] queued draw with no pipeline, skipped");
     return;
+  }
+
+  if (d.has_viewport &&
+      (!st.any || std::memcmp(&d.viewport, &st.viewport, sizeof(d.viewport)) ||
+       std::memcmp(&d.scissor, &st.scissor, sizeof(d.scissor)))) {
+    cmd->setViewports(&d.viewport, 1);
+    cmd->setScissors(&d.scissor, 1);
+    st.viewport = d.viewport;
+    st.scissor = d.scissor;
   }
 
   if (d.pipeline != st.pipeline) {
@@ -168,6 +180,20 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
                          return a.pipeline < b.pipeline;
                        return a.depth < b.depth;
                      });
+  }
+
+  // Recorded against emitted, once. A frame that records 800 and emits 800 has
+  // a placement problem; one that emits fewer has a dropping problem, and the
+  // two need completely different fixes.
+  static u32 told = 0;
+  static u32 emitted_total = 0;
+  static u32 flushes = 0;
+  ++flushes;
+  emitted_total += static_cast<u32>(g_queue.size());
+  if (told < 6 && flushes % 64 == 0) {
+    ++told;
+    BD_INFO("[draw-queue] flush #{}: {} draws now, {} emitted so far",
+            flushes, g_queue.size(), emitted_total);
   }
 
   EmitState st;

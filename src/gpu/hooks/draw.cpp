@@ -27,6 +27,7 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
+#include "gpu/draw_queue.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
@@ -40,6 +41,7 @@
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
@@ -216,6 +218,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
               : bound;
       if (surf->layers > 1 && surf->multiviewDirty &&
           surf != s.render_target && surf != s.depth_stencil) {
+        // The resolve takes the command list over - its own framebuffer,
+        // viewport, pipeline and draws - so anything queued has to come out
+        // first. Left queued, those draws would be replayed after the resolve
+        // against its framebuffer and its viewport rather than their own,
+        // which is why the deferred path rendered a black scene target on the
+        // Quest while the same code was correct with a flush after every draw.
+        if (s.draw_framebuffer_bound)
+          bd::gpu::DrawQueueFlush(s.command_list);
         bd::gpu::ResolveMultiviewSurfaceLocked(s, surf);
       }
     }
@@ -313,6 +323,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     q.depth = 0.0f;
     bd::gpu::DrawQueuePush(q);
     s.deferring_draw = false;
+    // Flush every draw: functionally identical to immediate submission, but it
+    // still goes through the whole record-and-replay path. If this renders
+    // correctly the state capture is right and the fault is in batching or
+    // ordering; if it is still black the capture itself is wrong. There is no
+    // way to tell those apart from the batched result alone.
+    if (REXCVAR_GET(bd_draw_defer_each))
+      bd::gpu::DrawQueueFlush(s.command_list);
     return;
   }
 

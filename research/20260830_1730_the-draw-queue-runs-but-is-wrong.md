@@ -118,3 +118,52 @@ land on the target the recording was made against. `gpu_total_ms` also reads as 
 clue rather than noise, because the queue changes where passes begin and end.
 
 Still default off.
+
+
+---
+
+## The isolation that matters, on the Quest 2
+
+`bd_draw_defer_each` flushes after every single draw. That is functionally immediate submission,
+but every draw still goes through record-and-replay, so it separates "the capture is wrong" from
+"the batching is wrong". There is no way to tell those apart from a batched result alone.
+
+| Quest 2, multiview | fps | `dt_ms` | `gpu_total_ms` | draws | stereo |
+| --- | --- | --- | --- | --- | --- |
+| immediate (default) | 15.0 | 66.82 | 56.40 | 555 | OK |
+| **defer, flush every draw** | **14.9** | **66.97** | **57.21** | 562 | **OK, crossed** |
+| defer, batched | 43.8 | 24.37 | garbage | 561 | black |
+
+**The state capture and replay are correct.** Flush-every-draw reproduces the baseline frame time,
+GPU time and a correct crossed-stereo verdict. Everything a draw needs is being recorded and
+replayed faithfully.
+
+**The fault is entirely in holding draws**, and the batched run is not "fast", it is empty: 43.8 fps
+with a nonsense `gpu_total_ms` and a black scene target means the emitted draws are doing almost no
+GPU work. The draw *count* is right (561 against 555) and a per-flush counter shows them going out
+in batches of 200-450, so they are neither dropped nor missing - they execute and produce nothing.
+
+Two flush points were added chasing this and are correct regardless:
+
+- Before `ResolveMultiviewSurfaceLocked`, which runs inline in `DispatchDraw` and takes the command
+  list over with its own framebuffer, viewport, pipeline and draws.
+- Before any draw that cannot be deferred, so guest submission order is exact.
+
+And viewport/scissor now travel with the draw, because `Video::FlushViewport` sets them
+immediately, outside the recorded state, and the guest changes them between draws. That is a real
+bug fixed - but it was not the one causing the black frame, because the black frame survives it.
+
+## Where to look next
+
+The draws execute and produce no GPU work, which points at everything being clipped or discarded
+rather than at wrong geometry. Concretely, in order:
+
+1. **The viewport/scissor now emitted unconditionally.** `has_viewport` is set on every deferred
+   draw, so a draw recorded before the guest has established a viewport will push a degenerate one
+   and clip itself away. The immediate path never does this because it is dirty-gated. Emit only a
+   non-degenerate viewport.
+2. **The render pass a flush lands in.** plume starts a pass lazily on the first draw. A batch
+   flushed after a barrier ended the pass begins a *new* one; check its load ops preserve the
+   attachment rather than discarding what earlier batches drew.
+3. `gpu_total_ms` reading as garbage is a clue, not noise - the timestamps bracket pass boundaries,
+   and the queue moves where passes begin and end.

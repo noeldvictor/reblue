@@ -53,6 +53,15 @@ struct QueuedDraw {
                                           plume::RenderFormat::R16_UINT};
   bool has_index_buffer = false;
 
+  // The guest changes these between draws - shadow maps, post passes, the
+  // design-canvas fit - and FlushViewport sets them immediately, outside the
+  // state this queue records. Batched replay then gave every draw the LAST
+  // viewport of the pass, which put earlier draws off screen and turned the
+  // scene target black while a flush-after-every-draw run was pixel-perfect.
+  plume::RenderViewport viewport{};
+  plume::RenderRect scissor{};
+  bool has_viewport = false;
+
   bool indexed = false;
   u32 count = 0;
   u32 start_index = 0;
