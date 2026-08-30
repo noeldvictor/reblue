@@ -464,6 +464,7 @@ bool Is2DPrimStride(u32 stride) {
 // bdPrimPushVertex2D writes x,y,u,v,color and always submits a strip, while
 // bdDrawRectPrimitive shares the stride but puts the color where u sits and
 // submits QUADLIST or LINESTRIP. Matching all three tells the two apart.
+
 bool IsScreenSpriteQuad(u32 primitiveType, u32 vertexCount, u32 vertexStride) {
   return static_cast<xe::PrimitiveType>(primitiveType) ==
              xe::PrimitiveType::kTriangleStrip &&
@@ -849,3 +850,4 @@ REX_HOOK(D3DDevice_EndVertices, D3DDevice_EndVertices_hook);
 REX_HOOK(D3DDevice_Resolve, D3DDevice_Resolve_hook);
 REX_HOOK(D3DDevice_BeginTiling, D3DDevice_BeginTiling_hook);
 REX_HOOK(D3DDevice_EndTiling, D3DDevice_EndTiling_hook);
+

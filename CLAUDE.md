@@ -1355,11 +1355,22 @@ game composites into a headset at its native frame rate with working controllers
      the HUD - and it wraps `D3DDevice_BeginVertices`/`EndVertices`. Bracketing that call marks
      every draw inside it as an overlay. `VideoState::overlay2DScope` exists for it and is read.
 
-     **What blocks it is a config detail, not the design.** `REX_HOOK_RAW(Visual__DrawVerticesUP)`
-     fails to link with `duplicate symbol` - the recompiler still emits a body for it, where it does
-     not for e.g. `bdSoundBankPlayCue`, which the same macro replaces cleanly. Find what marks a
-     function as host-implemented and this lands; failing that, a pair of midasm hooks on its entry
-     and its `blr` does the same job with the mechanism `config/hooks/*.toml` already uses.
+     **What blocks it is one unexplained symbol, and three explanations are already ruled out.**
+     `REX_HOOK_RAW(Visual__DrawVerticesUP)` fails to link with `duplicate symbol`, while
+     `bdSoundBankPlayCue` is replaced by the identical macro and links. Eliminated: it is **not**
+     COFF-versus-ELF (`ld.lld` rejects it on Android too), **not** the anonymous namespace (moving
+     the hook to file scope changes nothing), and **not** a double definition (`Visual__DrawVerticesUP`
+     appears once in `generated/`, in exactly the same three places as the function that works -
+     `reblue_recomp`, `reblue_init`, `reblue_register`).
+
+     `DEFINE_REX_FUNC` emits `name` as `__attribute__((weak, alias("__imp__" name)))`, which a
+     strong host definition is supposed to override. Why that override takes for one symbol and not
+     the other is the open question - and worth answering, because it gates every function
+     replacement, which is the mechanism the whole renderer rewrite depends on.
+
+     **The route that does not need it**: a pair of midasm hooks on the entry (0x82425710) and the
+     return, using the mechanism `config/hooks/*.toml` already uses. No symbol replacement, no
+     linker semantics.
 
      Still open until then: the credits text ("Akira Toriyama") lands in one eye. The proper VR
      answer for all of it is a head-locked layer - `bd_vr_hud_mode` is defined, stored in
