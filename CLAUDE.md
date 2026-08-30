@@ -888,6 +888,14 @@ in 5.8 million - atomics are not hot, despite the build targeting baseline `armv
 **These are static instruction counts, not a profile.** They say where the instructions are, not
 where the time goes.
 
+## Start here if you are picking this up
+
+**`research/20260830_0500_what-is-true-now.md`** is the consolidated state as of 2026-08-30. It
+lists what this repo believed that turned out to be false (the frame is not fill-bound,
+`gpu_total_ms` was stale by 3x, `bdSceneNodeDrawSingle` is ~5% not 23x, encounters do not end
+autoplay runs), what was measured and holds, the tools that now exist, and what to do next in order.
+Read it before any older note it disagrees with.
+
 ## Research notes
 
 Findings from web research go in `research/` as `YYYYMMDD_HHMM_<slug>.md`, dated at the time of
