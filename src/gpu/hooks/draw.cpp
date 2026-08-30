@@ -305,7 +305,15 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // screenshotting the combination, not by either feature's own test.
   const u32 min_w = u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u;
   const u32 min_h = u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u;
-  if (!REXCVAR_GET(bd_stereo) || !scene_pass) {
+  // A 2D overlay drawn once spans the whole target, which in a side-by-side
+  // frame means it straddles the join and each eye sees half of it - which is
+  // what "Microsoft Game Studios is not on both eyes" was. It gets the two half
+  // viewports like scene geometry, but **no eye offset**: an overlay belongs at
+  // the same place in both eyes, where it fuses at screen depth. Parallax here
+  // would push the HUD into the world.
+  const bool overlay_2d = s.overlay2D;
+  s.overlay2D = false;
+  if (!REXCVAR_GET(bd_stereo) || (!scene_pass && !overlay_2d)) {
     // Counted, because "stereo does nothing" has three different causes and
     // they are indistinguishable from the image: the cvar off, the scene-pass
     // gate rejecting every draw, or the per-eye constants not landing. This
@@ -354,8 +362,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // Checkable from a capture: for a convergence plane at infinity every point
     // must have crossed (negative) disparity, i.e. appear further left in the
     // right eye, by more the nearer it is.
-    const float sep = float(REXCVAR_GET(bd_stereo_separation));
-    const float conv = float(REXCVAR_GET(bd_stereo_convergence));
+    const float sep =
+        scene_pass ? float(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
+    const float conv =
+        scene_pass ? float(REXCVAR_GET(bd_stereo_convergence)) : 0.0f;
     if (sep != 0.0f || conv != 0.0f)
       bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? -sep : sep,
                                              eye ? conv : -conv);
@@ -396,6 +406,21 @@ bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
   if (!alloc.memory)
     return false;
   const bool text_batch = pVertexData == kTextQuadBatchEA;
+  // Remember whether this is genuinely 2D overlay content - the glyph batch, or
+  // a screen sprite - so the stereo path can put it in *both* eyes.
+  //
+  // These two tests and nothing looser. An earlier attempt keyed off "came
+  // through the user-pointer path" and quadrupled the frame, because the
+  // full-screen post blits arrive that way too and doubling one squashes the
+  // whole source into half the target.
+  // The glyph batch's fixed address, and nothing else.
+  //
+  // IsScreenSpriteQuad is not a usable discriminator here: a full-screen post
+  // blit has the same shape - a four-vertex triangle strip at the sprite stride
+  // - so including it quadrupled the frame, because doubling a blit squashes
+  // the whole source into half the target. The text batch is a specific buffer
+  // at a known EA and cannot be confused with one.
+  bd::gpu::state().overlay2D = text_batch;
   FitDesignCanvasVertices(alloc.memory, vertexCount, vertexStride, text_batch);
   if (text_batch)
     InsetQuadUVs(alloc.memory, vertexCount, vertexStride, UVEdges::All);

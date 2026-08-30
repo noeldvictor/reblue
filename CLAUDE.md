@@ -1337,13 +1337,21 @@ game composites into a headset at its native frame rate with working controllers
    silently relaxes the Android build too.
 
 1. **Two things a user spotted immediately, both real, both open.**
-   - **2D overlays land across the eye seam, not in each eye.** The intro's "Microsoft Game Studios"
-     is drawn *once* at full viewport width, so it straddles the middle of a side-by-side frame and
-     each eye sees half of it. 2D draws fail the `scene_pass` gate - few vertices - so they are not
-     submitted per eye. Doubling them naively is wrong too, because full-screen *post* quads must
-     not be doubled (they would squash the whole source into one half). The correct VR answer is to
-     route 2D onto a head-locked layer instead of into the eye images, which is what
-     `bd_vr_hud_mode` already exists for.
+   - **2D overlays land across the eye seam, not in each eye**, and this is partly fixed. The
+     mechanism: 2D draws fail the `scene_pass` gate, so they were emitted once at full viewport
+     width and straddled the join. `VideoState::overlay2D` now marks the guest's glyph batch and
+     the stereo path submits it to both half viewports **with no eye offset** - an overlay belongs
+     at the same place in both eyes, and parallax would push the HUD into the world.
+
+     **The discriminator has to be the glyph batch's fixed EA and nothing looser.** Two wider tests
+     were tried and both quadrupled the frame: "came through the user-pointer path", and
+     `IsScreenSpriteQuad`. A full-screen *post* blit is also a four-vertex triangle strip at the
+     sprite stride, and doubling one squashes the whole source into half the target. Only
+     `pVertexData == kTextQuadBatchEA` separates them.
+
+     Still open: the credits text ("Akira Toriyama") lands in one eye, so it does not come through
+     the glyph batch either. Finding its path is the remaining half. The proper VR answer for all
+     of it is a head-locked layer, which `bd_vr_hud_mode` already exists for.
    - **The CPU cost is the recompiled guest, not the renderer and not draw submission.** Measured on
      the desktop, RTX 3060, 1920x1080, VR + stereo: `dt 17.9ms, fence 0.35ms, draws 2070`, and the
      renderer's own share of that frame is `mutex 0.1ms, bindFB 0.3ms, flushState 2.1ms` - about

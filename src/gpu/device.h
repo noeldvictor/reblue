@@ -283,6 +283,11 @@ struct VideoState {
   // not reach a quad drawn at w = 1 - there a constant added to clip.x slides
   // the whole finished image instead of producing parallax.
   bool stereoEligible = false;
+  // Set for the next draw when the guest is submitting 2D overlay content - a
+  // glyph batch or a screen sprite. Stereo submits those to both eyes without
+  // an eye offset; post blits, which arrive through the same path, must not be
+  // doubled at all.
+  bool overlay2D = false;
 
   // 'interface' is a Windows.h macro (#define interface struct).
   std::unique_ptr<plume::RenderInterface> render_iface;
