@@ -38,6 +38,7 @@
 #include "core/logging.h"
 #include "core/perf.h"
 #include "core/profiling.h"
+#include "ui/vr_options.h"
 #include "core/config_audit.h"
 #include "core/settings.h"
 #include "core/settings_model.h"
@@ -439,6 +440,12 @@ void ReblueApp::OnCreateDialogs(rex::ui::ImGuiDrawer *drawer) {
   });
 
   fade_overlay_ = std::make_unique<bd::ui::FadeOverlay>(drawer);
+
+  // The VR options panel lives for the whole session and draws nothing until
+  // it is opened. Every comfort and immersion setting is already a cvar, and
+  // until now the only way to reach one was editing a TOML on the device -
+  // which for a standalone headset means a PC, adb and a relaunch.
+  bd::ui::EnsureVrOptionsPanel(drawer);
 
   // reblue's own overlay takes F3. The SDK's F4 cvar settings and F7
   // achievements go in retail, where the config menu and the launcher cover

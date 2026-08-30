@@ -80,6 +80,12 @@ REXCVAR_DEFINE_DOUBLE(bd_xr_refresh_rate, 0.0, kCvarGroup,
     .range(0.0, 120.0)
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
+// Opens the VR options panel without the controller gesture, so an unattended
+// run can capture it and someone can check it is readable through a lens
+// before anyone puts the headset on.
+REXCVAR_DEFINE_BOOL(bd_vr_menu, false, kCvarGroup,
+                    "Open the VR options panel.");
+
 REXCVAR_DEFINE_INT32(bd_vr_camera_mode,
                      static_cast<i32>(bd::xr::CameraMode::ThirdPerson),
                      kCvarGroup,
