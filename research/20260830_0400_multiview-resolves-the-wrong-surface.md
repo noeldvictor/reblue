@@ -261,6 +261,20 @@ So the scene binds a two-layer colour target and a two-layer depth target, multi
 pixel lands. Everything the resolve, the companion and the SRVs do downstream is faithful work on an
 empty image, which is why nine correct checks explained nothing.
 
+## Two more causes closed, from stderr
+
+`stderr` - discarded on every run this session until now - was reporting the answer to two of the
+open hypotheses all along:
+
+```
+plume: multiview feature ENABLED
+plume: multiview maxViewCount=32 maxInstanceIndex=134217727
+```
+
+So the device feature is on (plume's patch works) and the view-count limit is nowhere near binding.
+There are also **no `vkCreateRenderPass` or `vkCreateFramebuffer` failures** in the whole run, so
+creation succeeds and the framebuffer is real.
+
 ## What to do next, and it is not more inference
 
 This is a draw-time rejection that Vulkan is tolerating silently, and that is precisely what

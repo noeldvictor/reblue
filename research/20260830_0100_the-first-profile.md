@@ -128,6 +128,30 @@ character, foliage, cliffs and shadows all present and nothing popping.
 
 `bd_cull_early` reverts to the old ordering without a rebuild.
 
+## gpu_total_ms is unreliable: the query readback fails thousands of times a run
+
+Found by capturing `stderr`, which every run in this session had been sending to `/dev/null`:
+
+```
+6913  vkGetQueryPoolResults failed with error code 0x1.     # VK_NOT_READY
+```
+
+`VulkanQueryPool::queryResults` returns early when that happens and **leaves the previous contents
+of `results` in place**, so `CollectGPUTimings` then computes a frame time from whatever the last
+successful readback held. `gpu_total_ms`, `gpu_draw_ms` and `gpu_resolve_ms` are therefore stale far
+more often than not.
+
+That undermines the number this file opens with. The GPU being nearly idle is still the right
+conclusion - it rests on `fence_ms`, which is a CPU-side wall-clock wait and owes nothing to the
+query pool, and on the scissor and `DONT_CARE` experiments - but **the specific "~2ms" figure should
+not be quoted**, and the fix is to make a failed readback mark the slot invalid rather than silently
+reuse the last one.
+
+The wider lesson is the one worth carrying: **plume reports every failure to `stderr`, and this
+session discarded `stderr` on every single run.** It was also printing `multiview feature ENABLED`
+and `multiview maxViewCount=32` the whole time, which would have closed two multiview hypotheses
+immediately.
+
 ## Retracted: the host bdSinCos "win" was drift, and so is desktop A/B at this scale
 
 This section previously reported host `bdSinCos` as worth a third to a half of the main thread,
