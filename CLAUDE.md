@@ -580,6 +580,13 @@ recompiled shader reads guest constants through `vk::RawBufferLoad` at a **64-bi
 one declares `OpCapability Int64`, and the device cannot compile it. **This file already recorded the
 fact from a Quest validation run and filed it as a curiosity; it is the blocker.**
 
+**`python tools/spv_caps.py <hlsl_dump>` is the gate.** It decodes every `OpCapability` in the
+dumped modules, because a driver that refuses a shader says nothing useful and declaring an
+unsupported capability is not a spec violation for validation to catch. Today it reads
+`Int64 141 / 141`; `--require-absent Int64` exits non-zero until that is `0`, and nothing else
+proves the fix landed. It also cross-checks multiview: `MultiView` appears in exactly the 55 vertex
+shaders that carry `SV_ViewID`.
+
 **It is also the same change as the port's biggest GPU cost.** Binding the constant blocks as a UBO
 instead of pushing a device address - `research/20260829_0030_shader-constants-are-global-loads.md`,
 measured at ~225ns per vertex - removes the `uint64_t` and with it the `Int64` capability. One piece
