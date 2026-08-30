@@ -19,6 +19,7 @@
 #include "core/logging.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/frame_stats.h"
 #include "gpu/format.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
@@ -98,6 +99,8 @@ void D3DDevice_SetRenderTarget_hook(
   // framebuffer holding the old RTV has to go with it.
   if (s.render_target != surface)
     s.draw_framebuffer_bound = false;
+
+
 
   bd::gpu::Video::SetDirtyValue<bd::gpu::GuestTexture *>(
       s.dirtyStates.renderTargetAndDepthStencil, s.render_target, surface);

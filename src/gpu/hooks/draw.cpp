@@ -168,6 +168,23 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       args.vertexOrIndexCount > 6;
   s.stereoEligible = scene_pass;
 
+  // Flatten any two-layer surface this draw is about to sample.
+  //
+  // This is the only honest "about to be read" point available. The texture
+  // bind hook never sees these - Blue Dragon binds through sampler fetch
+  // constants written by unhooked recompiled code - and the render-target
+  // change is too early: the scene surface is bound and unbound several times
+  // a frame, so resolving there fired on a half-drawn array and then marked
+  // itself done, and the big scene target was never resolved at all.
+  //
+  // Here the writes are provably finished, because something is sampling it.
+  for (bd::gpu::GuestTexture *bound : s.textures) {
+    if (bound && bound->layers > 1 && bound->multiviewDirty &&
+        bound != s.render_target && s.command_list_open) {
+      bd::gpu::ResolveMultiviewSurfaceLocked(s, bound);
+    }
+  }
+
   const auto t_fb = bd::gpu::DrawPhaseNow();
   if (!bd::gpu::Video::FlushRenderStateLocked(device_guest)) {
     return; // FlushRenderState logs its own reason
@@ -180,9 +197,28 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // draw from 131 vertices - and that total does not move when the scene
   // resolution is halved. So the pixels are going somewhere whose size ignores
   // bd_max_render_height, and this says where rather than inferring it.
-  if (s.render_target)
+  if (s.render_target) {
     bd::gpu::NoteDrawTarget(s.render_target, s.render_target->width,
                             s.render_target->height, s.render_target->layers);
+    // So the resolve only fires on a surface something actually drew into.
+    if (s.render_target->layers > 1)
+      s.render_target->multiviewDirty = true;
+    // Does a draw landing on a two-layer target actually get a multiview
+    // pipeline? A framebuffer with viewMask 3 and a pipeline with viewMask 0
+    // is a render-pass incompatibility, which is undefined rather than an
+    // error - and would leave the array empty while the draw count looks fine.
+    {
+      static std::atomic<u32> layered{0}, layered_mv{0};
+      if (s.render_target->layers > 1) {
+        const u32 n = layered.fetch_add(1, std::memory_order_relaxed);
+        if (s.pipelineState.multiview)
+          layered_mv.fetch_add(1, std::memory_order_relaxed);
+        if (n == 4000)
+          BD_INFO("[mv] of 4000 draws on two-layer targets, {} had a multiview "
+                  "pipeline", layered_mv.load(std::memory_order_relaxed));
+      }
+    }
+  }
 
   auto *cmd_list = s.command_list;
   if (!cmd_list)

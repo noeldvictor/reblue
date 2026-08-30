@@ -243,6 +243,23 @@ REXCVAR_DEFINE_BOOL(bd_xr_mirror, true, kCvarGroup,
                     "present per frame, so it is off on Android where nothing "
                     "displays that surface.");
 
+// Splits the multiview resolve in two so a broken frame can be attributed:
+// whether the two layers are flattened at all, and whether readers are pointed
+// at the flattened image. Both default on; turning either off in isolation is
+// how the black-frame regressions get localised.
+REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
+                    "Multiview diagnostic: fill the resolve target with magenta "
+                    "instead of resolving, to tell a dead render pass from a "
+                    "dead draw.");
+
+REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
+                    "Run the multiview resolve pass that flattens the two "
+                    "layers into one side-by-side image.");
+
+REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
+                    "Point a multiview surface's sampled view at the resolved "
+                    "companion rather than at array layer 0.");
+
 REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");

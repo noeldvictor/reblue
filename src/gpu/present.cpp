@@ -926,10 +926,19 @@ void Video::Present(GuestTexture *frontBuffer) {
   // A two-layer scene target carries both eyes, so capture that rather than the
   // composited back buffer, which is one eye by the time the mono post chain
   // has finished with it. Anything else captures `back` as before.
-  const bool multiview_rt = rt && rt->texture && rt->layers > 1;
+  // Prefer the resolved companion: under multiview that is the image the post
+  // chain and the compositor actually see, and the array behind it is an
+  // intermediate. Capturing the array instead photographs the wrong texture and
+  // reads as a black frame even when the output is fine.
+  const bool resolved_rt = rt && rt->resolvedTexture && rt->layers > 1;
+  const bool multiview_rt = rt && rt->texture && rt->layers > 1 && !resolved_rt;
   const bool capturing =
       CaptureDue() &&
-      (multiview_rt
+      (resolved_rt
+           ? RecordCapture(s, rt->resolvedTexture, rt->width, rt->height,
+                           rt->format, 1,
+                           plume::RenderTextureLayout::SHADER_READ)
+       : multiview_rt
            ? RecordCapture(s, rt->texture, rt->width, rt->height, rt->format,
                            rt->layers, plume::RenderTextureLayout::SHADER_READ)
            : RecordCapture(s, back, s.swap_chain->getWidth(),

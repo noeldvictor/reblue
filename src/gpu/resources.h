@@ -62,6 +62,35 @@ struct GuestTexture {
   // framebuffer's view mask, the pipeline's, and whether present has to pick a
   // layer - keys off this rather than re-deriving it from a cvar.
   u32 layers = 1;
+
+  // --- multiview resolve ------------------------------------------------
+  //
+  // A two-layer target carries an eye per layer, but everything that *reads* a
+  // surface goes through one bindless SRV declared Texture2D, so a reader can
+  // only ever see one layer and the stereo pair collapses on the first post
+  // pass. Rather than make the whole texture heap array-typed - which reaches
+  // into XenosRecomp's declarations, the descriptor layout and every tfetch,
+  // and has to fit inside Adreno's four bound sets - the two layers are
+  // resolved into one side-by-side image the moment the guest stops drawing
+  // into them.
+  //
+  // `textureView` / `descriptorIndex` then point at *that*, so the post chain
+  // and present read a normal single-layer texture holding both eyes, exactly
+  // as they already do for bd_stereo. Nothing downstream needs to change.
+  std::unique_ptr<plume::RenderTexture> resolvedHolder;
+  plume::RenderTexture *resolvedTexture = nullptr;
+  std::unique_ptr<plume::RenderFramebuffer> resolvedFramebuffer;
+  std::unique_ptr<plume::RenderTextureView> layerView[2];
+  // Bindless slots for the two single-slice views the resolve pass samples.
+  u32 layerDescriptorIndex[2] = {~u32{0}, ~u32{0}};
+  // Set when a draw lands on this surface, cleared by the resolve. Stops a
+  // resolve firing on a target nothing has touched this frame.
+  bool multiviewDirty = false;
+  // Frame of the last resolve. The scene surface is bound and unbound several
+  // times a frame, and resolving on each of those flips the array to
+  // SHADER_READ while the guest is still drawing into it - which blacked the
+  // whole frame the first time this was tried.
+  u32 multiviewResolvedFrame = ~u32{0};
   u32 depth = 0;
   u32 mipLevels = 1;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;

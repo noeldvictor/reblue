@@ -72,10 +72,43 @@ Where the work goes:
 
 | technique | state | the seam |
 | --- | --- | --- |
-| **Multiview** | scene renders both layers; the **post chain collapses it** | `surface_pool` SRVs are single-slice 2D views. Resolve the two layers to side-by-side before post - see `research/20260829_1900_multiview-needs-a-resolve-not-an-array-heap.md` |
+| **Multiview** | scene renders both layers correctly with multiview pipelines; **the resolve has nowhere to hook** | The resolve pass itself is built and proven to run. What is missing is a trigger - see below |
 | **Fixed foveated rendering** | not started | `XR_FB_foveation`. Needs the scene rendered *into* the XR swapchain image, which it is not - present composites into it |
 | **Occlusion culling** | distance cull only (`bd_cull_distance`) | `bdSceneNodeCullTraverse` (0x82282490), already hooked |
 | **Batching** | none | ~1000 individually placed scene nodes a frame; `bdSceneNodeDrawSingle` is 23x the next consumer on device |
+
+### Multiview: the resolve is built, and the guest gives it nowhere to hook
+
+Everything except the trigger now exists and is verified:
+
+- Two-layer scene targets, multiview render passes, multiview pipelines. **4001 of 4000 draws on a
+  two-layer target had a multiview pipeline**, so the framebuffer/pipeline view masks agree.
+- A **side-by-side companion** per layered surface, its framebuffer, and a single-slice SRV per eye
+  registered in the bindless heap (`Video::SetBindlessTexture`).
+- A **format-matched resolve pipeline**, cached per render-target format. `copy_color_pipeline`
+  cannot be reused: it hardcodes `B8G8R8A8_UNORM`, and the guest's surfaces are formats 10 and 20 -
+  binding it against their companion is a render-pass incompatibility, which is undefined rather
+  than an error and showed up as an entirely black frame with a normal draw count.
+- Proven to execute, by `bd_mv_debug_clear`: the companion comes back **pure magenta**, so the pass,
+  framebuffer, barriers and capture path all work, and the copy draw overwrites that clear.
+
+**What is missing is a moment to run it.** Three triggers were tried and all three fail:
+
+| trigger | what happens |
+| --- | --- |
+| render target changes away from the layered surface | fires several times a frame mid-scene, flips the array to `SHADER_READ` while the guest is still drawing into it, blacks the frame. Guarding it to once per frame then resolves the *wrong* surfaces - the log shows 960x540 and 480x270 post targets, never the 1920x1080 scene |
+| `D3DDevice_SetTexture` | never fires. Blue Dragon binds textures through **sampler fetch constants written by unhooked recompiled code** |
+| scanning `s.textures[]` before each draw | never matches, for the same reason |
+
+**So the guest never tells the host it is about to sample a render target.** That is the real
+blocker, and it is why the array reads black downstream even though the scene renders into it.
+
+The next move is one of: hook the guest function that ends the scene pass and resolve there; make
+the fetch-constant path record which surfaces it binds so a sample point exists at all; or go to the
+`Texture2DArray` bindless heap and drop the resolve entirely.
+
+`bd_stereo_multiview` is **off by default** and `bd_stereo` is unregressed at `far +4, near -5,
+near - far = -9px`, bit-identical to before this work.
 
 ## Modern VR technique is mandatory, and is not the thing to measure
 

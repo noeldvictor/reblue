@@ -29,6 +29,7 @@
 #include "gpu/output.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_redirect_srv);
 REXCVAR_DECLARE(i32, bd_stereo_debug_layer);
 
 namespace bd::gpu {
@@ -500,14 +501,56 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
       // multiview needs.
       view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
       view_desc.mipLevels = 1;
+
       if (layers > 1) {
-        // One layer of the array, chosen by bd_stereo_debug_layer, so the flat
-        // window can be pointed at either eye.
-        view_desc.arraySize = 1;
-        view_desc.arrayIndex = u32(REXCVAR_GET(bd_stereo_debug_layer));
+        // A two-layer target gets a companion the same size holding both eyes
+        // side by side, and *that* is what everything downstream samples. See
+        // the resolve comment on GuestTexture: one bindless heap declared
+        // Texture2D means a reader can only see one layer, so the pair has to
+        // be flattened into a normal texture before the post chain touches it.
+        plume::RenderTextureDesc resolved_desc = desc;
+        resolved_desc.arraySize = 1;
+        surface->resolvedHolder =
+            CreateHostTexture(device, resolved_desc, "rt-surface-resolved");
+        surface->resolvedTexture = surface->resolvedHolder.get();
+
+        if (surface->resolvedTexture) {
+          const plume::RenderTexture *attach[1] = {surface->resolvedTexture};
+          surface->resolvedFramebuffer = device->createFramebuffer(
+              plume::RenderFramebufferDesc(attach, 1));
+
+          // One single-slice view per eye, for the resolve pass to sample.
+          // Registered by hand rather than through BindTextureSRV, which only
+          // knows how to bind a surface's own primary view.
+          for (u32 layer = 0; layer < 2; ++layer) {
+            plume::RenderTextureViewDesc eye = view_desc;
+            eye.arraySize = 1;
+            eye.arrayIndex = layer;
+            surface->layerView[layer] =
+                surface->texture->createTextureView(eye);
+            if (!surface->layerView[layer])
+              continue;
+            const u32 slot = Video::AllocateBindlessTextureSlot();
+            if (slot == kInvalidDescriptorIndex)
+              continue;
+            Video::SetBindlessTexture(slot, surface->texture,
+                                      surface->layerView[layer].get());
+            surface->layerDescriptorIndex[layer] = slot;
+          }
+          // The primary view is the resolved image, so post and present read
+          // both eyes through the path they already use.
+          if (REXCVAR_GET(bd_mv_redirect_srv)) {
+            surface->textureView =
+                surface->resolvedTexture->createTextureView(view_desc);
+            Video::BindResolvedSRV(surface);
+          }
+        }
       }
-      surface->textureView = surface->texture->createTextureView(view_desc);
-      Video::BindTextureSRV(surface);
+
+      if (!surface->textureView) {
+        surface->textureView = surface->texture->createTextureView(view_desc);
+        Video::BindTextureSRV(surface);
+      }
     }
   } else {
     BD_ERROR("CreateSurface fired before Video host device exists");

@@ -172,6 +172,11 @@ public:
   // view. UINT32_MAX if full. Re-allocates only when descriptorIndex is still
   // UINT32_MAX.
   static u32 BindTextureSRV(GuestTexture *tex);
+  // Multiview resolve: bind the companion image, and point spare slots at the
+  // per-eye array-slice views the resolve pass samples.
+  static u32 BindResolvedSRV(GuestTexture *tex);
+  static void SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
+                                 plume::RenderTextureView *view);
 
   // D3DDevice_Resolve: copy the bound RT[0] into a CPU-sampleable destination
   // (Xenos EDRAM-to-main-memory resolve, a CopyResource on D3D12). dst must be
@@ -538,6 +543,10 @@ bool BuildFramebuffers(VideoState &s);
 bool BuildPresentSemaphores(VideoState &s);
 u32 AllocateSlot(VideoState &s);
 u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex);
+
+// Flattens a two-layer multiview target into its side-by-side companion. Call
+// with the renderer lock held, on the command list the guest is recording into.
+void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex);
 void ReleaseTextureSRVLocked(VideoState &s, GuestTexture *tex);
 void RetireTextureBindingsLocked(VideoState &s, GuestTexture *dead);
 // Null-rewrite and free every slot parked in descriptor_graveyard[slot].

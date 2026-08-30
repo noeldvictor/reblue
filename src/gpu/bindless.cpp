@@ -117,6 +117,44 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
   return slot;
 }
 
+// Points an already-allocated slot at an arbitrary view of a texture.
+//
+// BindTextureSRVLocked only knows how to bind a surface's own primary view, and
+// the multiview resolve needs two more - one per array slice - registered
+// against the same image. Splitting that out is cheaper than teaching the
+// primary path about layers it otherwise never sees.
+void Video::SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
+                               plume::RenderTextureView *view) {
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
+    return;
+  s.texture_descriptor_set->setTexture(
+      slot, texture, plume::RenderTextureLayout::SHADER_READ, view);
+}
+
+// Registers a multiview surface's *resolved* companion as its sampled image, so
+// every downstream read gets both eyes rather than one array slice.
+u32 Video::BindResolvedSRV(GuestTexture *tex) {
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  if (!tex || !tex->resolvedTexture || !tex->textureView ||
+      !s.texture_descriptor_set)
+    return kInvalidDescriptorIndex;
+  if (tex->descriptorIndex != kInvalidDescriptorIndex)
+    return tex->descriptorIndex;
+  const u32 slot = AllocateSlot(s);
+  if (slot == kInvalidDescriptorIndex) {
+    BD_ERROR("Bindless heap full, multiview resolve SRV dropped");
+    return kInvalidDescriptorIndex;
+  }
+  s.texture_descriptor_set->setTexture(slot, tex->resolvedTexture,
+                                       plume::RenderTextureLayout::SHADER_READ,
+                                       tex->textureView.get());
+  tex->descriptorIndex = slot;
+  return slot;
+}
+
 u32 Video::AllocateBindlessTextureSlot() {
   // AllocateSlot's kInvalidDescriptorIndex is the sentinel callers expect, so
   // no remap is needed.
