@@ -29,6 +29,7 @@
 #include "gpu/output.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_small_targets_mono);
 REXCVAR_DECLARE(bool, bd_mv_redirect_srv);
 REXCVAR_DECLARE(i32, bd_stereo_debug_layer);
 
@@ -464,8 +465,28 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   //
   // Costs twice the memory on the small targets, which is a rounding error
   // against the scene colour and depth that were already doubled.
+  // bd_mv_small_targets_mono narrows that: only surfaces at or above half the
+  // design canvas get two layers.
+  //
+  // The frame is fill-bound - bd_debug_fill_scale=25 takes it from 6.4 to
+  // 37.8 fps at an unchanged draw count - and under multiview every target
+  // rasterises twice, post chain included. The post chain does not need two
+  // eyes: the resolve flattens the layered scene into a side-by-side companion
+  // and bd_mv_redirect_srv points readers at it, so everything downstream is
+  // already working on one mono side-by-side image.
+  //
+  // Deliberately conservative. The comment above is a real scar - giving the
+  // post chain one layer while it still sampled the layered scene collapsed the
+  // stereo pair and cost a session and a half - so this is off by default and
+  // only touches surfaces below half the canvas, which the device census shows
+  // are the 344x193 and smaller post targets. The two full-resolution passes,
+  // which are the actual fill, keep both layers until it is known which of them
+  // is view-independent.
   const bool multiview_scene = REXCVAR_GET(bd_stereo_multiview);
-  const u32 layers = multiview_scene ? 2u : 1u;
+  const bool small = REXCVAR_GET(bd_mv_small_targets_mono) &&
+                     (width * 2u < u32(kDesignCanvasWidth) ||
+                      height * 2u < u32(kDesignCanvasHeight));
+  const u32 layers = (multiview_scene && !small) ? 2u : 1u;
 
   plume::RenderTextureDesc desc;
   desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;

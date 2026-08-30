@@ -280,6 +280,16 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
                     "instead of resolving, to tell a dead render pass from a "
                     "dead draw.");
 
+// Give two layers only to surfaces at or above half the design canvas.
+//
+// The frame is fill-bound and multiview rasterises every target twice, post
+// chain included - but the post chain reads the resolved side-by-side companion
+// and does not need two eyes. Off by default: the same narrowing, applied too
+// widely, once collapsed the stereo pair and cost a session and a half to find.
+REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
+                    "Under multiview, give two layers only to surfaces at or "
+                    "above half the design canvas.");
+
 REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
                     "Run the multiview resolve pass that flattens the two "
                     "layers into one side-by-side image.");

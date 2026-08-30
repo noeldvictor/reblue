@@ -65,6 +65,12 @@ struct ConstantAllocation {
   plume::RenderBufferReference ref{};
   u64 gpuAddress = 0;
   u32 size = 0;
+  // {chunk descriptor index, byte offset into that chunk}, laid out to be
+  // pushed straight into the shader's PushConstants pair. Replaces gpuAddress
+  // on Vulkan: a 64-bit device address made every constant read an uncached
+  // global load and forced OpCapability Int64, which an Adreno 740 cannot
+  // compile. D3D12 still binds a root descriptor and ignores this.
+  u32 binding[2]{};
 };
 
 bool TryInit();

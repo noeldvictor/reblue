@@ -6,9 +6,9 @@
 
 #ifdef __spirv__
 
-#define g_vCount vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + 416, 0x10)
-#define g_vSampleOffsets(INDEX) select((INDEX) < 224, vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + (0 + min(INDEX, 223)) * 16, 0x10), 0.0)
-#define g_vSampleWeights(INDEX) select((INDEX) < 211, vk::RawBufferLoad<float4>(g_PushConstants.PixelShaderConstants + (13 + min(INDEX, 210)) * 16, 0x10), 0.0)
+#define g_vCount BD_CLOAD_F4(g_PushConstants.PixelShaderChunk, g_PushConstants.PixelShaderOffset, 416)
+#define g_vSampleOffsets(INDEX) select((INDEX) < 224, BD_CLOAD_F4(g_PushConstants.PixelShaderChunk, g_PushConstants.PixelShaderOffset, (0 + min(INDEX, 223)) * 16), 0.0)
+#define g_vSampleWeights(INDEX) select((INDEX) < 211, BD_CLOAD_F4(g_PushConstants.PixelShaderChunk, g_PushConstants.PixelShaderOffset, (13 + min(INDEX, 210)) * 16), 0.0)
 
 #else
 

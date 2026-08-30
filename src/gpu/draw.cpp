@@ -170,7 +170,8 @@ void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
   s.command_list->setGraphicsRootDescriptor(alloc.ref, 0);
 #else
   s.command_list->setGraphicsPushConstants(kGuestPushConstantRangeIndex,
-                                           &alloc.gpuAddress, 0, sizeof(u64));
+                                           alloc.binding, 0,
+                                           sizeof(alloc.binding));
 #endif
 }
 
@@ -310,7 +311,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
         s.command_list->setGraphicsRootDescriptor(vs_alloc.ref, 0);
 #else
         s.command_list->setGraphicsPushConstants(
-            kGuestPushConstantRangeIndex, &vs_alloc.gpuAddress, 0, sizeof(u64));
+            kGuestPushConstantRangeIndex, vs_alloc.binding, 0,
+            sizeof(vs_alloc.binding));
 #endif
       }
     }
@@ -321,9 +323,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(ps_alloc.ref, 1);
 #else
-        s.command_list->setGraphicsPushConstants(kGuestPushConstantRangeIndex,
-                                                 &ps_alloc.gpuAddress,
-                                                 sizeof(u64), sizeof(u64));
+        s.command_list->setGraphicsPushConstants(
+            kGuestPushConstantRangeIndex, ps_alloc.binding,
+            sizeof(ps_alloc.binding), sizeof(ps_alloc.binding));
 #endif
       }
     }
@@ -337,9 +339,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
 #if defined(REBLUE_D3D12)
       s.command_list->setGraphicsRootDescriptor(sc_alloc.ref, 2);
 #else
-      s.command_list->setGraphicsPushConstants(kGuestPushConstantRangeIndex,
-                                               &sc_alloc.gpuAddress,
-                                               2 * sizeof(u64), sizeof(u64));
+      s.command_list->setGraphicsPushConstants(
+          kGuestPushConstantRangeIndex, sc_alloc.binding,
+          2 * sizeof(sc_alloc.binding), sizeof(sc_alloc.binding));
 #endif
     }
   }

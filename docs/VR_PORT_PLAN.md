@@ -1,4 +1,48 @@
-# re:Blue — VR and ARM64/Android port plan
+# Blue Dragon VR port plan
+
+## Current state, 2026-08-30: the frame is GPU-bound and two X360 patterns own it
+
+Stereo works and is verified on the headset. Speed is the whole remaining problem, and the
+bottleneck moved: the CPU work landed and the GPU is now 96% of the frame.
+
+```
+dt_ms 158.74 | gpu_draw_ms 152.94 | fence_ms 131.16 | other_ms 27.03 | draws 522.87
+```
+
+Two X360 patterns account for it, and both are removable.
+
+### 1. Shader constants are uncached global loads on Vulkan only
+
+`shader_recompiler.cpp:1291` emits two constant paths behind `#ifdef __spirv__`. DXIL gets a
+`cbuffer`; SPIR-V gets `vk::RawBufferLoad` from a 64-bit device address - 143-158 uncached global
+loads per fragment on Adreno, where a UBO read would be hoisted at wave launch. Measured cost:
+1.24 Gpix/s against the Adreno 650's 4-8, i.e. ~5x under the hardware floor, corroborated by a
+5-7x gap against the desktop build of the same scene.
+
+It is also why all 141 shaders declare `OpCapability Int64`, which an Adreno 740 cannot compile -
+so **one change unblocks the AYN Thor and fixes the Quest's frame rate.** The replacement is
+already written and shipping on D3D12.
+
+Blocking work, both known: plume exposes no dynamic UBO offsets, and Adreno's four descriptor sets
+are full, so the buffer must become a binding on an existing set. Collapsing HLSL spaces 0/1/2 -
+one physical set bound three times - frees the slot and is the same prerequisite as the dropped
+sun-occlusion set.
+
+### 2. The surface pool is EDRAM semantics
+
+`targets: 64 rows, 190.4 Mpix/frame`, with **sixteen live `1376x720x2L` targets** - four scene
+alternates plus twelve more - over ~29 small ones each touched a quarter of a frame. They are
+pooled aliases of a handful of logical surfaces, because the guest asks for a fresh surface per
+pass the way a Xenon took a fresh EDRAM tile. ~127 MB of render targets for a 4 MB framebuffer.
+
+### What this retires
+
+`bd_debug_fill_scale` was read as proving the frame is bound by fragment *count*. It cannot
+separate count from per-fragment cost - the two are multiplied, so both hypotheses give the same
+curve. Resolution and foveation levers were chosen on that reading and should be re-argued against
+the Gpix/s figure, which says cost.
+
+---
 
 Working document for this fork. Research current as of 2026-08. Nothing here is built yet.
 

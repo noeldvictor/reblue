@@ -30,6 +30,7 @@
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
 #include "gpu/d3d.h"
+#include "gpu/bindless_allocator.h"
 #include "gpu/device.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
@@ -60,6 +61,11 @@ struct UploadChunk {
   std::unique_ptr<plume::RenderBuffer> buffer;
   u8 *mapped = nullptr;
   u64 gpuBase = 0;
+  // Slot in the bindless set's leading ByteAddressBuffer range, which is what
+  // the shader indexes as g_ConstantChunks[]. Assigned once at creation; a
+  // chunk is never destroyed before device teardown, so it stays valid.
+  u32 descriptorIndex = 0;
+  bool descriptorBound = false;
 };
 
 // One upload chunk list per in-flight frame slot, rewound only after that
@@ -87,6 +93,9 @@ struct SamplerSlotCache {
 struct UploadState {
   FrameUpload frames[kNumFrames];
   u32 cursor = 0;
+  // Hands out slots in the g_ConstantChunks range. Chunks belong to a frame
+  // slot but the descriptor range is global, so the counter is too.
+  u32 nextChunkDescriptor = 0;
   SharedConstants shared{};
   SharedConstants lastUploaded{};
   SamplerSlotCache samplerSlots[16];
@@ -163,6 +172,27 @@ bool CreateChunk(UploadChunk &chunk) {
     return false;
   }
   chunk.gpuBase = chunk.buffer->getDeviceAddress();
+
+#if !defined(REBLUE_D3D12)
+  // Publish it into the bindless range the shader reads. D3D12 keeps its root
+  // descriptor and reserves none of these, so this is Vulkan-only.
+  auto &st = upload_state();
+  if (st.nextChunkDescriptor >= bd::gpu::kConstantChunkDescriptors) {
+    BD_ERROR("constant_buffers: out of chunk descriptors ({} reserved). Raise "
+             "kConstantChunkDescriptors - every texture index shifts with it.",
+             bd::gpu::kConstantChunkDescriptors);
+    chunk.buffer.reset();
+    return false;
+  }
+  chunk.descriptorIndex = st.nextChunkDescriptor++;
+  if (auto *set = bd::gpu::Video::TextureDescriptorSet()) {
+    set->setBuffer(chunk.descriptorIndex, chunk.buffer.get(), kUploadChunkSize);
+    chunk.descriptorBound = true;
+  } else {
+    BD_ERROR("constant_buffers: no texture descriptor set to publish the "
+             "constant chunk into; shaders will read stale constants");
+  }
+#endif
   return true;
 }
 
@@ -199,6 +229,8 @@ ConstantAllocation Allocate(UploadState &s, u32 size, u32 alignment) {
   a.memory = chunk.mapped + off;
   a.ref = plume::RenderBufferReference(chunk.buffer.get(), off);
   a.gpuAddress = chunk.gpuBase + off;
+  a.binding[0] = chunk.descriptorIndex;
+  a.binding[1] = off;
   a.size = size;
   return a;
 }

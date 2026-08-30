@@ -601,9 +601,11 @@ texture set, so binding changes must be made in both.
 
 **`python tools/spv_caps.py <hlsl_dump>` is the gate.** It decodes every `OpCapability` in the
 dumped modules, because a driver that refuses a shader says nothing useful and declaring an
-unsupported capability is not a spec violation for validation to catch. Today it reads
-`Int64 141 / 141`; `--require-absent Int64` exits non-zero until that is `0`, and nothing else
-proves the fix landed. It also cross-checks multiview: `MultiView` appears in exactly the 55 vertex
+unsupported capability is not a spec violation for validation to catch. **Name the preset when you quote it.** The android dump reads `Int64 141 / 141`; the
+**win-amd64 dump reads `Int64 0 / 141` and that is not the fix landing** - the desktop dump is the
+DXIL variant, and DXIL takes the `#else` branch that has always been a plain `cbuffer`. Reading the
+desktop dump makes a never-started rewrite look finished. `--require-absent Int64` exits non-zero
+until android reads `0`, and nothing else proves the fix landed. It also cross-checks multiview: `MultiView` appears in exactly the 55 vertex
 shaders that carry `SV_ViewID`.
 
 **It is also the same change as the port's biggest GPU cost.** Binding the constant blocks as a UBO
@@ -997,6 +999,54 @@ in 5.8 million - atomics are not hot, despite the build targeting baseline `armv
 
 **These are static instruction counts, not a profile.** They say where the instructions are, not
 where the time goes.
+
+## The frame is now GPU-bound, and the Vulkan constant path is why (2026-08-30)
+
+Every note above this line that says "the GPU is idle" describes a port whose CPU work had not
+landed yet. It has. Measured on a Quest 2, 804 field frames:
+
+```
+dt_ms 158.74 | gpu_total_ms 155.51 | gpu_draw_ms 152.94 | gpu_resolve_ms 1.33
+fence_ms 131.16 | other_ms 27.03 | draws 522.87 | pso_switches 114.18
+```
+
+**The GPU is 96% of the frame and the CPU spends 131ms waiting on it.** `other_ms` is 27ms.
+
+**The pixels are ~5x more expensive than the hardware's floor**, from two independent estimates:
+the per-target census totals 190.4 Mpix/frame, which over 152.94ms is **1.24 Gpix/s** against an
+Adreno 650's 4-8; and the desktop does the same scene in `gpu_draw 4.54ms` at a *higher*
+resolution, which after allowing 10-15x for an RTX 3060 leaves 5-7x unexplained and
+Adreno-specific.
+
+**The cause: `shader_recompiler.cpp:1291` emits two constant paths and Vulkan takes the wrong one.**
+
+```
+out += "#ifdef __spirv__";   ->  #define cN vk::RawBufferLoad<float4>(...ShaderConstants + off)
+out += "#else";              ->  cbuffer PixelShaderConstants : register(b1, space4)
+```
+
+So **DXIL gets a uniform buffer and SPIR-V gets a raw 64-bit-address global load** - ordinary
+uncached global memory on Adreno, per invocation, 143-158 times per fragment. It is also why
+`OpCapability Int64` is declared by all 141 shaders, which an Adreno 740 cannot compile at all.
+**One change fixes the Thor's blocker and the Quest's frame rate.** The replacement is already
+written and shipping on D3D12; making `__spirv__` take it is the work.
+See `research/20260830_1600_the-vulkan-constant-path-was-never-fixed.md`.
+
+**`bd_debug_fill_scale` cannot tell fragment count from fragment cost.** The 25%-scissor result -
+155.7ms to 26.5ms at an unchanged draw count - was written up here as "fill-bound", meaning too
+many fragments. If each fragment carries ~150 global loads, a count experiment and a cost
+experiment draw the same curve, because the two factors are multiplied. The honest reading is
+"cost is proportional to fragments"; the Gpix/s figure is what discriminates, and it says cost.
+
+**And the surface pool is EDRAM semantics, literally.** The same census reads
+`targets: 64 rows, 264 draws/frame attributed of 459 counted, 190.4 Mpix/frame`, with **sixteen
+distinct `1376x720x2L` targets live** - four scene alternates at 0.25 binds/frame each and twelve
+more at 0.25-0.50 - over seven `320x180`, four `172x90`, four `160x90`, six `86x45` and eight
+`80x45`, each touched about a quarter of a frame. Those are pooled aliases of a handful of logical
+surfaces, cycling because the guest asks for a fresh surface per pass. At 7.9 MB per full-resolution
+two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. On a Xenon taking a
+new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
+per handout.
 
 ## Start here if you are picking this up
 

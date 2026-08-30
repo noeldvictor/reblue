@@ -7,8 +7,8 @@
 // built without REBLUE_RECOMP, so that macro would place them on the other
 // layout's offsets.
 #ifdef __spirv__
-#define Tex0_ResourceDescriptorIndex vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 0)
-#define Tex0_SamplerDescriptorIndex  vk::RawBufferLoad<uint>(g_PushConstants.SharedConstants + 192)
+#define Tex0_ResourceDescriptorIndex BD_SHARED_U(0)
+#define Tex0_SamplerDescriptorIndex  BD_SHARED_U(192)
 #else
 cbuffer SharedConstants : register(b2, space4)
 {

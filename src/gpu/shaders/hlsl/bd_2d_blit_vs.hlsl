@@ -6,7 +6,7 @@
 
 #ifdef __spirv__
 #define g_BlitHalfPixelOffset \
-    vk::RawBufferLoad<float2>(g_PushConstants.SharedConstants + 336)
+    BD_SHARED_F2(336)
 #else
 cbuffer SharedConstants : register(b2, space4)
 {

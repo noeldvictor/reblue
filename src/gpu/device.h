@@ -168,6 +168,12 @@ public:
   // switches.
   static plume::RenderPipelineLayout *MainPipelineLayout();
 
+  // The bindless texture set. Its first kConstantChunkDescriptors entries are
+  // the guest constant chunks, which constant_buffers.cpp registers as it
+  // creates them - the shader reaches them through g_ConstantChunks rather than
+  // a 64-bit device address.
+  static plume::RenderDescriptorSet *TextureDescriptorSet();
+
   // Allocate a bindless slot for host-owned 'tex' and bind its SHADER_READ
   // view. UINT32_MAX if full. Re-allocates only when descriptorIndex is still
   // UINT32_MAX.

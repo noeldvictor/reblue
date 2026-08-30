@@ -879,6 +879,10 @@ plume::RenderPipelineLayout *Video::MainPipelineLayout() {
   return state().pipeline_layout.get();
 }
 
+plume::RenderDescriptorSet *Video::TextureDescriptorSet() {
+  return state().texture_descriptor_set.get();
+}
+
 u32 CurrentRenderPassId() {
   // g_currentRenderPassId (guest global, big-endian). Always-mapped XEX data,
   // but guard the translate anyway.
