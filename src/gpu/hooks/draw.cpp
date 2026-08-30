@@ -39,6 +39,7 @@
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
@@ -324,12 +325,27 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // would push the HUD into the world.
   const bool overlay_2d = s.overlay2D || s.overlay2DScope;
   s.overlay2D = false;
-  if (!REXCVAR_GET(bd_stereo) || (!scene_pass && !overlay_2d)) {
+  // bd_stereo and bd_stereo_multiview are two implementations of one thing, and
+  // running both composes wrongly rather than doing nothing: the eye loop below
+  // submits each draw into a half-width viewport, multiview then replicates
+  // *that* into both array layers, and the resolve finally squeezes a layer
+  // which already holds a complete side-by-side pair into one half of the
+  // companion. Both layers therefore carry the same two eyes and differ only by
+  // the shader skew, which is exactly the "multiview renders identical layers"
+  // symptom - and it also means every scene triangle is rasterised four times,
+  // which is why multiview once measured *slower* than the path it replaces.
+  //
+  // Proven from a RenderDoc capture: the scene passes had viewMask=3 with
+  // viewports alternating 960x1080@0 and 960x1080@960. Multiview wins, because
+  // it is the one that submits each draw once.
+  const bool multiview_stereo = REXCVAR_GET(bd_stereo_multiview);
+  if (multiview_stereo || !REXCVAR_GET(bd_stereo) ||
+      (!scene_pass && !overlay_2d)) {
     // Counted, because "stereo does nothing" has three different causes and
     // they are indistinguishable from the image: the cvar off, the scene-pass
     // gate rejecting every draw, or the per-eye constants not landing. This
     // separates the first two from the third.
-    if (REXCVAR_GET(bd_stereo)) {
+    if (REXCVAR_GET(bd_stereo) && !multiview_stereo) {
       static std::atomic<u32> rejected{0};
       const u32 n = rejected.fetch_add(1, std::memory_order_relaxed);
       if (n == 2000)
