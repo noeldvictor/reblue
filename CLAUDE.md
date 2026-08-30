@@ -655,6 +655,14 @@ diagnosing a slow build. The short version:
   OpenXR runtime. It is the only way to exercise the camera modes and the character anchor, because
   without a runtime `ViewOverrideActive()` is false and they never compose. **Invoke the `vrsim`
   skill.**
+- **`bash tools/verify_quest.sh` is the whole device measurement in one command.** It picks the
+  headset (not the other Android device that is often attached), installs the staged APK, runs
+  autoplay into a field scene, and pulls back the frame breakdown, the per-frame CSV, the sampling
+  profile, a composited capture and the per-thread CPU split. It encodes the traps that have each
+  cost hours here: `MSYS_NO_PATHCONV=1` on every adb call, every push result printed rather than
+  assumed, the proximity broadcast re-sent throughout rather than once, a force-stop rather than a
+  relaunch, and a check for the `dlopen` failure that writes no log at all and leaves the *previous*
+  run's numbers on disk under the new build's name.
 - **`tools/stereo_check.py --raw <capture>` runs on a capture already on disk**, so the stereo
   regression test works in the desktop loop with no headset and no device. Verified after the
   2026-08-30 optimisation pass: `far +4, near -2, near - far = -6px`, crossed and correctly signed.
