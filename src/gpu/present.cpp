@@ -975,6 +975,12 @@ void Video::Present(GuestTexture *frontBuffer) {
   // answered by looking at it rather than by inferring it from what leaves the
   // resolve.
   const bool force_array = REXCVAR_GET(bd_mv_capture_array);
+  if (force_array && rt && rt->layers > 1) {
+    static std::atomic<u32> cn{0};
+    if (cn.fetch_add(1, std::memory_order_relaxed) % 600 == 0)
+      BD_INFO("[mv] capture   from guest {:012X} plume tex {:012X}",
+              u64(uintptr_t(rt)), u64(uintptr_t(rt->texture)));
+  }
   const bool resolved_rt =
       rt && rt->resolvedTexture && rt->layers > 1 && !force_array;
   const bool multiview_rt = rt && rt->texture && rt->layers > 1 && !resolved_rt;

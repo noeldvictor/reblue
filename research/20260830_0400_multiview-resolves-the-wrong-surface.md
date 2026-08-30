@@ -294,6 +294,42 @@ The likely shapes, for what it is worth, all of which validation names outright:
 - The vertex shader writing `SV_ViewID`-dependent output without the `MultiView` capability actually
   enabled on the device, which plume was patched for and which is worth re-confirming here.
 
+## The array that was "empty" was the wrong array
+
+Logging the plume texture at both ends, which is the check that should have come first:
+
+```
+[mv] test-clear into guest 0001BBCB0710  plume tex 028000F27100
+[mv] capture   from guest 0001BBCB0310  plume tex 028000F26020
+```
+
+**Different `GuestTexture` objects and different plume textures.** The scene is drawn into `B0710`;
+present captures `B0310`.
+
+The earlier check that "present `rt` == `last_drawn`" was true and misleading: both are `B0310`, and
+*neither is the scene target*. `last_drawn_rt` is whatever bound last in the frame, which is the end
+of the post chain, not the scene. So every capture in this investigation - including the one that
+concluded "both layers empty, max pixel zero" - photographed the post-chain output.
+
+**That invalidates the finding it produced.** The scene's layered array has not actually been looked
+at. Multiview may be rendering correctly into `B0710` and failing somewhere in the post chain, which
+is a completely different bug from the one this note has been chasing.
+
+## What to do with that
+
+1. **Capture `B0710`, not `last_drawn_rt`.** `bd_mv_capture_array` needs to select the surface the
+   scene drew into - the last bind that had a depth attachment - rather than the last bind of any
+   kind. That is a small change to the capture-source selection and it makes the question answerable
+   for the first time.
+2. Then re-ask the original question, because every answer in this note above rests on looking at
+   the wrong texture. The nine "verified correct" checks are still correct - they were about
+   pipelines, view masks, features and framebuffers, not about contents - but the two that were
+   about *contents* (the empty array, and the magenta clear not arriving) are void.
+
+The lesson is the same one this note has now recorded three times in different clothes: **verify that
+the thing you are measuring is the thing you think it is, before believing what it says.** A pointer
+comparison at both ends would have caught this at the start and cost one line.
+
 ## Closing state, honestly
 
 Nine hypotheses checked, nine correct, frame still black:

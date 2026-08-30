@@ -69,7 +69,12 @@ Count into a total and print the total, or filter to the case you care about bef
    measured on ARM64, and the relative costs differ - CLAUDE.md already records
    `bdSceneNodeDrawSingle` measuring 23x on device against 1.9x on desktop. Every number above is a
    desktop number.
-2. **Multiview.** The array is empty - both layers, max pixel value zero - while pipelines,
+2. **Multiview.** *The "empty array" finding is void* - the capture was photographing the post-chain
+   output, not the scene target. Logged at both ends: the scene clears into guest `B0710` / plume
+   `F27100`, present captures guest `B0310` / plume `F26020`. Fix the capture source first (select
+   the last bind that had a depth attachment, not `last_drawn_rt`), then re-ask. What follows was
+   written before that was known: the array is empty - both layers, max pixel value zero - while
+   pipelines,
    framebuffers, view masks, the device feature, the resolve and the SRVs are all verified correct.
    Nine hypotheses checked, nine correct.
 

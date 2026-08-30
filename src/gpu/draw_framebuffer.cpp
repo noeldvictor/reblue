@@ -23,6 +23,7 @@
 #include "gpu/gpu_timing.h"
 
 REXCVAR_DECLARE(bool, bd_seed_targets);
+REXCVAR_DECLARE(bool, bd_mv_test_clear);
 
 namespace bd::gpu {
 
@@ -365,6 +366,25 @@ bool Video::BindDrawFramebufferLocked() {
   if (!fb)
     return false;
   s.command_list->setFramebuffer(fb);
+  {
+    // bd_mv_test_clear: clear the layered scene target to magenta inside its
+    // own render pass, every bind. Paired with bd_mv_capture_array this asks
+    // one question - does *anything* reach a viewMask=3 attachment?
+    //
+    //   array magenta -> clears land, so the render pass writes; only draws fail
+    //   array black   -> the pass writes nothing at all, and no amount of
+    //                    looking at shaders or pipelines will explain it
+    //
+    // A diagnostic, not a feature: on, the scene is destroyed.
+    if (rt && rt->layers > 1 && rt->width >= 1280 && ds &&
+        REXCVAR_GET(bd_mv_test_clear)) {
+      s.command_list->clearColor(0, plume::RenderColor(1.0f, 0.0f, 1.0f, 1.0f));
+      static std::atomic<u32> n{0};
+      if (n.fetch_add(1, std::memory_order_relaxed) % 600 == 0)
+        BD_INFO("[mv] test-clear into guest {:012X} plume tex {:012X}",
+                u64(uintptr_t(rt)), u64(uintptr_t(rt->texture)));
+    }
+  }
   NoteFbBind();
   // Force-dirty so FlushViewport applies the engine's last-set viewport.
   s.dirtyStates.viewport = true;

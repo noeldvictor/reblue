@@ -271,6 +271,11 @@ REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
                     "Seed freshly acquired colour targets from their "
                     "predecessor (EDRAM persistence emulation).");
+// Clears the layered scene target magenta inside its own render pass. With
+// bd_mv_capture_array it answers whether anything at all reaches a viewMask=3
+// attachment. Destroys the scene; a diagnostic only.
+REXCVAR_DEFINE_BOOL(bd_mv_test_clear, false, kCvarGroup,
+                    "Magenta-clear the layered scene target (diagnostic).");
 REXCVAR_DEFINE_BOOL(bd_mv_capture_array, false, kCvarGroup,
                     "Capture the multiview array instead of its companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
