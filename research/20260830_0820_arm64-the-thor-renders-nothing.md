@@ -133,3 +133,46 @@ prefer a headset and wrong to be silent about what it skipped.
 
 **A tool that filters should say what it filtered out.** `verify_quest.sh` prints the device list
 only when it finds nothing; it should print the ones it passed over too.
+
+
+## The second cause, and it is the keystone
+
+`shaderInt64=0` on the Adreno 740, with `bufferDeviceAddress=1`. Printed from plume at device
+creation, because an Adreno driver that refuses such a shader says only
+`Shader compilation failed for shaderType: 0` and the validation layers have nothing to flag.
+
+Every recompiled shader reads guest constants as
+
+```hlsl
+#define cN vk::RawBufferLoad<float4>(g_PushConstants.VertexShaderConstants + off, 0x10)
+```
+
+a **64-bit** device address, so every one of them declares `OpCapability Int64`. The device cannot
+compile that. **That is why the Thor renders nothing**, and it is the whole of what is left after
+the vertex-format fix.
+
+**CLAUDE.md already knew.** From the Quest validation run, recorded and never acted on: *"`Int64` is
+declared by every shader while `shaderInt64` is not enabled, which makes the renderer's hottest path
+formally undefined on this device."* The Adreno 650 compiles it anyway. The 740 does not. It was
+filed as a curiosity and it is actually the blocker.
+
+**And it is the same change as the port's headline performance problem.** `research/20260829_0030_shader-constants-are-global-loads.md`
+argues for binding the constant blocks as a **uniform buffer** instead of pushing a device address,
+because a buffer-device-address load is ordinary global memory per invocation where a UBO read goes
+through the constant path - measured there as ~225ns per vertex. That change also removes the
+`uint64_t`, and with it the `Int64` capability.
+
+So one piece of work closes both:
+
+- the ARM64 blocker, on any driver without `shaderInt64` - which is most mobile hardware, and
+  undefined behaviour on the rest;
+- the largest known GPU-side cost in the port.
+
+The scoping in that note still stands and is the hard part: constants change every draw, which is
+exactly why a push-constant address was chosen; a UBO needs dynamic offsets (plume does not expose
+them) or a per-draw descriptor write; and Adreno allows four descriptor sets with 0-3 already taken,
+so the UBO has to become a *binding* on the shared texture set.
+
+**Do not treat that note's conclusion as optional any more.** It was written as a performance
+optimisation with a real cost/benefit argument against it. It is now also the only route to a
+rendering frame on an Adreno 740.

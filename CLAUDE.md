@@ -573,6 +573,19 @@ one more cause remains - and validation does not flag it, leaving only
 **Read this before trusting any Quest number too**: the same declaration is undefined behaviour
 there, it just happens to work.
 
+**The second cause is `shaderInt64=0`, and it is the keystone.** Measured on the Adreno 740 -
+`shaderInt64=0` with `bufferDeviceAddress=1`, printed by plume at device creation because the driver
+says only `Shader compilation failed for shaderType: 0` and validation has nothing to flag. Every
+recompiled shader reads guest constants through `vk::RawBufferLoad` at a **64-bit** address, so every
+one declares `OpCapability Int64`, and the device cannot compile it. **This file already recorded the
+fact from a Quest validation run and filed it as a curiosity; it is the blocker.**
+
+**It is also the same change as the port's biggest GPU cost.** Binding the constant blocks as a UBO
+instead of pushing a device address - `research/20260829_0030_shader-constants-are-global-loads.md`,
+measured at ~225ns per vertex - removes the `uint64_t` and with it the `Int64` capability. One piece
+of work closes both, and that note's conclusion is no longer optional: it is the only route to a
+rendering frame on an Adreno 740.
+
 ## Android / Quest state
 
 The Android target builds and runs on a Quest 2. `tools/build_apk.sh` packages it, game data comes
