@@ -442,3 +442,57 @@ This was found by asking "the census says 91 draws and the frame says 500 - wher
 several conclusions were built on top of the gap. **A number that does not reconcile with another
 number is the most valuable thing in a profile, and it should be chased before anything is built on
 either.**
+
+
+## THE ANSWER: the frame is fill-bound. Draw count is not the problem.
+
+`bd_debug_fill_scale=25` shrinks the *scissor* to a quarter per axis - a sixteenth of the fragments -
+while leaving the viewport, the draw count, the vertex work, the pipeline state and every upload
+bit-identical. One run:
+
+| | normal | fill_scale=25 |
+| --- | --- | --- |
+| `dt_ms` | 155.7 | **26.5** |
+| `gpu_total_ms` | 155.6 | **23.8** |
+| `draws` | 510 | 555 (unchanged) |
+| `other_ms` | 23.3 | 26.0 (unchanged) |
+
+**6.4 fps to 37.8 fps, with the same number of draws.** The effect is 6x, far outside the +/-30-50%
+this workload drifts, and the control (`draws`, `other_ms`) did not move.
+
+### What this settles
+
+- **Draw count is not the bottleneck.** The whole "91 vs 400 draws" investigation above identifies
+  the right *submission path* but the wrong *cost*: cutting draws would move `other_ms`, which is
+  23-26ms of a 155ms frame. Batching and instancing are still worth doing for the CPU, and they will
+  not make this frame fast.
+- **Nor is vertex work.** 183,054 verts/frame is nothing for an Adreno 650.
+- **It is fragments**, and the shading is expensive: ~110 Mpix at 139ms is roughly 0.8 Gpix/s where
+  this part should manage several. So there are both too many fragments and each is too costly.
+
+### Which makes two pieces of already-specified work the actual priorities
+
+1. **Fewer fragments.** `surface_pool.cpp:467` gives **two layers to every render target** under
+   multiview, so every pass - not just the eye-visible one - rasterises twice. Making the
+   view-independent passes single-layer is a direct halving of their fill, and it is the concrete
+   form of the owner's instinct that a pass which does not need per-eye rendering should not get it.
+   **Fixed foveated rendering** (`XR_FB_foveation`) also becomes worth real frame time here, where
+   CLAUDE.md previously dismissed it on the grounds that the GPU was idle - it was, in a different
+   configuration.
+2. **Cheaper fragments.** The recompiled shaders read every guest constant through
+   `vk::RawBufferLoad` at a 64-bit device address - an uncached global load per invocation, measured
+   at ~225ns per vertex in `research/20260829_0030_shader-constants-are-global-loads.md`. Binding
+   the constant blocks as a bound buffer indexed by a 32-bit offset removes that **and** removes
+   `OpCapability Int64`, which is the AYN Thor's blocker. **One change, three payoffs.** It was
+   attempted earlier today and reverted with eight causes eliminated
+   (`research/20260830_0820_arm64-the-thor-renders-nothing.md`); the remaining suspect is the
+   descriptor write, and binding the chunks eagerly at device init sidesteps it.
+
+### And a correction to an older correction
+
+CLAUDE.md carries a section titled "The bottleneck is fragments - **corrected 2026-08-29, it is
+not**", which reports the GPU executing a whole command buffer in ~2ms. That was measured with the
+side-by-side path at `bd_render_scale=25`, where the GPU genuinely was starved. Under multiview at
+`render_scale=100` the frame is fill-bound again. **Both readings are correct for their own
+configuration, and neither generalises** - which is exactly why the scissor test, which holds
+everything but fragments constant, is the one to trust.
