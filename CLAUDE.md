@@ -2,6 +2,21 @@
 
 Guidance for Claude Code working in this repository.
 
+## THE TARGET: 72Hz on a Quest 2. It is reachable, and the numbers say so.
+
+Blue Dragon is not a graphically intense game, and the frame proves it: **~320,000 vertices and
+~2000 draws, with the GPU fence at 0.2-0.35ms.** The GPU is *idle*. An Adreno 650 eats that
+geometry. Every millisecond of the frame is CPU-side per-draw overhead in recompiled PowerPC that
+still thinks it is talking to a Xenon command processor.
+
+So 72Hz (13.9ms) is not a stretch goal, it is what the hardware should already be doing. The gap is
+entirely the recompilation's rendering patterns, and closing it is the work.
+
+**Do not tune settings to buy frame rate at the cost of the image.** `bd_render_scale=25` hits 30fps
+and was worn: the report was "blurry gibberish, I can see shit". Quarter resolution upscaled to a
+3664x1920 panel is unusable, and a frame-time number that ignores that is worthless. Readability
+first, then earn the frame rate back from the CPU.
+
 ## THE RULE. Read this before anything else, and never break it.
 
 **The most critical priority in this repository is rebuilding the foundation of Blue Dragon's

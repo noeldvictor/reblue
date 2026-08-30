@@ -576,6 +576,99 @@ void TestFollowCameraAnchor() {
         "a non-finite camera yields no anchor");
 }
 
+// Pitch must survive the handedness mirror.
+//
+// "Look down and the camera goes up" is the report this exists to catch, and it
+// is invisible in any pose that is level - which is most test poses, and which
+// is why it shipped.
+void TestPitchDirection() {
+  using namespace bd::xr;
+
+  // OpenXR is right-handed with -Z forward. Rotating about +X by the right-hand
+  // rule takes +Y toward +Z, and +Z is *backwards*, so a positive angle tilts
+  // the top of the head backwards: looking UP. Looking down is negative.
+  const float down = -0.5f; // radians, a clear nod downwards
+  Quat q{std::sin(down * 0.5f), 0.0f, 0.0f, std::cos(down * 0.5f)};
+
+  // Sanity: in OpenXR's own space that pose looks downwards.
+  const Vec3 xrForward = Rotate(q, Vec3{0.0f, 0.0f, -1.0f});
+  Check(xrForward.y < -0.1f, "the test pose looks down in OpenXR space");
+
+  // After the mirror, game forward is +Z and must still point downwards. If
+  // this flips, the world pitches the wrong way when the player nods.
+  const Quat g = FromOpenXRRotation(q);
+  const Vec3 gameForward = Rotate(g, Vec3{0.0f, 0.0f, 1.0f});
+  Check(gameForward.y < -0.1f,
+        "looking down in OpenXR still looks down in game space");
+
+  // And the mirror must not flip left/right either: turning to the player's
+  // right has to stay right, or strafing and the anchor yaw both invert.
+  const float right = 0.5f;
+  Quat qy{0.0f, std::sin(right * 0.5f), 0.0f, std::cos(right * 0.5f)};
+  // Right-handed about +Y: -Z forward swings toward -X, i.e. the player's left.
+  const Vec3 xrYaw = Rotate(qy, Vec3{0.0f, 0.0f, -1.0f});
+  const Vec3 gameYaw = Rotate(FromOpenXRRotation(qy), Vec3{0.0f, 0.0f, 1.0f});
+  Check((xrYaw.x < 0.0f) == (gameYaw.x < 0.0f),
+        "yaw turns the same way on both sides of the mirror");
+}
+
+// What a head pitch actually does to the composed view, per mode.
+//
+// The report was "look down and the camera goes up, I cannot quite tell". The
+// mirror is fine - TestPitchDirection pins that - so the question is what the
+// *modes* do, and they do different things by design. FirstPerson has to follow
+// the head exactly; that is the one that must never invert.
+void TestPitchThroughCameraModes() {
+  using namespace bd::xr;
+
+  CameraTuning t;
+  t.unitsPerMetre = 100.0f;
+  t.worldScale = 1.0f;
+  t.thirdOffset = {0.0f, 0.0f, -300.0f};
+
+  GameCamera game;
+  game.position = {0.0f, 150.0f, 0.0f};
+  game.forward = {0.0f, 0.0f, 1.0f};
+  game.up = {0.0f, 1.0f, 0.0f};
+
+  CharacterAnchor anchor =
+      CharacterFromFollowCamera(game, 300.0f, 150.0f);
+
+  const float down = -0.5f;
+  const Pose level{{0.0f, 1.6f, 0.0f}, {0.0f, 0.0f, 0.0f, 1.0f}};
+  const Pose nodded{{0.0f, 1.6f, 0.0f},
+                    {std::sin(down * 0.5f), 0.0f, 0.0f, std::cos(down * 0.5f)}};
+  const Fov fov{-0.9f, 0.9f, 0.9f, -0.9f};
+
+  auto forwardOf = [&](CameraMode mode, const Pose &head) {
+    // The singleton, like the other camera tests here - Camera's constructor is
+    // private and the modes carry no state that leaks between these cases.
+    Camera &cam = Camera::Get();
+    cam.SetTuning(t);
+    cam.SetMode(mode);
+    cam.SubmitGameCamera(game);
+    cam.SubmitCharacter(anchor);
+    cam.SubmitHeadPose(head);
+    const Mat4 v = cam.ComposeEye(head, fov).view;
+    // Row-vector world-to-view: the third column is the camera's forward.
+    return Vec3{v.m[0][2], v.m[1][2], v.m[2][2]};
+  };
+
+  // FirstPerson is the mode that must track the head exactly. Nodding down has
+  // to tilt the view down, or the world pitches against the player.
+  const Vec3 fpLevel = forwardOf(CameraMode::FirstPerson, level);
+  const Vec3 fpDown = forwardOf(CameraMode::FirstPerson, nodded);
+  Check(fpDown.y < fpLevel.y,
+        "first person: nodding down tilts the view down");
+
+  // ThirdPerson orbits the character, so a nod is *allowed* to move the camera
+  // rather than only the gaze. Pinned so a change to it is deliberate.
+  const Vec3 tpLevel = forwardOf(CameraMode::ThirdPerson, level);
+  const Vec3 tpDown = forwardOf(CameraMode::ThirdPerson, nodded);
+  Check(tpDown.y < tpLevel.y,
+        "third person: nodding down still tilts the view down");
+}
+
 } // namespace
 
 int main() {
@@ -587,6 +680,8 @@ int main() {
   TestQuatBasics();
   TestCameraModes();
   TestFollowCameraAnchor();
+  TestPitchDirection();
+  TestPitchThroughCameraModes();
   TestWorldScale();
   TestRecentreAndTurn();
   TestCullVolume();

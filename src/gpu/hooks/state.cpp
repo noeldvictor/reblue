@@ -292,9 +292,25 @@ REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantB,
 REBLUE_CONSTANT_DIRTY_HOOK(bdSetViewportConstants,
                            (bd::gpu::Video::MarkVSConstantsDirty(),
                             bd::gpu::Video::MarkPSConstantsDirty()))
-REBLUE_CONSTANT_DIRTY_HOOK(Visual__DrawVerticesUP,
-                           (bd::gpu::Video::MarkVSConstantsDirty(),
-                            bd::gpu::Video::MarkPSConstantsDirty()))
+// This one also brackets the 2D overlay scope. Visual__DrawVerticesUP is where
+// Blue Dragon flushes its sorted 2D content - sprites, the intro credits, the
+// HUD - so every draw inside it is an overlay, and the stereo path puts those
+// in *both* eyes rather than once across the seam.
+//
+// Bracketing the guest's own function beats inspecting vertices: two
+// shape-based tests were tried and both quadrupled the frame, because a
+// full-screen post blit is also a four-vertex triangle strip at the sprite
+// stride and must not be doubled.
+REX_EXTERN(__imp__Visual__DrawVerticesUP);
+REX_HOOK_RAW(Visual__DrawVerticesUP) {
+  auto &s = bd::gpu::state();
+  const bool outer = s.overlay2DScope;
+  s.overlay2DScope = true;
+  __imp__Visual__DrawVerticesUP(ctx, base);
+  s.overlay2DScope = outer;
+  bd::gpu::Video::MarkVSConstantsDirty();
+  bd::gpu::Video::MarkPSConstantsDirty();
+}
 // Visual__DrawSortedQueues also writes PS c3 (device+0x1730) inline during its
 // draw setup, a separate writer from Visual__DrawVerticesUP that likewise skips
 // the setter path.
