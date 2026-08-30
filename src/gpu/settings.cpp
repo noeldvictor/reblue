@@ -286,6 +286,26 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
 // chain included - but the post chain reads the resolved side-by-side companion
 // and does not need two eyes. Off by default: the same narrowing, applied too
 // widely, once collapsed the stereo pair and cost a session and a half to find.
+// Flip render targets out of write layout in one batch when the framebuffer
+// changes, instead of one at a time on the draw that first samples them.
+//
+// The reasoning: every barrier ends the active render pass (plume's barriers()
+// calls endActiveRenderPass unconditionally), which on a tiler is a tile store
+// and reload of the bound target. At a framebuffer change the pass ends anyway;
+// mid-pass it does not.
+//
+// MEASURED NULL, 2026-08-30, within one run on a Quest 2. The mechanism fires -
+// bar_drawfb 48 -> 54, barriers 104 -> 107 - because a surface flipped to
+// SHADER_READ has to flip back, so it adds transitions rather than moving them.
+// gpu_draw 51.90 -> 51.00ms, -1.7%, inside noise.
+//
+// The useful part is the elimination: barrier count went UP 3% while GPU time
+// went slightly DOWN, so the ~104 barriers a frame are not what the GPU is
+// spending its time on. Do not re-run this experiment.
+REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
+                    "Batch render-target layout transitions at framebuffer "
+                    "changes rather than mid-pass.");
+
 REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
                     "Under multiview, give two layers only to surfaces at or "
                     "above half the design canvas.");

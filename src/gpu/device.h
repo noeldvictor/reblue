@@ -409,6 +409,11 @@ struct VideoState {
   // the single constant buffer, supplied as dynamic uniform buffer offsets when
   // set 0 is bound. Replaces three push-constant writes per draw.
   u32 constant_dyn_offsets[3]{};
+
+  // Surfaces currently in a write layout, so they can all be flipped to
+  // SHADER_READ in one batch when the render target changes. See
+  // bd_barrier_hoist.
+  std::vector<GuestTexture *> write_layout_surfaces;
   std::vector<bool> descriptor_slot_used;
   std::unique_ptr<plume::RenderTexture>
       null_textures[kNullTextureDescriptorCount];

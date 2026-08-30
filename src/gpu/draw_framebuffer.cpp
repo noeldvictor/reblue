@@ -22,6 +22,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 
+REXCVAR_DECLARE(bool, bd_barrier_hoist);
 REXCVAR_DECLARE(bool, bd_seed_targets);
 REXCVAR_DECLARE(bool, bd_mv_test_clear);
 
@@ -129,6 +130,56 @@ namespace {
 // textures they sit in their last attachment layout rather than SHADER_READ.
 // Bound rt/ds links were just materialized, so a live source is never the
 // current target, but it is skipped defensively anyway.
+void NoteWriteLayout(VideoState &s, GuestTexture *t) {
+  for (GuestTexture *e : s.write_layout_surfaces)
+    if (e == t)
+      return;
+  s.write_layout_surfaces.push_back(t);
+}
+
+// Flip every surface still in a write layout to SHADER_READ, in one batch, at
+// the moment the render target changes.
+//
+// The per-draw scan below emits 48 barriers against 23 framebuffer binds on a
+// Quest field frame, and every one of them ends the active render pass -
+// plume's barriers() calls endActiveRenderPass unconditionally. Mid-pass that
+// costs a full tile store and reload of the bound target, which on a
+// 1376x720x2-layer surface is ~7.9 MiB out and back. At a framebuffer change
+// the pass ends anyway, so the same barrier there is free.
+//
+// This is speculative - a surface flipped to SHADER_READ that the guest renders
+// to again pays a transition back - but that transition also lands on a
+// framebuffer change, so the trade is a free barrier for a costly one.
+void FlushWriteLayoutToRead(VideoState &s, const GuestTexture *rt,
+                            const GuestTexture *ds) {
+  if (s.write_layout_surfaces.empty())
+    return;
+  plume::RenderTextureBarrier batch[32];
+  u32 count = 0;
+  size_t keep = 0;
+  for (GuestTexture *t : s.write_layout_surfaces) {
+    if (t == rt || t == ds) {
+      s.write_layout_surfaces[keep++] = t;
+      continue;
+    }
+    if (!t->texture || t->layout == plume::RenderTextureLayout::SHADER_READ)
+      continue;
+    if (count == std::size(batch)) {
+      s.write_layout_surfaces[keep++] = t;
+      continue;
+    }
+    batch[count++] = plume::RenderTextureBarrier(
+        t->texture, plume::RenderTextureLayout::SHADER_READ);
+    t->layout = plume::RenderTextureLayout::SHADER_READ;
+  }
+  s.write_layout_surfaces.resize(keep);
+  if (!count)
+    return;
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, batch, count);
+  NoteBarrierCall(count, BarrierSite::DrawFb);
+  MarkInter(s.command_list);
+}
+
 void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
                                      const GuestTexture *ds) {
   plume::RenderTextureBarrier sampled[16];
@@ -167,12 +218,14 @@ void TransitionTargetsToWrite(VideoState &s, GuestTexture *rt, GuestTexture *ds,
     barriers[barrier_count++] = plume::RenderTextureBarrier(
         rt->texture, plume::RenderTextureLayout::COLOR_WRITE);
     rt->layout = plume::RenderTextureLayout::COLOR_WRITE;
+    NoteWriteLayout(s, rt);
   }
   if (ds && ds->layout != plume::RenderTextureLayout::DEPTH_WRITE) {
     discard_ds = (ds->layout == plume::RenderTextureLayout::UNKNOWN);
     barriers[barrier_count++] = plume::RenderTextureBarrier(
         ds->texture, plume::RenderTextureLayout::DEPTH_WRITE);
     ds->layout = plume::RenderTextureLayout::DEPTH_WRITE;
+    NoteWriteLayout(s, ds);
   }
   if (!barrier_count)
     return;
@@ -317,6 +370,9 @@ bool Video::BindDrawFramebufferLocked() {
   if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds) {
     return true;
   }
+  // The pass is about to end regardless, so any barrier issued here is free.
+  if (REXCVAR_GET(bd_barrier_hoist))
+    FlushWriteLayoutToRead(s, rt, ds);
   BD_GPU_ZONE("BindDrawFramebuffer");
 
   // A depth-only pass whose depth resolved to null, or the back buffer not
