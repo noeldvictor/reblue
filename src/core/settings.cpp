@@ -48,6 +48,14 @@ REXCVAR_DEFINE_BOOL(bd_tourist_mode, false, kCvarGroup,
                     "Keep the party at full HP and MP while walking the field, "
                     "for looking at the world instead of surviving it.");
 
+// Within-run A/B. Two whole runs cannot settle a change on this workload - the
+// same binary measured 5.12ms and 8.62ms other_ms minutes apart - so the arms
+// have to be interleaved inside one run and labelled per frame in the CSV.
+REXCVAR_DEFINE_STRING(bd_ab_flag, "", kCvarGroup,
+                      "Boolean cvar to alternate for a within-run A/B.");
+REXCVAR_DEFINE_INT32(bd_ab_period, 300, kCvarGroup,
+                     "Frames to hold each arm of the A/B.");
+
 REXCVAR_DEFINE_STRING(bd_language, "auto", kCvarGroup,
                       "UI text language: auto, us, jp, de, fr, es, it, kr, "
                       "tw, cn, po. Requires restart.")

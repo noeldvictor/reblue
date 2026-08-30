@@ -187,6 +187,9 @@ void UpdateFrameStats() {
 
 void NoteDraw() { g_draw_count.fetch_add(1, std::memory_order_relaxed); }
 
+std::atomic<u8> g_ab_arm{255};
+void NoteABArm(u8 arm) { g_ab_arm.store(arm, std::memory_order_relaxed); }
+
 void NoteDrawVertices(u32 count) {
   g_vert_count.fetch_add(count, std::memory_order_relaxed);
 }
@@ -274,6 +277,7 @@ void RecordFrameSample(const PresentBreakdown &b) {
                         b.drain_ms + b.pace_ms;
   s.other_ms = s.dt_ms > accounted ? s.dt_ms - accounted : 0.0;
 
+  s.ab_arm = g_ab_arm.load(std::memory_order_relaxed);
   s.gpu_total_ms = g_last.gpu_total_ms;
   s.gpu_draw_ms = g_last.gpu_draw_ms;
   s.gpu_resolve_ms = g_last.gpu_resolve_ms;

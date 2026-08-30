@@ -9,7 +9,13 @@ the last 300 rows therefore samples whatever the run happened to be sitting in.
 
 Selecting by *content* instead - frames whose draw count says "field scene" -
 gives about 9,600 frames per run rather than 300, at a consistent draw count,
-and cuts the spread across runs from roughly 20% to 8%.
+and removes the menu contamination entirely.
+
+It does NOT make two runs comparable. The same binary in the same configuration
+measured 5.12ms and 8.62ms other_ms minutes apart - 68% - so any cross-run
+delta under about 50% is drift. Use the within-run A/B instead: set bd_ab_flag
+to a boolean cvar and bd_ab_period to a frame count, and this script reports the
+two arms separately from one run.
 
     python tools/perf_summary.py logs/perf/perf-*.csv
     python tools/perf_summary.py a.csv b.csv        # compare two configurations
@@ -83,6 +89,43 @@ def summarise(path, floor):
     return out
 
 
+def ab_report(path, floor):
+    """Compare the two arms of a within-run A/B from one file.
+
+    This is the only comparison on this workload that means anything below
+    about 50%: both populations come from the same run, the same scene and the
+    same thermal state, interleaved, so whatever drifts drifts through both.
+    """
+    rows, index = load(path)
+    if not rows or "ab_arm" not in index or "draws" not in index:
+        return False
+    a_i, d_i = index["ab_arm"], index["draws"]
+    o_i = index.get("other_ms")
+    if o_i is None:
+        return False
+
+    arms = {}
+    for r in rows:
+        arm = int(float(r[a_i]))
+        if arm > 1 or float(r[d_i]) < floor:
+            continue
+        arms.setdefault(arm, []).append(
+            1000.0 * float(r[o_i]) / max(float(r[d_i]), 1.0))
+    if len(arms) < 2 or any(len(v) < 30 for v in arms.values()):
+        return False
+
+    print("\n%s - within-run A/B" % path)
+    for arm in sorted(arms):
+        v = arms[arm]
+        print("  arm %d (%s): %5d frames   us/draw %6.2f"
+              % (arm, "false" if arm == 0 else "true", len(v), st.median(v)))
+    a0, a1 = st.median(arms[0]), st.median(arms[1])
+    print("  arm 1 vs arm 0: %+.1f%%" % (100.0 * (a1 - a0) / a0))
+    print("  Both arms come from one run, so this number is comparable in a way "
+          "two whole runs are not.")
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(
         description=__doc__,
@@ -92,6 +135,9 @@ def main():
                     help="draw count separating a field scene from a menu "
                          "(default: %(default)s)")
     args = ap.parse_args()
+
+    for p in args.csv:
+        ab_report(p, args.floor)
 
     results = [(p, summarise(p, args.floor)) for p in args.csv]
     results = [(p, r) for p, r in results if r]

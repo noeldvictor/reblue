@@ -33,6 +33,7 @@
 #include "gpu/gpu_profiling.h"
 
 #include "core/logging.h"
+#include "core/ab_experiment.h"
 #include "core/sampling_profiler.h"
 #include "engine/engine.h"
 #include "gpu/backend.h"
@@ -1012,6 +1013,7 @@ void Video::Present(GuestTexture *frontBuffer) {
   // xrBeginFrame, and the guest simulation this samples is identical either
   // way - which is what makes the desktop the fast loop for guest CPU work.
   bd::SamplingProfilerTick();
+  bd::gpu::NoteABArm(bd::ABExperimentTick());
   const u32 reclaimed = s.frame.load(std::memory_order_relaxed);
   s.frame_present_committed = true;
   BD_FRAME_MARK();

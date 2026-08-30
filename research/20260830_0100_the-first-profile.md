@@ -164,6 +164,12 @@ window meaningless - and it is **not sufficient**. Draw count holds steady at ~5
 behind those draws varies with what the camera happens to be looking at, and the drift over an hour
 is larger than any of the effects being chased.
 
+**That method now exists.** `bd_ab_flag` names a boolean cvar, `bd_ab_period` says how many frames
+to hold each arm, every frame is labelled in the perf CSV, and `tools/perf_summary.py` reports the
+two populations. Run against the retracted claim: **arm 0 (off) 10.23us/draw over 4,857 frames, arm
+1 (on) 10.52 over 4,772 - +2.9%.** One run, interleaved, and it agrees with the retraction rather
+than with either of the two pairs that produced the false result.
+
 **The only method that can settle a sub-50% change here is alternating the two paths within a single
 run** - flip the cvar every N frames and compare the two populations from the same run, the same
 scene and the same thermal state. CLAUDE.md has said this since before today; today is the

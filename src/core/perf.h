@@ -72,6 +72,11 @@ struct PerfSample {
   u64 surf_misses = 0;
 
   u8 state = 0;
+  // Which arm of a within-run A/B this frame belongs to, or 255 when no
+  // experiment is running. Two whole runs cannot resolve anything under about
+  // 50% on this workload - two identical runs measured 68% apart - so the only
+  // honest comparison is between two populations from the *same* run.
+  u8 ab_arm = 255;
 };
 
 // (member, column, format). Header and row expand from this one list, so a new
@@ -114,7 +119,8 @@ struct PerfSample {
   X(surf_free, "surf_free", U32)                                               \
   X(surf_hits, "surf_hits", U64)                                               \
   X(surf_misses, "surf_misses", U64)                                           \
-  X(state, "state", U8)
+  X(state, "state", U8)                                                       \
+  X(ab_arm, "ab_arm", U8)
 
 std::string PerfCSVHeader();
 std::string PerfCSVRow(const PerfSample &s);

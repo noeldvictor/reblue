@@ -405,9 +405,14 @@ nominal configuration measured **3.75 to 6.84ms** `other_ms`. So the rule stands
   reversed pairs, was written up as worth a third to a half of the frame and made the default - and
   a third pair minutes later read OFF 5.12, ON 5.18, OFF 8.62. **Two OFF runs, 68% apart, no config
   change.** It was drift lining up twice.
-- **Alternate the two paths inside one run** - flip the cvar every N frames and compare the two
-  populations from the same run, scene and thermal state. That is the only method that works at this
-  scale, and it is why nothing sub-50% measured as two runs should be believed.
+- **Alternate the two paths inside one run.** `bd_ab_flag = "bd_some_bool"` plus `bd_ab_period`
+  (frames per arm, default 300) flips the cvar as the run goes and labels every frame in the CSV
+  with its arm; `tools/perf_summary.py` then reports the two populations separately. Both come from
+  one run, one scene and one thermal state, interleaved, so whatever drifts drifts through both.
+
+  It settles in a single run what three pairs of runs could not. `bd_host_sincos`, which two
+  back-to-back reversed pairs made look like a third of the frame, comes out at **+2.9% over 4,857
+  against 4,772 frames** - marginally *slower*, and that is why its default is off.
 
 ### Building for the desktop, which does work
 

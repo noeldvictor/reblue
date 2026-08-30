@@ -49,6 +49,8 @@ void UpdateFrameStats();
 
 // Per draw call.
 void NoteDraw();
+// Records which arm of a within-run A/B this frame belongs to (255 = none).
+void NoteABArm(u8 arm);
 
 // Vertices or indices a draw submits. Separates vertex-processing cost from
 // per-draw overhead, which is the open question on a draw-bound frame.
