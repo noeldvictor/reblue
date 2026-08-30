@@ -374,13 +374,22 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
-### The desktop loop is BROKEN as of 2026-08-30. Do not trust it.
+### The desktop loop is UNVERIFIED as of 2026-08-30, and its sampling is a trap
 
-`reblue_vk.exe` renders a black frame - confirmed with an OS-level screen capture, which is
-independent of every capture path in this repo. The Quest 2 is unaffected and renders correctly.
-The last good desktop run was 2026-08-29, before the guest constant rewrite, so that is the prime
-suspect and **the bisect has not been run**. Everything below about the desktop being the fastest
-correctness loop is true of the tooling and currently false in practice.
+Desktop 2D renders correctly - camp menu and the status-effect glossary photographed with correct
+textures and colours - and the run reaches field scenes doing real work: `draws max 2187`,
+`993 frames >= 1500 draws`, `gpu_total_ms median 9.30`. But **no capture has yet caught a desktop
+field scene**, so whether 3D renders correctly there is still open. The Quest 2 is unaffected and
+verified.
+
+**Two traps, both hit today:**
+
+- **A whole-screen grab photographs whatever is in front.** One reading of "99.3% non-black" that
+  looked like a clean render was two terminal windows. Use `tools/shot_window.ps1`, which finds the
+  reblue window by process, foregrounds it and captures only its client rect.
+- **`bd_xr_autoplay` does not land in the same place twice on desktop.** Menus, loading and field
+  scenes all appear at t=140s across runs, so a time-gated screenshot is close to a coin toss.
+  Gate on draw count instead: a field scene is >= 1500 draws, a menu is ~20-800.
 
 See `research/20260830_1545_the-desktop-loop-is-broken.md` for what is already eliminated -
 notably it is *not* the host constant binding, *not* MSAA/stereo/multiview, and *not* the capture

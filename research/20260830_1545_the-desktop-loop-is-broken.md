@@ -1,4 +1,8 @@
-# The desktop Vulkan build renders black, and the Quest does not
+# The desktop Vulkan build: what is actually known
+
+**CORRECTION, appended after the fact.** The original title and conclusion of this note -
+"the desktop renders black" - is NOT established, and the evidence below that says so is weak.
+Read this section first.
 
 2026-08-30. Open at time of writing. Recorded so the eliminations are not repeated.
 
@@ -76,3 +80,47 @@ amount of reasoning here has.
 
 Second lead: find out which cache `reblue_vk.exe` actually loads on Windows, given both a DXIL and
 a SPIR-V cache are generated into the same build tree, and whether the SPIR-V one is complete.
+
+
+---
+
+## Correction, 2026-08-30 16:10: "the desktop renders black" was not established
+
+Three things undermine the conclusion this note was originally written to record.
+
+**1. The instrument was focus-dependent.** The OS screenshot used
+`[Screen]::PrimaryScreen` and captures whatever is in front. One "99.3% non-black"
+reading that looked like a clean pre-rewrite render was a photograph of two terminal
+windows. `tools/shot_window.ps1` now finds the reblue window by process, restores and
+foregrounds it, and captures only its client rect - use that, never a whole-screen grab.
+
+**2. The desktop reaches field scenes and does real GPU work.** From one 9,846-frame run
+on current `main`:
+
+```
+draws: min 19  median 817  max 2187
+frames with >= 1500 draws: 993
+gpu_total_ms median 9.30  max 13.10
+```
+
+2187 draws is a field scene at the scale this repo has always recorded for the desktop
+(~2070). The GPU is doing 9-13ms of work. That is not the profile of a renderer producing
+nothing.
+
+**3. What was actually photographed were menus.** Two successful window captures showed
+Blue Dragon's camp menu ("Medals / Gold / Help / Time") and its status-effect icon
+glossary - both with correct textures, correct colours, correct alpha. So 2D rendering,
+texture binding, the bindless heap and the pixel path all work on desktop.
+
+`bd_xr_autoplay` lands somewhere different on each desktop run - menus, loading, and
+occasionally a field scene - so a screenshot at a fixed wall-clock time is close to a coin
+toss, and six black samples in a row is weak evidence rather than proof.
+
+**What remains genuinely unknown:** whether a desktop *field scene* renders correctly. No
+capture has caught one. That is the question to answer, and the way to answer it is to gate
+the capture on draw count rather than on elapsed time - photograph the first frame with
+>= 1500 draws, not the frame at t=140s.
+
+**What is settled:** the pre/post-rewrite comparison this note proposed was run and produced
+nothing usable, because of (1). It should be re-run with the window capture, and only after
+the draw-count gate exists.
