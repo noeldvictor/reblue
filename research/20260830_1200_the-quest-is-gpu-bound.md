@@ -153,7 +153,7 @@ This is the same shape as the XenosRecomp two-step already in CLAUDE.md, in a ne
 `out/rexglue-src` header change, delete the guest objects or you are measuring the old build.**
 
 
-## Stereo on the headset is NOT verified for the current build
+## Stereo on the headset is NOT verified for the current build (RESOLVED - see below)
 
 Stated plainly because I reported the opposite earlier from a stale file.
 
@@ -180,3 +180,51 @@ necessarily exact halves, and the one instrument that would settle it is itself 
 surface should be the 2-layer one the per-target census shows as `1280x720x2L`), then re-measure.
 Do not tune `bd_stereo_separation` or touch the eye sign until an instrument that works on the
 headset says which way it is wrong.
+
+
+## RESOLVED: multiview stereo IS verified on the Quest 2
+
+The instrument was wrong, not the renderer.
+
+`bd_mv_capture_array` photographs `last_scene_rt`, and `draw_framebuffer.cpp:424` set that to the
+**last** colour+depth target of the frame - which on device is a small late depth pass, not the
+scene. It now keeps the **largest** colour+depth target instead, and the capture path logs what it
+picked so a wrong choice is visible rather than silent:
+
+```
+[mv] capture_array picking 1376x720 layers=2 (scene rt 0x1bbcb0310)
+```
+
+With that, the device capture is `RGBA16F 1376 1440` - two stacked 1376x720 layers - and:
+
+```
+band (y%)   disparity(px)
+     32%           -2      <- distant
+     44%           -9
+     52%          -11
+     62%          -16
+     72%          -18
+     82%          -22
+     90%          -24
+     95%          -25      <- near
+
+far -2, near -25  ->  near - far = -23 px
+OK: crossed disparity, near separating more than far.
+```
+
+**Monotone across all eight bands.** Layer 0 is a real field scene (extrema 1-255) and 81.4% of
+pixels differ between the eyes with a mean difference of 11.59. **Multiview stereo works on the
+Quest 2 and has correct depth.**
+
+**The earlier "flat" reading was a bad input, not a regression.** It came from the composited
+3664x1920 panel image, which is post-composition and post-distortion, with eye rects the runtime
+chooses rather than exact halves. `stereo_check --raw` without `--stacked` is not valid on that
+image, and the number it produced (`far -80, near -80`) should be disregarded - as should the
+`far +57 / near -80` from the stale capture earlier, which was a different build entirely.
+
+**Use `--stacked` on a `bd_mv_capture_array` grab for a stereo verdict on device. Nothing else.**
+
+## What this unblocks
+
+The GPU work. The two-layer post chain can now be changed with a working way to check that stereo
+survives it, which is what made it too risky before.

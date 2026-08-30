@@ -1013,6 +1013,19 @@ void Video::Present(GuestTexture *frontBuffer) {
     if (GuestTexture *scene = s.last_scene_rt[s.recording_slot()])
       rt = scene;
   }
+  // Say what is about to be photographed. A capture that silently grabbed the
+  // wrong surface is indistinguishable from a rendering bug, and on device that
+  // cost a whole investigation.
+  // NOT CaptureDue() here - it latches, returns true exactly once, and calling
+  // it from a diagnostic would consume the latch so the real capture never
+  // fires. Its own static is the right gate.
+  static bool told_capture_pick = false;
+  if (force_array && !told_capture_pick) {
+    told_capture_pick = true;
+    BD_INFO("[mv] capture_array picking {}x{} layers={} (scene rt {})",
+            rt ? rt->width : 0u, rt ? rt->height : 0u, rt ? rt->layers : 0u,
+            static_cast<const void *>(rt));
+  }
   if (force_array && rt && rt->layers > 1) {
     static std::atomic<u32> cn{0};
     if (cn.fetch_add(1, std::memory_order_relaxed) % 600 == 0)

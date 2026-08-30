@@ -420,8 +420,21 @@ bool Video::BindDrawFramebufferLocked() {
   s.bound_fb_ds = ds;
   if (rt) {
     s.last_drawn_rt[slot] = rt;
-    if (ds)
-      s.last_scene_rt[slot] = rt;
+    // The LARGEST colour+depth target, not the last one.
+    //
+    // This feeds bd_mv_capture_array, whose whole job is to photograph the
+    // scene's layered surface. Taking the last colour+depth pass gets whatever
+    // small depth pass happened to run late - on a Quest that is a 1376x720
+    // surface with 7 draws, and the capture came back a single black layer
+    // while the actual scene sat in a 1280x720x2L target with 52 draws. Area is
+    // a crude discriminator but it is stable and it picks the scene.
+    if (ds) {
+      GuestTexture *prev = s.last_scene_rt[slot];
+      const u64 area = u64(rt->width) * rt->height;
+      const u64 prev_area = prev ? u64(prev->width) * prev->height : 0;
+      if (!prev || area >= prev_area)
+        s.last_scene_rt[slot] = rt;
+    }
     rt->surfaceDrawn = true;
   }
   if (ds)
