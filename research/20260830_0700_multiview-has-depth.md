@@ -161,3 +161,36 @@ to stop running both stereo paths at once. `bd_vr_hud_mode` remains the right an
 placement of a HUD, which is a separate question from whether both eyes see it.
 
 **Not verified on ARM64.** Every number here is desktop.
+
+
+## What the resolve chain costs, and why it is not being collapsed yet
+
+The capture shows the post chain is **18 pairs** of `mask=3` pass (1 draw) followed by a mono
+resolve (2 half-viewport draws), because `surface_pool` gives *every* render target two layers under
+multiview - not just the scene. The design note called for one resolve before the post chain, and
+this is eighteen.
+
+Measured with the within-run A/B on `bd_mv_resolve` - 3744 frames off against 3632 on, one run:
+
+| | resolve off | on | |
+| --- | --- | --- | --- |
+| `us/draw` (CPU) | 6.82 | 6.83 | **+0.2%** |
+| `gpu_total_ms` | 6.214 | 6.518 | **+4.9%** |
+| `dt_ms` | 22.095 | 21.870 | -1.0% |
+
+So the whole chain is **~0.3ms of GPU and nothing on the CPU**, on an RTX 3060.
+
+**It is not being collapsed, deliberately.** The `surface_pool` comment explains that a single-layer
+post target takes a single-view pipeline, writes layer 0, and collapses the pair - which was true
+and cost a session and a half to find. It may no longer be true now that the resolve works and
+`bd_mv_redirect_srv` points readers at the side-by-side companion, so a mono post chain would read
+and write side-by-side and keep both eyes. But that is a hypothesis, the desktop cost is 5% of an
+already-idle GPU, and the path only just started working.
+
+**The number that decides it is an Adreno number**, and it could be much larger there: on a tiler
+every render pass is a tile load and store, and the Quest frame was ~108ms of GPU where this one is
+6.5ms. Re-run exactly this A/B on the device before touching it - `bd_ab_flag=bd_mv_resolve` is all
+it takes, no rebuild.
+
+`tools/perf_summary.py` now reports the GPU columns per arm, because reporting only `us/draw` hid
+this entirely: +0.2% on CPU, +4.9% on GPU, same run.

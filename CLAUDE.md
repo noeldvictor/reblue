@@ -717,6 +717,12 @@ diagnosing a slow build. The short version:
   the wrong way, so the world renders pseudoscopic), or **OK**. It is checked against the three real
   captures that produced those states, so it is a regression test and not just a report. Run it
   after anything touching the camera, the projection or the shader recompiler.
+- **A within-run A/B reports GPU as well as CPU now.** `tools/perf_summary.py` used to compare only
+  `us/draw`, which is CPU, and so was blind to anything render-side: the multiview resolve chain
+  measures **+0.2% on CPU and +4.9% on `gpu_total_ms`** in the same run. It prints both per arm.
+  Note `bd_ab_flag` takes a **quoted** string in the flat TOML - `bd_ab_flag = "bd_mv_resolve"`.
+  Unquoted, the value is silently dropped and every frame reports `ab_arm=255`, which looks exactly
+  like an experiment that found nothing.
 - **Sweep with `tools/bench_quest.py`, never adb by hand.** Every performance knob reaches the game
   through `args.txt`, so a whole matrix costs no build and no reinstall.
   `python tools/bench_quest.py levers` runs render scale, shadows and reflections one variable at a

@@ -104,6 +104,13 @@ def ab_report(path, floor):
     if o_i is None:
         return False
 
+    # GPU columns too. Reporting only us/draw hides anything that costs the GPU
+    # and not the CPU, which is most render-side work: the multiview resolve
+    # chain measured +0.2% on us/draw and +4.9% on gpu_total_ms in one run.
+    extra = [c for c in ("gpu_total_ms", "gpu_draw_ms", "gpu_resolve_ms",
+                         "dt_ms", "fence_ms") if c in index]
+    cols = {}
+
     arms = {}
     for r in rows:
         arm = int(float(r[a_i]))
@@ -111,6 +118,9 @@ def ab_report(path, floor):
             continue
         arms.setdefault(arm, []).append(
             1000.0 * float(r[o_i]) / max(float(r[d_i]), 1.0))
+        per = cols.setdefault(arm, {c: [] for c in extra})
+        for c in extra:
+            per[c].append(float(r[index[c]]))
     if len(arms) < 2 or any(len(v) < 30 for v in arms.values()):
         return False
 
@@ -120,7 +130,13 @@ def ab_report(path, floor):
         print("  arm %d (%s): %5d frames   us/draw %6.2f"
               % (arm, "false" if arm == 0 else "true", len(v), st.median(v)))
     a0, a1 = st.median(arms[0]), st.median(arms[1])
-    print("  arm 1 vs arm 0: %+.1f%%" % (100.0 * (a1 - a0) / a0))
+    print("  arm 1 vs arm 0: %+.1f%% on us/draw (CPU)"
+          % (100.0 * (a1 - a0) / a0))
+    for name in extra:
+        m0, m1 = st.median(cols[0][name]), st.median(cols[1][name])
+        if m0:
+            print("    %-16s %7.3f -> %7.3f  %+6.1f%%"
+                  % (name, m0, m1, 100.0 * (m1 - m0) / m0))
     print("  Both arms come from one run, so this number is comparable in a way "
           "two whole runs are not.")
     return True
