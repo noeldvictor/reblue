@@ -1,3 +1,61 @@
+# Multiview: the scene renders in stereo. The composite is what is black.
+
+2026-08-30, rewritten at the end of the session that produced it. **Read this section; the rest of
+the file is the trail that got here and contains three conclusions that were later shown wrong.**
+
+## What is actually true
+
+**Multiview scene rendering works.** The scene's layered target holds two genuinely different views:
+
+```
+layer0 vs layer1, per-pixel absolute difference over 2,073,600 px
+  mean 3.694   max 105   nonzero 23.20%
+```
+
+Bit-identical would be mean 0.000. Nearly a quarter of pixels differ, which is what a parallax shift
+looks like.
+
+**The final composited frame is black.** So the failure is entirely downstream of the scene: in the
+resolve, the post chain, or present - not in the pipelines, the view masks, the shaders or the
+constants.
+
+Verified correct, each by measurement:
+
+- All 55 vertex shaders carry the per-eye skew, before the return.
+- All 55 compiled SPIR-V blobs carry **both** `OpCapability MultiView` and `BuiltIn ViewIndex`
+  (XenosRecomp now dumps `.spv` beside the `.hlsl` for exactly this check).
+- The separation constant is non-zero on 1,165,758 draws a run, `sep=0.03`.
+- Surfaces are two-layer, colour and depth; the scene binds both; framebuffers and pipelines both
+  carry `viewMask=3`; the device feature is enabled; `maxViewCount=32`.
+
+## Two instrument errors that made this look like something else
+
+Both cost hours and both are the same mistake in different clothing.
+
+1. **The capture read the wrong surface.** `last_drawn_rt` is whatever bound last in a frame, which
+   is the end of the post chain, not the scene. Every "the array is empty, max pixel zero" reading
+   photographed the post output. `last_scene_rt` - the last bind carrying a depth attachment - fixes
+   it, and the array turned out to be full.
+2. **The layers were compared by mean, not per pixel.** A downsampled mean barely moves under a
+   horizontal parallax shift, so two correctly different eyes read as "identical" - which matched a
+   pre-existing note and looked like confirmation. A per-pixel difference says otherwise.
+
+**Measure the thing, not a statistic of the thing, and check that the thing is the thing you meant.**
+
+## Where to look next
+
+The scene array is right and the composite is black, so: the resolve reads the array and writes the
+companion; the post chain reads the companion; present reads the end of that chain. One of those
+three loses it. `bd_mv_capture_array` now photographs the scene target, and the companion can be
+reached the same way - point a capture at `rt->resolvedTexture` for the *scene* surface and the
+question splits in one run.
+
+Note the resolve was also fixed this session to actually run on the scene target - it previously
+fired 501 times a frame on a 120x67 bloom target and never on the scene - so any older reasoning
+about it predates a real bug being removed.
+
+---
+
 # Multiview: the pipelines are fine, the resolve runs on the wrong surface
 
 2026-08-30. `bd_stereo_multiview` still presents a black frame, and the four causes CLAUDE.md
