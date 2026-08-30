@@ -230,7 +230,7 @@ The GPU work. The two-layer post chain can now be changed with a working way to 
 survives it, which is what made it too risky before.
 
 
-## The three big targets are all scene passes, not post
+## The three big targets are all scene passes, not post (and the count was wrong - see below)
 
 The census now records whether a depth-stencil was bound, which is what separates a 3D pass from a
 post target of the same size. On device:
@@ -262,3 +262,38 @@ also dropping surfaces. Fix the accounting before drawing a conclusion about the
 **Do not act on the 146 Mpix figure until that is resolved.** It is the difference between "the
 scene is rendered three times" and "the census counted one surface three times", and those have
 completely different fixes.
+
+
+## Correction: the scene is rendered ONCE. The census was counting pool alternates.
+
+Making the census fractional settles it. Every row reads **0.50 binds/frame**:
+
+```
+1280x720x2L depth: 58.40 draws/frame over 0.50 binds/frame, 53.8 Mpix
+1280x720x2L depth: 57.03 draws/frame over 0.50 binds/frame, 52.6 Mpix
+ 344x193x2L depth: 18.14 draws/frame over 0.50 binds/frame
+ 344x193x2L depth: 18.13 draws/frame over 0.50 binds/frame
+  80x45x2L        :  0.50 draws/frame over 0.50 binds/frame   (x4)
+targets: 24 rows, 226 draws/frame attributed of 381 counted, 170.5 Mpix/frame total
+```
+
+A surface bound on every *other* frame is a **double-buffered pool alternate**, not a second pass.
+So the pairs are one logical target each, the scene is rendered **once** per frame at ~116 draws when
+it is bound, and the fill is roughly **half** the 170.5 Mpix the totals line sums - the total adds
+both halves of every pair.
+
+**The "three 1280x720 scene passes, 146 Mpix/frame" reading in the section above is wrong**, and the
+fix it implied - hunting for two redundant scene renders - would have been chasing nothing. The
+previous integer column printed `0 binds/frame` for all of them, which is what 0.50 truncates to;
+that single formatting choice hid the answer.
+
+**Two things still not right, and they matter before any fill number is quoted:**
+
+- **The 24-row table is full and overflowing**: 226 draws/frame attributed of 381 counted, so ~40% of
+  draws land on surfaces the census cannot hold and the Mpix figures are an undercount of the tail
+  even as they double-count the pairs.
+- **~60-85 Mpix/frame of real fill does not obviously explain 139ms of `gpu_draw`.** An Adreno 650 at
+  roughly 4 Gpix/s should do that in ~20ms. So either the per-pixel shading cost is high, or the 83
+  barrier calls per frame (48 of them from `TransitionResolveSources`, each ending the render pass on
+  a tiler) are costing tile store/reload traffic that does not show as fill. **That is the next thing
+  to measure, and it is not a fill problem.**

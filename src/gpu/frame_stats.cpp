@@ -158,12 +158,39 @@ void UpdateFrameStats() {
         for (const auto &t : sorted) {
           if (!t.draws)
             continue;
-          BD_INFO("[perf]   target {:012X} {}x{}x{}L {}: {} draws/frame over {} "
-                  "binds/frame, {} Mpix/frame if each covered it once",
+          // Fractional, deliberately. These were integers, and every one of
+          // the three big scene targets reported "0 binds/frame" - which is
+          // what 0.33 looks like after integer division, and 0.33 is exactly
+          // what a surface bound on one of three frame slots would show. That
+          // ambiguity is the difference between "the scene is rendered three
+          // times" (146 Mpix/frame) and "the pool handed out three surfaces for
+          // one logical target" (49 Mpix/frame), which have opposite fixes.
+          const double dpf = double(t.draws) / double(ticks);
+          const double bpf = double(t.binds) / double(std::max(ticks, 1u));
+          BD_INFO("[perf]   target {:012X} {}x{}x{}L {}: {:.2f} draws/frame over "
+                  "{:.2f} binds/frame, {:.1f} Mpix/frame if each covered it once",
                   u64(uintptr_t(t.id)), t.w, t.h, t.layers,
-                  t.has_ds ? "depth" : "colour-only", t.draws / ticks,
-                  t.binds / std::max(ticks, 1u),
-                  (u64(t.w) * t.h * (t.draws / std::max(ticks, 1u))) / 1000000);
+                  t.has_ds ? "depth" : "colour-only", dpf, bpf,
+                  double(u64(t.w) * t.h) * dpf / 1e6);
+        }
+        // Totals, so a surface the 24-row table could not hold is visible
+        // instead of silently missing. If attributed draws fall short of the
+        // frame's own draw count, the table overflowed and the Mpix figures
+        // above are an undercount.
+        {
+          u64 attributed = 0;
+          u32 rows = 0;
+          double mpix = 0.0;
+          for (const auto &t : g_targets) {
+            if (!t.draws)
+              continue;
+            ++rows;
+            attributed += t.draws;
+            mpix += double(u64(t.w) * t.h) * double(t.draws) / double(ticks) / 1e6;
+          }
+          BD_INFO("[perf]   targets: {} rows, {:.0f} draws/frame attributed of "
+                  "{} counted, {:.1f} Mpix/frame total",
+                  rows, double(attributed) / double(ticks), acc_d / ticks, mpix);
         }
         for (auto &t : g_targets)
           t = TargetTally{};
