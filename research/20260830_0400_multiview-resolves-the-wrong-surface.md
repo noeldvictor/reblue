@@ -235,10 +235,31 @@ resolve writes one image and the capture reads another, and every check above st
 the next thing to verify, and it is one log: print the plume texture pointer behind
 `resolvedFramebuffer` and the one behind `resolvedTexture` and see whether they match.
 
-`multiview_resolve.cpp` already carries a comment about exactly this hazard for the per-eye *views*
-- "a GuestTexture can be handed a different physical texture later, which leaves a view registered
-at creation pointing at an image the surface no longer owns" - and registers those views late to
-avoid it. The companion may have the same problem and no such guard.
+**Checked, and that is wrong too.** `surface_pool.cpp` builds `resolvedFramebuffer` directly from
+`resolvedTexture` in the same block, from the same object - they cannot diverge. And
+`bd_mv_redirect_srv` defaults **on**, so a multiview surface's primary sampled view is already
+pointed at the resolved companion rather than array layer 0: the post chain, present and the capture
+all read the same texture the resolve writes. That chain is self-consistent.
+
+## Closing state, honestly
+
+Nine hypotheses checked, nine correct, frame still black:
+
+surfaces layered (colour and depth) · scene binds both · framebuffer `viewMask=3` · pipelines
+`viewMask=3` · `PipelineState::multiview` tracks the target · resolve runs on the scene target every
+frame · resolve pass and draws execute · known-good descriptor samples black · companion texture,
+its framebuffer and the sampled SRV are all the same allocation.
+
+Plus the decisive negative: **magenta-clearing the layered scene target every bind does not reach the
+capture.** Something between a cleared array and a companion that everything agrees on loses the
+image, and none of the nine explains it.
+
+I do not have the cause, and four probes in this investigation answered different questions than
+they were asked - three capped counters and a one-shot clear 140 seconds early. Anyone picking this
+up should distrust the instrumentation before the theory, and should probably start by making the
+*array* visible directly: capture `rt->texture` layer 0 and layer 1 with
+`bd_capture_after_s` (present.cpp already has a both-slices path for exactly this) rather than
+inferring what is in them from what comes out of the resolve.
 
 
 
