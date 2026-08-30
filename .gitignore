@@ -424,3 +424,4 @@ vcpkg_installed/
 
 # bench_quest.py scratch
 bench_args.txt
+stereo_capture.png
