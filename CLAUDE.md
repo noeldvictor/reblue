@@ -1026,6 +1026,25 @@ It now walks a slow circle. Two things follow, and both bite:
   count before believing any number: a field scene is ~500-600 draws, a menu is 18. This is the
   first concrete reason to want tourist mode's encounter suppression as a *measurement tool*.
 
+### The `bdPlayerField*` family never runs. Do not hook it.
+
+Two features have now stalled on this. `bdPlayerFieldMovementUpdate` never fires with the character
+walking (the VR anchor), and `bdPlayerFieldCheckEncounter` never fires either - measured with an
+unconditional entry counter over a 200s run covering the whole autoplay walking phase, **zero
+entries**. The callers chain up to `bdPlayerFieldUpdateMain`, which is itself named, so this is not
+an unnamed indirect-dispatch edge the callgraph cannot see; that subsystem simply is not the one
+driving. See `research/20260830_0300_the-player-field-family-is-dead.md`.
+
+It blocks encounter suppression - wanted for VR sightseeing *and* as a measurement tool, since
+autoplay walks, walking rolls encounters, and 26% of frames after the walk begins came in under 100
+draws against a field scene's 500-600 - and it is why the character anchor derives position from the
+follow camera instead.
+
+**Find the seam that runs before writing the hook.** `bd_sample_profiler` with the character walking
+names what is actually executing; `bd_guest_census` confirms a candidate is live; `tools/callgraph.py
+callers` walks up from there. A hook on a function nobody has watched fire is a guess, and the cost
+of checking is one unconditional counter and one run.
+
 ### Look at the threads before theorising about the GPU
 
 `adb shell top -H -b -n 1 -p $(pidof com.reblue)` costs nothing, needs no build, and had never been
