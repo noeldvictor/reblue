@@ -33,6 +33,10 @@
 #include <rex/ui/window.h>
 
 #include "gpu/gpu_profiling.h"
+#include "gpu/renderdoc_capture.h"
+
+REXCVAR_DECLARE(bool, bd_stereo);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
 
 #if defined(REBLUE_OPENXR)
 #include "xr/xr_session.h"
@@ -286,6 +290,19 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
     BD_ERROR("Video::CreateHostDevice called with null window");
     return false;
   }
+
+  // Before the interface, and therefore before the VkInstance: RenderDoc hooks
+  // the graphics API at module load, so a module loaded any later captures
+  // nothing at all while still reporting itself as ready.
+  bd::gpu::renderdoc::LoadIfRequested();
+
+  // Said once, loudly, because the combination is silently wrong rather than
+  // inert and it has already invalidated a round of multiview measurements.
+  // See the exclusivity note in gpu/hooks/draw.cpp.
+  if (REXCVAR_GET(bd_stereo) && REXCVAR_GET(bd_stereo_multiview))
+    BD_WARN("[mv] bd_stereo and bd_stereo_multiview are both set; they are "
+            "alternatives, not layers. Multiview wins and the side-by-side "
+            "eye loop is suppressed.");
   auto &s = state();
   std::lock_guard lock(s.mutex);
   if (s.ready) {

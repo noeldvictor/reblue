@@ -31,6 +31,7 @@
 
 #include "core/app_root.h"
 #include "gpu/gpu_profiling.h"
+#include "gpu/renderdoc_capture.h"
 
 #include "core/logging.h"
 #include "core/ab_experiment.h"
@@ -494,6 +495,8 @@ std::unique_ptr<plume::RenderBuffer> g_capture_buffer;
 u32 g_capture_w = 0;
 u32 g_capture_h = 0;
 u32 g_capture_row_texels = 0;
+u32 g_capture_texel = 4;
+plume::RenderFormat g_capture_format = plume::RenderFormat::R8G8B8A8_UNORM;
 
 // D3D12 wants 256-byte aligned rows in a placed footprint and Vulkan does not
 // care, so align always and let the writer skip the padding.
@@ -518,10 +521,17 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
   const u32 slices = layers > 1 ? 2u : 1u;
   const u32 row_texels =
       ((width + kCaptureRowAlign - 1) / kCaptureRowAlign) * kCaptureRowAlign;
-  const u64 size = u64(row_texels) * height * slices * 4ull;
+  // NOT 4. The swapchain is RGBA8, but the guest scene target is
+  // R16G16B16A16_FLOAT - eight bytes a texel - and copyTextureRegion is handed
+  // the real format, so sizing this at four both overran the readback buffer
+  // and stacked the second array slice half a slice too early. Every reading
+  // ever taken from a multiview array capture went through that.
+  const u32 texel = plume::RenderFormatSize(format);
+  const u64 slice_bytes = u64(row_texels) * height * texel;
+  const u64 size = slice_bytes * slices;
 
   if (!g_capture_buffer || g_capture_w != width ||
-      g_capture_h != height * slices) {
+      g_capture_h != height * slices || g_capture_texel != texel) {
     g_capture_buffer.reset();
     g_capture_buffer =
         s.device->createBuffer(plume::RenderBufferDesc::ReadbackBuffer(size));
@@ -533,6 +543,8 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
     g_capture_h = height * slices;
     g_capture_row_texels = row_texels;
   }
+  g_capture_texel = texel;
+  g_capture_format = format;
 
   const plume::RenderTextureBarrier to_copy(
       back, plume::RenderTextureLayout::COPY_SOURCE);
@@ -542,7 +554,7 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
     s.command_list->copyTextureRegion(
         plume::RenderTextureCopyLocation::PlacedFootprint(
             g_capture_buffer.get(), format, width, height, 1, row_texels,
-            u64(slice) * row_texels * height * 4ull),
+            u64(slice) * slice_bytes),
         plume::RenderTextureCopyLocation::Subresource(back, 0, slice));
   }
 
@@ -583,13 +595,21 @@ void ResolveCapture(bool bgra) {
     // One text line, then tightly packed RGBA. The row padding is dropped
     // here rather than on the host so the file needs no alignment rule to
     // read - it is just width*height*4 after the newline.
-    out << "RGBA " << g_capture_w << " " << g_capture_h << " "
+    // The tag names the texel format rather than assuming RGBA8. A scene
+    // target is R16G16B16A16_FLOAT, and a reader that guesses gets noise
+    // that looks like a rendering bug - which is how this was found.
+    const char *tag =
+        g_capture_format == plume::RenderFormat::R16G16B16A16_FLOAT
+            ? "RGBA16F"
+            : "RGBA";
+    out << tag << " " << g_capture_w << " " << g_capture_h << " "
         << (bgra ? "bgra" : "rgba") << "\n";
     const auto *src = static_cast<const u8 *>(mapped);
     for (u32 y = 0; y < g_capture_h; ++y)
       out.write(reinterpret_cast<const char *>(src + u64(y) *
-                                               g_capture_row_texels * 4),
-                std::streamsize(u64(g_capture_w) * 4));
+                                               g_capture_row_texels *
+                                               g_capture_texel),
+                std::streamsize(u64(g_capture_w) * g_capture_texel));
   }
   g_capture_buffer->unmap();
 
@@ -1070,6 +1090,9 @@ void Video::Present(GuestTexture *frontBuffer) {
   // the same command list, so by here it has been submitted.
   EndXrFrame();
 #endif
+  // After the present, so the capture covers the whole of the next frame
+  // rather than the tail of this one. RenderDoc delimits frames by present.
+  bd::gpu::renderdoc::TriggerIfDue();
   const auto wait_t0 = Clock::now();
   {
     BD_CPU_ZONE("WaitFence");

@@ -225,6 +225,29 @@ REXCVAR_DEFINE_DOUBLE(bd_capture_after_s, 0.0, kCvarGroup,
                       "frame.")
     .range(0.0, 100000.0);
 
+// Drive RenderDoc's in-application API.
+//
+// A frame capture is the only instrument that answers "which draw wrote
+// nothing, and into what" without inference, and this port has now lost that
+// argument repeatedly - the multiview resolve had ten causes eliminated by
+// measurement and none of them right. Khronos ships no Windows validation
+// binaries, so on the desktop RenderDoc *is* the instrument.
+//
+// Two cvars rather than one because the module has to be loaded before the
+// VkInstance exists (RenderDoc hooks at load time) while the trigger has to
+// wait for autoplay to reach a field scene.
+REXCVAR_DEFINE_BOOL(bd_renderdoc, false, kCvarGroup,
+                    "Load RenderDoc at startup so a capture can be triggered. "
+                    "Set RENDERDOC_DLL to override the module path.");
+
+// Seconds, for the same reason bd_capture_after_s is: args.txt is read once at
+// launch, so a bool would only ever capture the title screen.
+REXCVAR_DEFINE_DOUBLE(bd_renderdoc_after_s, 0.0, kCvarGroup,
+                      "Trigger a RenderDoc capture this many seconds after "
+                      "start, into logs/renderdoc/. 0 disables. Needs "
+                      "bd_renderdoc.")
+    .range(0.0, 100000.0);
+
 // Mirror the VR image into the desktop window.
 //
 // Off on Android and it must stay that way: presenting the Android surface in

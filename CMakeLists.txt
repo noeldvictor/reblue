@@ -239,7 +239,10 @@ foreach(target IN LISTS REBLUE_COMMON_TARGETS REBLUE_TARGETS)
     # with the recompiler and the host HLSL.
     target_include_directories(${target} PRIVATE
         "${CMAKE_CURRENT_SOURCE_DIR}" src "${REBLUE_GEN_DIR}"
-        "${REBLUE_SHADER_COMMON_DIR}" "${REXGLUE_ENTRYPOINT_INCLUDE_DIR}")
+        "${REBLUE_SHADER_COMMON_DIR}" "${REXGLUE_ENTRYPOINT_INCLUDE_DIR}"
+        # renderdoc_app.h only: the in-application API is a header plus a
+        # dlopen, so there is nothing to link and no dependency to find.
+        thirdparty/renderdoc)
 
     target_compile_definitions(${target} PRIVATE
         $<$<BOOL:${REBLUE_BUILD_INSTALLER}>:REBLUE_BUILD_INSTALLER>
