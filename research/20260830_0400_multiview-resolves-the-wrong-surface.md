@@ -163,9 +163,35 @@ That is the thing to explain next, and it has two candidate shapes:
    `GetFramebuffer` keys on `container->framebuffers[rt->texture]`, so an entry built while the
    target was mono is reused unchanged once it is not. Nothing in the key mentions the layer count.
 
-(2) would explain the whole symptom without anything else being wrong, and it is cheap to test: log
-`rt->layers` and hit/miss inside `BindDrawFramebufferLocked`. If it is (2), the fix is to include the
-layer count in the cache key or drop the entries when a surface is re-created with a different one.
+Tested, and it is neither. Logging every `GetFramebuffer` call that has a layered colour target:
+
+```
+[mv] GetFramebuffer rt 1920x1080 layers=2 ds=null -> creating
+[mv] GetFramebuffer rt  960x540  layers=2 ds=null -> creating
+[mv] GetFramebuffer rt  480x270  layers=2 ds=null -> creating
+[mv] GetFramebuffer rt  240x135  layers=2 ds=null -> creating
+[mv] GetFramebuffer rt  120x67   layers=2 ds=null -> creating
+```
+
+No `CACHE HIT` anywhere, so (2) is out. And **not one call has a depth attachment**, so the draw
+path never asks for a layered framebuffer *with depth* - which is what the scene needs.
+
+## What that actually means
+
+**When the scene draws, `rt->layers` is 1.** The whole post chain is layered - 1920x1080 down to
+120x67, all `layers=2`, exactly as `bd_stereo_multiview` intends - and the surface the guest binds
+for the depth-tested scene pass is not. So the geometry goes into a single-layer target, the layered
+surfaces never receive it, and the resolve dutifully flattens two empty layers.
+
+That reframes the bug entirely. It is not the resolve, not the per-eye views, not the pipelines, not
+the framebuffer masks and not the cache: **the scene is not being rendered into the layered surface
+in the first place.** Every one of those was checked and cleared on the way to this.
+
+The question for the next attempt is why `surface_pool` gives two layers to the post-chain targets
+and one to the scene's, when `SetRenderTarget` was logged earlier binding a `layers=2` 1920x1080
+surface and setting `PipelineState::multiview` true. Those two facts are in tension and one of them
+is about a different surface than it appears to be. Start by logging, in one place, every surface
+the pool hands out under multiview with its size, layer count and whether it carries depth.
 
 ## Superseded lead: the depth attachment The framebuffer log reads
 `rtLayers=2 dsLayers=0 -> viewMask=3` - colour is layered and there is no depth attachment on that

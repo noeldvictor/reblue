@@ -35,6 +35,18 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   const plume::RenderTexture *key = rt ? rt->texture : nullptr;
 
   auto it = container->framebuffers.find(key);
+  {
+    // Does the draw path ever ask for a layered framebuffer, and does it get a
+    // cached mono one? The key is the colour texture pointer and mentions no
+    // layer count, so an entry built while the target was single-layer would be
+    // reused unchanged once it is not - which would put multiview pipelines
+    // into a viewMask 0 pass, silently drawing nothing.
+    static std::atomic<int> n{0};
+    if (rt && rt->layers > 1 && n.fetch_add(1, std::memory_order_relaxed) < 10)
+      BD_INFO("[mv] GetFramebuffer rt {}x{} layers={} ds={} -> {}",
+              rt->width, rt->height, rt->layers, ds ? "yes" : "null",
+              it != container->framebuffers.end() ? "CACHE HIT" : "creating");
+  }
   if (it != container->framebuffers.end()) {
     return it->second.get();
   }
