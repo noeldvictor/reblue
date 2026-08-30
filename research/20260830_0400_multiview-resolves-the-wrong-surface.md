@@ -210,13 +210,35 @@ Everything checked is correct:
 7. The resolve pass and its draws execute.
 8. Sampling through the surface's own known-good descriptor is equally black.
 
-And the frame is still black. **I do not have the cause.** What is left unchecked is the one thing
-none of these touch: whether the *geometry* reaches the layered target - whether the draws that
-should fill it are being submitted at all under multiview, or are being culled, or are landing in
-layer 0 of something that is then not what is read. The next probe should be a colour, not a
-deduction: clear the scene target to magenta at the start of the frame and see whether the capture
-comes back magenta, black, or the scene. That distinguishes "nothing is drawn" from "something is
-drawn and then lost" in one run, and it does not depend on any counter.
+And the frame is still black.
+
+## The probe, and what it narrows to
+
+Clearing the layered scene target to magenta on **every** bind - a colour read out of the capture
+rather than another counter - the capture comes back **black, not magenta**.
+
+(The first attempt at this cleared once, on the first bind, roughly 140 seconds before the capture,
+and proved nothing. Worth saying because it is the fourth time in this investigation that a probe
+answered a different question than the one asked.)
+
+So: the surface the scene is drawn into, cleared to a colour that cannot be missed, does not reach
+the capture. And present logs `rt == last_drawn`, the same pointer. Those two facts together mean
+the divergence is **after** the target - between the layered array and the companion the capture
+reads:
+
+- `RecordCapture` reads `rt->resolvedTexture`.
+- `ResolveMultiviewSurfaceLocked` renders into `rt->resolvedFramebuffer`.
+
+If those are not the same texture - if the companion framebuffer was built around a different
+allocation than the one `resolvedTexture` points at, which a *pool* can easily arrange - then the
+resolve writes one image and the capture reads another, and every check above still passes. That is
+the next thing to verify, and it is one log: print the plume texture pointer behind
+`resolvedFramebuffer` and the one behind `resolvedTexture` and see whether they match.
+
+`multiview_resolve.cpp` already carries a comment about exactly this hazard for the per-eye *views*
+- "a GuestTexture can be handed a different physical texture later, which leaves a view registered
+at creation pointing at an image the surface no longer owns" - and registers those views late to
+avoid it. The companion may have the same problem and no such guard.
 
 
 
