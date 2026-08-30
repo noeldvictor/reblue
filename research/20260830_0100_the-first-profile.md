@@ -182,6 +182,18 @@ category.** The CPU side does not move, which is what it should do. This is the 
 this project has been able to run at all: it needs both the timestamp fix and the within-run
 harness, and neither existed twelve hours ago.
 
+### The obvious way to recover it does not fire
+
+If a guest colour clear is pending, `DrainPendingClear` issues `clearColor` with no rects - a total
+overwrite - so seeding first is provably wasted and skipping it needs no heuristic. That was
+implemented and A/B'd within a run: **`rs_seed` stays at 14 in both arms and nothing moves.** The
+condition is never true; a seed is never immediately followed by a pending full clear. Removed
+rather than left as a dead branch.
+
+So the 14 seeds are all for surfaces with no pending clear, which means proving them redundant needs
+knowing whether the *draws* about to be issued cover the surface - not something available at bind
+time. That is the real difficulty here, and it is why the copy exists in the first place.
+
 `bd_seed_targets` is a **measurement handle, not a feature**. Off, the frame is wrong wherever a
 pass genuinely relied on inherited content - that is precisely what seeding is for. The real change
 is to skip the copy only where the pass then overwrites the surface completely, which is a copy for
