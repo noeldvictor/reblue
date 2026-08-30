@@ -1015,6 +1015,20 @@ It now walks a slow circle. Two things follow, and both bite:
   count before believing any number: a field scene is ~500-600 draws, a menu is 18. This is the
   first concrete reason to want tourist mode's encounter suppression as a *measurement tool*.
 
+### Look at the threads before theorising about the GPU
+
+`adb shell top -H -b -n 1 -p $(pidof com.reblue)` costs nothing, needs no build, and had never been
+run before 2026-08-29. It immediately showed the guest main thread saturated and the renderer nearly
+idle, which is the opposite of what three sessions of GPU work had assumed. Read
+`/proc/<pid>/task/<tid>/status` alongside it for `Cpus_allowed_list`: the runtime pins our render
+thread to cores 4-6 (the big cluster) while unpinned guest threads roam all eight and compete for
+exactly those three.
+
+`simpleperf` would be better and does not work here: Horizon OS refuses shell perf on this device
+regardless of `perf_event_paranoid`. The app manifest now declares `profileable android:shell`,
+which was genuinely missing and is why `tools/profile_quest.py` had never produced a profile - but
+it is not sufficient on a Quest 2.
+
 ### Vulkan validation layers run on device, and should be used before guessing
 
 There are none in the NDK. Fetch the Khronos Android build from the Vulkan-ValidationLayers
@@ -1099,7 +1113,30 @@ fence, 183ms a frame - identical within noise to VR on. **Blue Dragon runs at 5.
 with the flat renderer.** The session, the layer, the camera composition and the pad cost
 essentially nothing. The port is slow; VR was never the reason.
 
-### The bottleneck is fragments
+### The bottleneck is fragments — **corrected 2026-08-29, it is not**
+
+**Read `research/20260829_2300_the-gpu-is-not-the-bottleneck.md` before acting on this section.**
+Re-measured with actual GPU timers and the conclusion below does not hold: on a Quest 2 the GPU
+executes the whole command buffer in **~2ms of a ~100ms frame**, and five experiments that would
+each have shown a GPU cost all came back negative. The decisive one is `bd_cull_distance=1` -
+almost the entire scene culled - which still costs **73ms against 12ms of our own work**. Drawing
+nothing does not make the frame fast, so the frame is not bound by what we draw.
+
+Also closed, so it is not tried again: **forcing every colour tile load and every depth store to
+`DONT_CARE`** - the upper bound on every tile-traffic optimisation at once, rendering deliberately
+incorrectly - changed nothing (102-117ms against 100-120ms). `XR_EXT_performance_settings`
+SUSTAINED_HIGH and `XR_KHR_android_thread_settings` are both now requested and both accepted by the
+runtime, and neither moved the frame either. They are kept because they are correct.
+
+What the frame *is* bound by is the recompiled guest: `top -H` shows the guest main thread
+(`SDLThread`) saturated and up to five guest worker threads at ~70% each, against a renderer
+(`Draw Thread`) at ~10%. See `research/20260829_2200_where-the-cpu-actually-is.md`.
+
+Two traps found while measuring: **`gpu_busy_percentage` reads 99% with the app force-stopped**, so
+it is useless on this device; and the guest worker threads are **transient per scene**, so an A/B
+across restarts can straddle two entirely different loads.
+
+The original section follows, kept because the method is still the right method:
 
 **Proven fill-bound.** `bd_debug_fill_scale` shrinks the *scissor* to N percent of the viewport
 without touching the viewport, so vertex work, draw count, pipeline state and every upload stay
