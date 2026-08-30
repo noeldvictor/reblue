@@ -374,7 +374,25 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
-### The desktop loop is UNVERIFIED as of 2026-08-30, and its sampling is a trap
+### Desktop 3D is broken, it predates today's work, and it is NOT a blocker
+
+Bisected 2026-08-30 with a capture gated on draw count: the desktop Vulkan build renders an
+all-black scene on a verified `>= 1500 draw` field frame at `66e296b` (before the guest constant
+rewrite), at `301a741`, and on current `main`. **The regression predates the constant rewrite.**
+Desktop 2D is fine - the camp menu and status-effect glossary photograph correctly. The Quest 2
+renders correctly throughout. See
+`research/20260830_1630_the-desktop-3d-was-already-broken.md`.
+
+Nobody had noticed because **the composited capture never worked**: plume created swapchain images
+without `TRANSFER_SRC`, so copying from one was invalid usage, silently dropped. Every capture of a
+finished desktop frame has been black for as long as the feature existed.
+
+**A bisect here must carry the instrument forward while moving the subject back.** `git checkout`
+of an old commit reverts the submodules too, which took plume back past the `TRANSFER_SRC` fix and
+made two bisect arms report the instrument's failure rather than the build's. Hand-patch the fix
+into the old checkout.
+
+### The desktop loop's sampling is a trap
 
 Desktop 2D renders correctly - camp menu and the status-effect glossary photographed with correct
 textures and colours - and the run reaches field scenes doing real work: `draws max 2187`,
