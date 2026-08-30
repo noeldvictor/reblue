@@ -391,6 +391,13 @@ cannot be attributed to the renderer. Use the in-app capture on that device, whi
 back buffer and does not care what the compositor is doing. It predates the constant rewrite. See
 `research/20260830_1900_the-thor-runs-and-the-flat-path-is-black.md`.
 
+**The AYN Thor RENDERS now** - its scene target reads `RGBA16F 1280x720, mean 128.5, 100%
+non-black` and the image is a recognisable field scene. That closes the blocker in
+`research/20260830_0820_arm64-the-thor-renders-nothing.md`. Capture it with
+`bd_mv_capture_array=true`, which now handles a single-layer scene target; the captured image is
+sheared into vertical bands by a readback stride mismatch at that width/format, which is an
+artefact and not a rendering fault.
+
 **The AYN Thor is otherwise unblocked and fast.** `Int64` is gone, so shader compilation failures
 went to **0** and pipeline failures 21,615 -> 245, and it runs a field scene at
 `dt 33.75ms | gpu_total 21.50ms | 833 draws` - **29.6 fps** against the Quest's 15.0. It renders

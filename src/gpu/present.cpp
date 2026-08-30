@@ -1147,6 +1147,18 @@ void Video::Present(GuestTexture *frontBuffer) {
        : multiview_rt
            ? RecordCapture(s, rt->texture, rt->width, rt->height, rt->format,
                            rt->layers, plume::RenderTextureLayout::SHADER_READ)
+       // A single-layer scene target, which is what bd_mv_capture_array finds
+       // whenever multiview is off - on the flat renderer, and on any device
+       // without a headset. Without this the array branch cannot fire, the
+       // in-pass capture stands aside because a guest surface was asked for,
+       // and the run produces no capture at all while looking healthy.
+       //
+       // This is the only capture that works on the flat path: it photographs a
+       // guest texture, which always supports being copied from, where the
+       // swapchain may not advertise TRANSFER_SRC at all.
+       : (force_array && rt && rt->texture)
+           ? RecordCapture(s, rt->texture, rt->width, rt->height, rt->format, 1,
+                           plume::RenderTextureLayout::SHADER_READ)
            // The flat composited frame is captured inside RecordPresentPass
            // instead, which is the only site that can see the ImGui overlay.
            : false);

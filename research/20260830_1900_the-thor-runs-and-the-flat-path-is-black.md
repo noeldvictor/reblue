@@ -117,3 +117,37 @@ agrees. The claim "two very different GPUs agree" was overstated and is withdraw
 `bd_capture_after_s` and `bd_capture_min_draws` and read the in-app capture, which photographs the
 back buffer directly and does not care what the compositor is doing. That run was started and the
 Quest disconnection ended the session before it completed.
+
+
+---
+
+## Second correction: the Thor RENDERS. Confirmed from its scene target.
+
+`bd_mv_capture_array` with multiview off could not fire at all - the array branch needs
+`layers > 1`, and the in-pass composited capture stands aside whenever a guest surface was asked
+for - so the run produced no capture while looking healthy. Fixed: a single-layer scene target is
+now captured directly.
+
+With that, the Thor's scene target reads **`RGBA16F 1280x720, mean 128.5, 100% non-black`**, and the
+image is unmistakably a Blue Dragon field scene - sky, terrain, structures, correct colours.
+
+**So the Adreno 740 renders the game.** Taken with the frame numbers, the picture on the Thor is:
+
+```
+Int64 gone -> shader compilation failures 0, pipeline failures 21,615 -> 245
+dt_ms 33.75 | gpu_total_ms 21.50 | draws 833   = 29.6 fps
+scene target: correct
+```
+
+That closes the blocker recorded in
+`research/20260830_0820_arm64-the-thor-renders-nothing.md`. The Thor rendered nothing; it now
+renders a field scene at twice the Quest's frame rate.
+
+**Known artefact, not a rendering bug:** the captured image is sheared into vertical bands. The
+content is correct, so this is a row-stride mismatch in the readback for this width/format
+combination - the same path is clean for the Quest's 1920-wide two-layer RGBA16F grab. Worth fixing
+before the capture is used to judge fine detail, but it does not affect "does it render".
+
+**What remains genuinely open:** whether the flat path reaches the *display*. The scene target is
+correct and `screencap` reads black, but the Thor is dual-screen with another app holding focus, so
+that reading is not attributable. The desktop's flat-path black stands on its own evidence.
