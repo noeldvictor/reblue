@@ -374,6 +374,18 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
+### The desktop loop is BROKEN as of 2026-08-30. Do not trust it.
+
+`reblue_vk.exe` renders a black frame - confirmed with an OS-level screen capture, which is
+independent of every capture path in this repo. The Quest 2 is unaffected and renders correctly.
+The last good desktop run was 2026-08-29, before the guest constant rewrite, so that is the prime
+suspect and **the bisect has not been run**. Everything below about the desktop being the fastest
+correctness loop is true of the tooling and currently false in practice.
+
+See `research/20260830_1545_the-desktop-loop-is-broken.md` for what is already eliminated -
+notably it is *not* the host constant binding, *not* MSAA/stereo/multiview, and *not* the capture
+instrument, which was separately broken and is now fixed.
+
 ### Measuring on the desktop, which is now the first stop
 
 A desktop run is ~90 seconds, needs no headset, no adb and no APK, and prints the same `[perf]`
