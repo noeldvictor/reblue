@@ -571,16 +571,24 @@ void InsetQuadUVs(u8 *verts, u32 vertexCount, u32 vertexStride, UVEdges edges) {
     return;
   const float extent[2] = {static_cast<float>(tex->width),
                            static_cast<float>(tex->height)};
+  // Depends only on the texture, so it is two divisions per draw rather than
+  // two per quad.
+  const float insets[2] = {0.5f / extent[0], 0.5f / extent[1]};
 
   for (u32 base = 0; base + kQuadVertices <= vertexCount;
        base += kQuadVertices) {
-    auto uv = [verts, vertexStride, base](u32 i) {
-      return reinterpret_cast<float *>(verts +
-                                       (base + i) * size_t{vertexStride}) +
-             2;
-    };
+    // Resolved once per quad rather than on each of the sixteen accesses
+    // below: the lambda this replaced recomputed base + i times the stride
+    // every time it was called, and this function came out as the single
+    // hottest entry in the first profile of the process.
+    float *uvp[kQuadVertices];
+    for (u32 i = 0; i < kQuadVertices; ++i)
+      uvp[i] = reinterpret_cast<float *>(verts +
+                                         (base + i) * size_t{vertexStride}) + 2;
+    auto uv = [&uvp](u32 i) { return uvp[i]; };
+
     for (u32 axis = 0; axis < 2; ++axis) {
-      const float inset = 0.5f / extent[axis];
+      const float inset = insets[axis];
       float lo = uv(0)[axis], hi = lo;
       for (u32 i = 1; i < kQuadVertices; ++i) {
         lo = std::min(lo, uv(i)[axis]);

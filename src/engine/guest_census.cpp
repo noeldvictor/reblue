@@ -204,17 +204,27 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   const u32 va = r3.u32;
   if (va == 0)
     return false;
+  // One translation for the block instead of one per component - this runs for
+  // every node in the scene, and try_translate showed up in the profile under
+  // it. Both ends are validated, so a centre straddling the end of a mapping is
+  // still rejected rather than read past.
+  const auto *centre = bd::mem::try_at<const rex::be<u32>>(va);
+  if (!centre || !bd::mem::try_at<const rex::be<u32>>(va + 8))
+    return false;
   float c[3];
   for (int i = 0; i < 3; ++i) {
-    const u32 bits = bd::mem::try_load<u32>(va + u32(i) * 4);
+    const u32 bits = static_cast<u32>(centre[i]);
     std::memcpy(&c[i], &bits, sizeof(float));
   }
-  const f64 len =
-      std::sqrt(f64(c[0]) * c[0] + f64(c[1]) * c[1] + f64(c[2]) * c[2]);
+  const f64 len_sq = f64(c[0]) * c[0] + f64(c[1]) * c[1] + f64(c[2]) * c[2];
   // Keep anything whose own radius reaches inside the limit, so a large distant
   // object - a cliff, a building - does not pop out while the pebble beside it
   // stays.
-  g_cull_this_node = (len - f1.f64) > limit;
+  // (len - radius) > limit, without the square root: for a non-negative
+  // threshold the comparison squares exactly, and a negative one means the
+  // radius alone already reaches past the limit so nothing can be culled.
+  const f64 threshold = limit + f1.f64;
+  g_cull_this_node = threshold >= 0.0 && len_sq > threshold * threshold;
   if (g_cull_this_node) {
     g_culled_count.fetch_add(1, std::memory_order_relaxed);
     g_tested_count.fetch_add(1, std::memory_order_relaxed);
