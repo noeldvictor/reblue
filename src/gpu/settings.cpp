@@ -347,8 +347,16 @@ REXCVAR_DEFINE_BOOL(bd_stereo, false, kCvarGroup,
 REXCVAR_DEFINE_DOUBLE(bd_stereo_separation, 0.03, kCvarGroup,
                       "Eye separation for bd_stereo, as a clip-space skew. 0 "
                       "gives two identical views; larger diverges them and "
-                      "deepens the effect. Comfort varies, so this is a knob.")
-    .range(0.0, 0.2);
+                      "deepens the effect. Comfort varies, so this is a knob. "
+                      "The multiview path needs far more than the side-by-side "
+                      "one: 0.03 measures sub-pixel there, 0.2 gives crossed "
+                      "far -2 / near -8.")
+    // Was 0.2, which happened to be both the largest usable value and the only
+    // one that works on the multiview path - so there was no headroom to tune
+    // in, and the default looked mono. Why multiview wants an order of
+    // magnitude more than side-by-side for the same clip-space constant is not
+    // yet explained; see research/20260830_0700_multiview-has-depth.md.
+    .range(0.0, 1.0);
 
 // The other half of an off-axis frustum. Separation alone puts the whole world
 // behind the screen, which fuses badly; this moves each eye's projection centre
