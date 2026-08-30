@@ -1018,19 +1018,41 @@ Adreno 650's 4-8; and the desktop does the same scene in `gpu_draw 4.54ms` at a 
 resolution, which after allowing 10-15x for an RTX 3060 leaves 5-7x unexplained and
 Adreno-specific.
 
-**The cause: `shader_recompiler.cpp:1291` emits two constant paths and Vulkan takes the wrong one.**
+**FIXED, 2026-08-30, and it was worth 2.4x.** Guest constants are now three dynamic uniform
+buffers. Quest 2 field frames, across the two steps:
+
+| | `dt_ms` | `gpu_total_ms` | fps |
+| --- | --- | --- | --- |
+| before | 158.74 | 155.51 | 6.3 |
+| bound chunks (ByteAddressBuffer) | 116.43 | 100.61 | 8.5 |
+| **dynamic uniform buffers** | **66.82** | **56.40** | **15.0** |
+
+Both steps mattered and they are different mechanisms: binding the chunk removed the 64-bit address
+(and `Int64`) but left a *storage* buffer read, worth 35%; making it a *uniform* buffer put the read
+on Adreno's constant path, worth another 1.75x. All 141 modules now declare `Uniform` storage class
+and none declares `StorageBuffer`. Stereo depth is unchanged and still correct.
+
+**What was wrong, for the record:**
+
+`shader_recompiler.cpp:1291` emitted two constant paths and Vulkan took the wrong one.
 
 ```
 out += "#ifdef __spirv__";   ->  #define cN vk::RawBufferLoad<float4>(...ShaderConstants + off)
 out += "#else";              ->  cbuffer PixelShaderConstants : register(b1, space4)
 ```
 
-So **DXIL gets a uniform buffer and SPIR-V gets a raw 64-bit-address global load** - ordinary
+So **DXIL got a uniform buffer and SPIR-V got a raw 64-bit-address global load** - ordinary
 uncached global memory on Adreno, per invocation, 143-158 times per fragment. It is also why
-`OpCapability Int64` is declared by all 141 shaders, which an Adreno 740 cannot compile at all.
-**One change fixes the Thor's blocker and the Quest's frame rate.** The replacement is already
-written and shipping on D3D12; making `__spirv__` take it is the work.
-See `research/20260830_1600_the-vulkan-constant-path-was-never-fixed.md`.
+`OpCapability Int64` was declared by all 141 shaders, which an Adreno 740 cannot compile at all, so
+one change fixed the Thor's blocker and the Quest's frame rate.
+
+**The AYN Thor has not been re-tested since.** The `shaderInt64` blocker is gone by construction -
+verify with `python tools/spv_caps.py out/build/android-arm64-release/hlsl_dump --require-absent
+Int64` - but whether it now renders is unmeasured, and it is the obvious next thing to run.
+
+`plume` gained `CONSTANT_BUFFER_DYNAMIC` and `setGraphicsDescriptorSetDynamic` for this; the guest
+constants live in one 64 MiB buffer bound once at device init, re-based per draw by three dynamic
+offsets. See `research/20260830_1600_the-vulkan-constant-path-was-never-fixed.md`.
 
 **`bd_debug_fill_scale` cannot tell fragment count from fragment cost.** The 25%-scissor result -
 155.7ms to 26.5ms at an unchanged draw count - was written up here as "fill-bound", meaning too

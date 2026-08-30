@@ -79,6 +79,42 @@ produce identical curves. **A test that varies one quantity cannot separate two 
 that are multiplied together.** The correct reading is "the cost is proportional to
 fragments", which is true of both hypotheses; the Gpix/s figure is what discriminates.
 
+## Outcome: built, measured, 2.4x
+
+Both halves landed the same day.
+
+| step | `dt_ms` | `gpu_total_ms` | fps |
+| --- | --- | --- | --- |
+| before | 158.74 | 155.51 | 6.3 |
+| chunks bound as ByteAddressBuffer | 116.43 | 100.61 | 8.5 |
+| three dynamic uniform buffers | **66.82** | **56.40** | **15.0** |
+
+The two steps are different mechanisms and both were needed:
+
+- **Binding the chunk** removed the 64-bit device address and with it `OpCapability Int64`. The read
+  was still a *storage* buffer load - global memory - but the address became wave-uniform, so the
+  driver could issue a scalar load. Worth 35%.
+- **Making it a uniform buffer** put the read on Adreno's constant path proper. Worth a further
+  1.75x. `g_VSC[256]`, `g_PSC[224]`, `g_SHC[22]`, indexed by register rather than byte offset, so
+  the address is a literal.
+
+Verified: all 141 modules declare `Uniform` storage class, none declares `StorageBuffer` or `Int64`;
+stereo depth unchanged and still crossed; two pipeline failures, the known sun-occlusion ones.
+
+**What made it tractable was that most of it already existed.** `g_ConstantChunks[8]` was declared,
+eight descriptors were reserved ahead of the bindless texture array, and `TextureDescriptor()`
+already applied the index shift. Only the push-constant payload and the `#define`s still pointed at
+a device address.
+
+**What had to be built:** `plume` had no dynamic uniform buffers - `CONSTANT_BUFFER_DYNAMIC` and
+`setGraphicsDescriptorSetDynamic` are new. And the per-slot chunk lists became one 64 MiB buffer
+with a fixed 32 MiB span per frame slot, because the descriptors must be written once: rewriting one
+while a submitted frame may still be reading it is a hazard no validation layer reliably catches.
+
+**A latent bug fell out of it.** The ImGui overlay declared its texture array at binding 0 while
+binding the *shared* texture set, whose textures have sat behind a leading range ever since the
+constant chunks were reserved. Its layout now mirrors the real one.
+
 ## The rewrite, and the good news
 
 The replacement is already written. The `#else` branch is a complete, working `cbuffer`
