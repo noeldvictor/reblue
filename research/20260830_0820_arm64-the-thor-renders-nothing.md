@@ -176,3 +176,45 @@ so the UBO has to become a *binding* on the shared texture set.
 **Do not treat that note's conclusion as optional any more.** It was written as a performance
 optimisation with a real cost/benefit argument against it. It is now also the only route to a
 rendering frame on an Adreno 740.
+
+
+## Confirmed in the artefact, and the one obstacle that actually blocks the fix
+
+Not inferred from the driver message. Decoding every `OpCapability` in the dumped SPIR-V:
+
+```
+spv files: 141   declaring Int64: 141   declaring PhysicalStorageBufferAddresses: 141
+```
+
+All 141, against a device reporting `shaderInt64=0`.
+
+**The fix does not need a UBO with dynamic offsets.** The cheaper shape is a `ByteAddressBuffer`
+bound once and indexed by a **32-bit** offset from the push constant, replacing the three
+`uint64_t` addresses:
+
+```hlsl
+struct PushConstants { uint VertexShaderConstants, PixelShaderConstants, SharedConstants; };
+#define g_SintTexcoords g_ConstantHeap.Load(g_PushConstants.SharedConstants + 324)
+```
+
+No 64-bit arithmetic, so no `Int64`; no per-draw descriptor write, because the buffer is bound once;
+and one extra *binding* on an existing set rather than a fifth set, which is what Adreno's limit of
+four demands.
+
+**The obstacle is the allocator, and this is the part that was not written down anywhere.**
+`gpu/constant_buffers.cpp` hands out allocations from **chunks** -
+`a.ref = RenderBufferReference(chunk.buffer.get(), off)` with `a.gpuAddress = chunk.gpuBase + off` -
+so there is no single buffer to bind and index into. A device address does not care which chunk it
+came from; a bound descriptor does. So the change starts there:
+
+1. Make the constant heap **one buffer** (suballocated), or bind per chunk and accept a descriptor
+   write whenever the chunk rolls over - measure which, since chunk rollover frequency is unknown.
+2. Push three `uint` offsets instead of three `uint64_t` addresses.
+3. `shader_common.h` and `shader_recompiler.cpp:~1345`: every `vk::RawBufferLoad<T>(addr + off)`
+   becomes a `ByteAddressBuffer` load at `base + off`.
+4. Rebuild the shader cache and confirm `Int64` is gone from all 141 modules with the
+   OpCapability decoder above - that check is three lines and it is the one that proves it landed.
+
+Steps 1-3 touch the hottest path in the renderer and break desktop, Quest and Thor together if they
+are wrong. **Not started here**, deliberately: this session already produced one revert made on a
+false signal, and this is not the change to make tired.
