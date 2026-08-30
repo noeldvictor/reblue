@@ -96,12 +96,22 @@ sample count, the trigger timing (both the sampling trigger and a new render-tar
 the ordering relative to present, and everything upstream of the resolve including the array itself,
 which holds two correct views.
 
-What has not been checked is the companion's **framebuffer and render pass** as objects - whether
-`resolvedFramebuffer`, built once at surface creation from `RenderFramebufferDesc(attach, 1)`,
-is still valid and still bound to the texture `resolvedTexture` names by the time the resolve runs,
-given the pool can hand a `GuestTexture` a different physical texture. The per-eye *views* carry a
-guard for exactly that (`layerViewOf`); the companion framebuffer carries none. That is the next
-thing to look at, and `bd_mv_capture_resolved` verifies any fix in one run.
+The companion's framebuffer was the last cheap candidate and it is not one either:
+`resolvedHolder`, `resolvedTexture` and `resolvedFramebuffer` are created together in one block and
+owned by the same surface, so unlike the per-eye views - which are built against `surface->texture`
+and do need the `layerViewOf` guard - they cannot diverge from each other.
+
+**So the honest state is: the resolve draw does not write its companion, and I do not know why.**
+Ten candidates eliminated by measurement, the array upstream verified good, the draw verified to
+execute.
+
+What is left is the kind of thing a validation layer names in one line and inference does not:
+a pipeline/render-pass incompatibility in some dimension nobody has thought to compare, a barrier
+leaving the companion in a layout the pass cannot write, or a viewport/scissor that clips every
+pixel. **Do not spend another session inferring it.** Get validation layers on it - on the Quest,
+via the `EXTRA_LIBS` route in `tools/build_apk.sh`, since Khronos publishes Android binaries and no
+Windows ones - and read what they say. This project has already had that experience once: CLAUDE.md
+records validation settling a multiview question in one run after three sessions of inference.
 
 That is the next change, and the two capture cvars above verify it in one run.
 
