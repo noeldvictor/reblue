@@ -221,7 +221,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // bd_max_render_height, and this says where rather than inferring it.
   if (s.render_target) {
     bd::gpu::NoteDrawTarget(s.render_target, s.render_target->width,
-                            s.render_target->height, s.render_target->layers);
+                            s.render_target->height, s.render_target->layers,
+                            s.depth_stencil != nullptr);
     // So the resolve only fires on a surface something actually drew into.
     if (s.render_target->layers > 1)
       s.render_target->multiviewDirty = true;

@@ -65,7 +65,8 @@ u32 FrameStatFrameCount();
 
 // Records the bound render target's size for a draw, so the per-frame report
 // can say which surfaces the draws are actually going to.
-void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers = 1);
+void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers = 1,
+                    bool has_ds = false);
 
 u64 DrawPhaseNow();
 void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state);

@@ -51,6 +51,12 @@ struct TargetTally {
   // surface taking hundreds of draws at 1 layer means the per-eye skew never
   // ran on the geometry, whatever the pipeline counts say.
   u32 layers = 1;
+  // Whether a depth-stencil was bound with it. This is what separates a real
+  // 3D scene pass from a post-processing target of the same size, which the
+  // width/height alone cannot: a Quest field frame shows three 1280x720x2L
+  // targets taking ~50 draws each, and knowing which of them carry depth says
+  // which actually need two layers.
+  bool has_ds = false;
 };
 std::mutex g_target_mutex;
 TargetTally g_targets[24];
@@ -152,9 +158,10 @@ void UpdateFrameStats() {
         for (const auto &t : sorted) {
           if (!t.draws)
             continue;
-          BD_INFO("[perf]   target {:012X} {}x{}x{}L: {} draws/frame over {} "
+          BD_INFO("[perf]   target {:012X} {}x{}x{}L {}: {} draws/frame over {} "
                   "binds/frame, {} Mpix/frame if each covered it once",
-                  u64(uintptr_t(t.id)), t.w, t.h, t.layers, t.draws / ticks,
+                  u64(uintptr_t(t.id)), t.w, t.h, t.layers,
+                  t.has_ds ? "depth" : "colour-only", t.draws / ticks,
                   t.binds / std::max(ticks, 1u),
                   (u64(t.w) * t.h * (t.draws / std::max(ticks, 1u))) / 1000000);
         }
@@ -198,7 +205,8 @@ u32 FrameStatFrameCount() {
   return g_stat_frame_count.load(std::memory_order_relaxed);
 }
 
-void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers) {
+void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers,
+                    bool has_ds) {
   if (!width || !height)
     return;
   std::lock_guard<std::mutex> lock(g_target_mutex);
@@ -209,6 +217,7 @@ void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers) {
   for (auto &t : g_targets) {
     if (t.draws && t.id == id) {
       ++t.draws;
+      t.has_ds = t.has_ds || has_ds;
       t.binds += rebound ? 1u : 0u;
       return;
     }
@@ -217,6 +226,7 @@ void NoteDrawTarget(const void *id, u32 width, u32 height, u32 layers) {
       t.w = width;
       t.h = height;
       t.layers = layers;
+      t.has_ds = has_ds;
       t.draws = 1;
       t.binds = 1;
       return;

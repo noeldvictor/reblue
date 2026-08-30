@@ -228,3 +228,37 @@ image, and the number it produced (`far -80, near -80`) should be disregarded - 
 
 The GPU work. The two-layer post chain can now be changed with a working way to check that stereo
 survives it, which is what made it too risky before.
+
+
+## The three big targets are all scene passes, not post
+
+The census now records whether a depth-stencil was bound, which is what separates a 3D pass from a
+post target of the same size. On device:
+
+```
+1280x720x2L depth:        54 draws/frame,  49 Mpix
+1280x720x2L depth:        54 draws/frame,  49 Mpix
+1280x720x2L depth:        53 draws/frame,  48 Mpix
+1376x720x2L colour-only:   5-8 draws
+ 344x193x2L depth:       17-30 draws  (x2)
+```
+
+**All three carry depth.** So the fill is real scene geometry, not post-processing, and the
+"make the post chain mono" idea would save almost nothing - the post targets are the 1376x720
+colour-only one (5-8 draws) and the small ones. That idea is retired before it was built.
+
+**The open question is now whether those three are one logical surface or three.** `surface_pool` is
+a pool and there are 3 frame slots, so the same logical scene target can appear as three distinct
+pointers - and the census keys on the pointer deliberately, because keying on dimensions once hid a
+pass that re-rendered the scene into a second surface of the same size. If they are frame-slot
+alternates the real fill is ~49 Mpix/frame and not 146, and the three rows are triple-counting.
+
+**How to tell**, and it is cheap: the per-row `draws/frame` is `t.draws / ticks` over the whole
+150-tick window, so alternating slots would each show roughly a third of the true per-frame count.
+Summing the rows against the frame's own `draws` column settles it - the sum here is ~229 against a
+median of ~523 draws, which does not match either hypothesis cleanly and means the 24-row table is
+also dropping surfaces. Fix the accounting before drawing a conclusion about the fill.
+
+**Do not act on the 146 Mpix figure until that is resolved.** It is the difference between "the
+scene is rendered three times" and "the census counted one surface three times", and those have
+completely different fixes.
