@@ -42,6 +42,7 @@ struct SlotTiming {
   // for, and sent two sessions looking for the cost on the wrong side.
   bool end_written = false;
   bool saturated = false;
+  u32 end_index = 0;
 };
 
 SlotTiming g_slots[kNumFrames];
@@ -133,8 +134,16 @@ void FrameEnd(plume::RenderCommandList *cmd) {
   auto &st = g_slots[g_active_slot];
   WriteMark(st, cmd, g_cat);
   // Always close the frame, even when the journal filled.
-  cmd->writeTimestamp(st.pool.get(), kQueryCount - 1);
-  st.end_written = true;
+  // Contiguous, not at a reserved high index: vkGetQueryPoolResults over a
+  // range containing unwritten queries returns VK_NOT_READY for the whole call,
+  // and plume then leaves the previous frame's results in place - which is why
+  // gpu_total_ms read as a plausible but stale number for a whole session.
+  if (st.used < kQueryCount) {
+    cmd->writeTimestamp(st.pool.get(), st.used);
+    st.end_index = st.used;
+    ++st.used;
+    st.end_written = true;
+  }
   if (st.saturated) {
     static bool warned = false;
     if (!warned) {
@@ -168,7 +177,8 @@ void CollectGPUTimings(u32 slot) {
     g_supported = false;
     return;
   }
-  st.pool->queryResults();
+  // Only the queries actually written; see FrameEnd.
+  st.pool->queryResults(st.used);
   const u64 *r = st.pool->getResults(); // nanoseconds
   const size_t n = st.journal.size();
   if (n < 2 || r[n - 1] <= r[0])
@@ -183,7 +193,7 @@ void CollectGPUTimings(u32 slot) {
       resolve_ns += r[i] - r[i - 1];
     }
   }
-  const u64 end_ns = st.end_written ? r[kQueryCount - 1] : r[n - 1];
+  const u64 end_ns = st.end_written ? r[st.end_index] : r[n - 1];
   const f64 total_ms = (end_ns > r[0]) ? (end_ns - r[0]) * 1e-6
                                        : (r[n - 1] - r[0]) * 1e-6;
   RecordGPUTime(total_ms, draw_ns * 1e-6, resolve_ns * 1e-6);
