@@ -49,6 +49,7 @@ REXCVAR_DECLARE(bool, bd_cel_shading);
 REXCVAR_DECLARE(bool, bd_mv_capture_array);
 REXCVAR_DECLARE(bool, bd_mv_capture_resolved);
 REXCVAR_DECLARE(double, bd_capture_after_s);
+REXCVAR_DECLARE(i32, bd_capture_min_draws);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 
 namespace bd::gpu {
@@ -524,6 +525,28 @@ bool CaptureDue() {
   static const Clock::time_point start = Clock::now();
   if (std::chrono::duration<double>(Clock::now() - start).count() < after)
     return false;
+
+  // Wait for a frame that is actually the thing you wanted to photograph.
+  //
+  // bd_xr_autoplay does not land in the same place twice - menus, loading and
+  // field scenes all turn up at a given elapsed time across runs - so a purely
+  // time-gated capture is close to a coin toss. Six consecutive black grabs
+  // were read here as "the renderer is broken" when they were menus and
+  // loading screens; the frames either side were field scenes at 2187 draws.
+  //
+  // A field scene is >= 1500 draws on the desktop and >= 300 on a Quest; a menu
+  // is 20-800. Default 0 keeps the old behaviour.
+  const u32 min_draws = u32(REXCVAR_GET(bd_capture_min_draws));
+  if (min_draws) {
+    const u32 draws = DrawsThisFrame();
+    if (draws < min_draws) {
+      static u32 waited = 0;
+      if ((waited++ % 600) == 0)
+        BD_INFO("[capture] holding for a frame with >= {} draws (this one has "
+                "{})", min_draws, draws);
+      return false;
+    }
+  }
 
   fired = true;
   return true;

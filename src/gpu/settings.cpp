@@ -302,6 +302,17 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
 // The useful part is the elimination: barrier count went UP 3% while GPU time
 // went slightly DOWN, so the ~104 barriers a frame are not what the GPU is
 // spending its time on. Do not re-run this experiment.
+// Hold bd_capture_after_s until a frame has at least this many draws.
+//
+// Autoplay does not land in the same place twice, so a time-gated capture
+// photographs a menu or a loading screen as often as the scene, and a black
+// grab is indistinguishable from a rendering bug. A desktop field scene is
+// ~2000 draws and a Quest one ~550; a menu is 20-800.
+REXCVAR_DEFINE_INT32(bd_capture_min_draws, 0, kCvarGroup,
+                     "Delay bd_capture_after_s until a frame has this many "
+                     "draws, so the capture lands on a scene not a menu.")
+    .range(0, 100000);
+
 REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
                     "Batch render-target layout transitions at framebuffer "
                     "changes rather than mid-pass.");
