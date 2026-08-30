@@ -1040,10 +1040,14 @@ autoplay walks, walking rolls encounters, and 26% of frames after the walk begin
 draws against a field scene's 500-600 - and it is why the character anchor derives position from the
 follow camera instead.
 
-**Find the seam that runs before writing the hook.** `bd_sample_profiler` with the character walking
-names what is actually executing; `bd_guest_census` confirms a candidate is live; `tools/callgraph.py
-callers` walks up from there. A hook on a function nobody has watched fire is a guess, and the cost
-of checking is one unconditional counter and one run.
+**Find the seam that runs before writing the hook**, and search by *address range*, not by name: a
+profiler ranks by cost and a per-frame player update for one character is cheap, so grepping a
+profile for "player" proves nothing. What it does show is that **no function in `0x8220xxxx` is
+sampled at all** during the walking phase while `0x8221xxxx` is busy - sixteen distinct functions,
+of which `sub_82215050` has no direct caller and is therefore reached through a vtable or jump
+table, the shape of a task entry point. Start there. Confirm liveness with an unconditional entry
+counter before building on it. A hook on a function nobody has watched fire is a guess, and the cost
+of checking is one counter and one run.
 
 ### Look at the threads before theorising about the GPU
 
