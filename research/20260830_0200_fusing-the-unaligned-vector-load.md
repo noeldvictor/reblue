@@ -116,12 +116,57 @@ conservative shortcut does not exist.
 on none, so neither earns its place in the tree; carrying a codegen path that never executes is
 worse than not having one. What survives is this note.
 
+## Third attempt, and the reason the whole approach is wrong
+
+The zero-fill problem above has a clean fix: `powerpc_opcode::operands` is a **zero-terminated list
+of operand codes**, so the opcode says how many of `ppc_insn::operands[8]` are real. Bounding the
+check by that count, and not guarding `rA` when it is 0 (the encoding's "no base register, treat as
+literal zero"), removes the false positives entirely. That was implemented.
+
+It still finds nothing, and the diagnostic says why:
+
+```
+[fz] bail 0x82139A3C on lvrx  vA=12 rA=0 rB=11
+```
+
+That instruction **is** an `lvrx` and it was still rejected, because its address registers do not
+match the `lvlx`'s. Reading the real sequence in `bdMatrixCopyAligned`:
+
+```
+lvlx v8, 0,  r4       # EA = r4 + 0
+lvlx v0, r4, r11      # r11 = 16
+lvrx v13, r4, r10     # r10 = 32
+lvrx v7,  r4, r11     # r11 = 48 by now
+vor  v11, v8, v7      # combines the r4+0 half with the r4+48 half
+```
+
+**The two halves are paired by effective address, not by matching register operands** - and the
+addresses live in registers that are *reassigned between the loads*, so `r11` means 16 at one
+instruction and 48 four instructions later. Which `lvrx` belongs to which `lvlx` is a fact about
+register *values* at runtime, not about register names in the encoding.
+
+No operand-level pattern can recover that. It needs symbolic tracking of what each GPR holds through
+the block - constant propagation over `li`/`addi` at minimum, and the guest is under no obligation to
+keep those constants. That is a different and much larger problem than a peephole, and it is the
+honest end of this approach.
+
+**All three attempts are reverted and the SDK fork is back to where it started.** What survives is
+this note.
+
 ## What a real attempt needs
 
-1. Operand role information - binutils-style `powerpc_opcode` carries operand descriptor indices, so
-   the data is there; it needs plumbing through `ppc_insn` or a lookup beside it.
-2. A block-local liveness scan built on that, not a "mentions" heuristic.
+1. **Symbolic constant propagation over GPRs within a block** - enough to know that `r11` holds 16 at
+   one instruction and 48 at another, so two vector loads can be related by the address they compute
+   rather than the registers they name. Everything else depends on this and nothing else will do.
+2. Operand roles on top of it, so the liveness check is exact rather than a "mentions" heuristic.
+   `powerpc_opcode::operands` gives the count, which is enough to make "mentions" sound but not
+   enough to make it precise.
 3. Validation on ARM64 before it is enabled anywhere, per below.
+
+An alternative that sidesteps all of it: improve the *individual* `lvlx`/`lvrx` emission instead of
+fusing pairs. Each currently does a variable-indexed 256-byte mask table load; the aligned case
+(`addr & 0xF == 0`) needs no table at all, since the mask is then the constant full byte reverse.
+That is a local change with no pairing analysis, and it was not tried.
 
 Worth doing when someone has a device in front of them, and not before: the payoff is real (2358
 sites, each currently four loads, two shuffles, two stores and an OR) but every failure mode is a
