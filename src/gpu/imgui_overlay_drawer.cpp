@@ -5,6 +5,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include "gpu/bindless_allocator.h"
 #include "gpu/imgui_overlay_drawer.h"
 
 #include <cstring>
@@ -125,7 +126,7 @@ bool ImGuiOverlayDrawer::UploadRGBA8Texture(
     return false;
   }
   bd::gpu::state().texture_descriptor_set->setTexture(
-      slot, tex.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
+      TextureDescriptor(slot), tex.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
 
   plume::RenderTextureBarrier pre(tex.get(),
                                   plume::RenderTextureLayout::COPY_DEST);

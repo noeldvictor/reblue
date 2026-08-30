@@ -36,6 +36,36 @@ constexpr u32 kBindlessTextureCount = 65536;
 constexpr u32 kBindlessSamplerCount = 1024;
 #endif
 
+// Guest constant chunks, bound as ByteAddressBuffers ahead of the texture array
+// in the same descriptor set.
+//
+// They have to live in an existing set: the pipeline layout already binds four
+// (spaces 0/1/2 all point at the texture set, space 3 at the samplers) and
+// Adreno's maxBoundDescriptorSets is exactly 4. They have to come *before* the
+// texture array, because that array is the boundless range and plume requires
+// the boundless range to be last.
+//
+// Which means every texture descriptor index in the physical set shifts up by
+// this much. The shader is unaffected - it indexes within its own binding - so
+// this is purely a host-side offset, applied in TextureDescriptor() and nowhere
+// else. constant_buffers.cpp never allocates more chunks than this.
+//
+// Vulkan only. D3D12 reaches guest constants through a real constant buffer
+// already (the packoffset path in shader_common.h), so it needs no chunk
+// descriptors and must keep its texture indices where they are.
+#if defined(REBLUE_D3D12)
+constexpr u32 kConstantChunkDescriptors = 0;
+#else
+constexpr u32 kConstantChunkDescriptors = 8;
+#endif
+
+// Where texture slot `slot` actually lives in the physical descriptor set.
+// Every setTexture on the texture set goes through this; the bindless slot
+// allocator above is unchanged and still hands out 0-based texture slots.
+inline u32 TextureDescriptor(u32 slot) {
+  return kConstantChunkDescriptors + slot;
+}
+
 // First free slot in used[start_index..end), marked used, returned. on_full
 // when none free. Caller holds the heap's mutex.
 inline u32 BindlessAllocateSlot(std::vector<bool> &used, u32 start_index,

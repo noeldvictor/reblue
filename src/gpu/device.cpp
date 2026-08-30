@@ -535,7 +535,7 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       return false;
     }
     s.texture_descriptor_set->setTexture(
-        slot, bb->texture, plume::RenderTextureLayout::SHADER_READ,
+        TextureDescriptor(slot), bb->texture, plume::RenderTextureLayout::SHADER_READ,
         bb->textureView.get());
     bb->descriptorIndex = slot;
 
@@ -684,7 +684,7 @@ GuestTexture *GetOrCreateDebugTexture() {
     delete t;
     return nullptr;
   }
-  s.texture_descriptor_set->setTexture(slot, t->texture,
+  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), t->texture,
                                        plume::RenderTextureLayout::SHADER_READ,
                                        t->textureView.get());
   t->descriptorIndex = slot;

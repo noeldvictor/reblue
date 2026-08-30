@@ -104,7 +104,7 @@ bool BuildNullTextureDescriptors(VideoState &s) {
     }
     BD_INFO("[device] null tex {}: setTexture", i);
     s.texture_descriptor_set->setTexture(
-        i, texture.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
+        TextureDescriptor(i), texture.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
     BD_INFO("[device] null tex {}: done", i);
     s.null_textures[i] = std::move(texture);
     s.null_texture_views[i] = std::move(view);
@@ -136,7 +136,14 @@ bool BuildPipelineLayout(VideoState &s) {
   BD_INFO("[device] tex_set_builder.begin");
   tex_set_builder.begin();
   BD_INFO("[device] tex_set_builder.addTexture");
-  tex_set_builder.addTexture(0, kBindlessTextureCount);
+  // Ahead of the texture array: the boundless range has to be last, so the
+  // constant chunks take bindings 0 and the textures move to 1. Every texture
+  // descriptor index shifts by kConstantChunkDescriptors as a result, which is
+  // what TextureDescriptor() applies.
+  if (kConstantChunkDescriptors > 0)
+    tex_set_builder.addByteAddressBuffer(0, kConstantChunkDescriptors);
+  tex_set_builder.addTexture(kConstantChunkDescriptors > 0 ? 1 : 0,
+                             kBindlessTextureCount);
   BD_INFO("[device] tex_set_builder.end");
   tex_set_builder.end(true, kBindlessTextureCount);
 

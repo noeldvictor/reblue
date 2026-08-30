@@ -7,6 +7,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include "gpu/bindless_allocator.h"
 #include "gpu/frame.h"
 
 #include <memory>
@@ -120,7 +121,7 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
     delete t;
     return nullptr;
   }
-  s.texture_descriptor_set->setTexture(slot, t->texture,
+  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), t->texture,
                                        plume::RenderTextureLayout::SHADER_READ,
                                        t->textureView.get());
   t->descriptorIndex = slot;

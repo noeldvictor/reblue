@@ -45,7 +45,7 @@ void DrainDescriptorSlotsLocked(VideoState &s, u32 slot) {
   for (const auto &d : s.descriptor_graveyard[slot]) {
     if (s.texture_descriptor_set) {
       s.texture_descriptor_set->setTexture(
-          d.slot, s.null_textures[d.null_index].get(),
+          TextureDescriptor(d.slot), s.null_textures[d.null_index].get(),
           plume::RenderTextureLayout::SHADER_READ,
           s.null_texture_views[d.null_index].get());
     }
@@ -110,7 +110,7 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
              kBindlessTextureCount);
     return kInvalidDescriptorIndex;
   }
-  s.texture_descriptor_set->setTexture(slot, tex->texture,
+  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), tex->texture,
                                        plume::RenderTextureLayout::SHADER_READ,
                                        tex->textureView.get());
   tex->descriptorIndex = slot;
@@ -129,7 +129,7 @@ void SetBindlessTextureLocked(VideoState &s, u32 slot,
   if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
     return;
   s.texture_descriptor_set->setTexture(
-      slot, texture, plume::RenderTextureLayout::SHADER_READ, view);
+      TextureDescriptor(slot), texture, plume::RenderTextureLayout::SHADER_READ, view);
 }
 
 void Video::SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
@@ -139,7 +139,7 @@ void Video::SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
   if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
     return;
   s.texture_descriptor_set->setTexture(
-      slot, texture, plume::RenderTextureLayout::SHADER_READ, view);
+      TextureDescriptor(slot), texture, plume::RenderTextureLayout::SHADER_READ, view);
 }
 
 // Registers a multiview surface's *resolved* companion as its sampled image, so
@@ -157,7 +157,7 @@ u32 Video::BindResolvedSRV(GuestTexture *tex) {
     BD_ERROR("Bindless heap full, multiview resolve SRV dropped");
     return kInvalidDescriptorIndex;
   }
-  s.texture_descriptor_set->setTexture(slot, tex->resolvedTexture,
+  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), tex->resolvedTexture,
                                        plume::RenderTextureLayout::SHADER_READ,
                                        tex->textureView.get());
   tex->descriptorIndex = slot;
