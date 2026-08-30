@@ -1,10 +1,10 @@
-# Fusing lvlx/lvrx/vor: built, and it fires on 1.2% of the idiom
+# Fusing lvlx/lvrx/vor: two attempts, both reverted, and why
 
-2026-08-30. The largest X360-pattern removal still available in the guest. It was implemented in the
-forked SDK, it compiles, it is correct, and it is **off by default and nearly inert** - because the
-assumption the whole design rests on turned out to be false, and that was only discovered by
-measuring the guest rather than reasoning about it. Written up so the next attempt starts from the
-measurement instead of the idea.
+2026-08-30. The largest X360-pattern removal still available in the guest. Two implementations were
+written in the forked SDK, both compiled, both ran, and **both are reverted** - the first fired on
+1.2% of the idiom and the second on none of it. Each failed for a concrete reason that was invisible
+until the guest was measured rather than reasoned about. Written up so the next attempt starts from
+the measurements instead of the idea.
 
 ## What the pattern costs
 
@@ -90,6 +90,42 @@ real analysis pass, not a peephole.
 
 The scaffold is kept because the detection, the block-containment check and the flag plumbing are
 the parts that were fiddly, and they are correct. What is missing is the scan.
+
+## The forward scan was tried too, and it cannot be done this way
+
+The obvious repair for the adjacency problem is to scan forward inside the block for the matching
+`lvrx` and `vor`, refusing whenever an intervening instruction might disturb the registers involved.
+Doing that soundly needs to know which operand slots an instruction *writes*, and the disassembler
+hands back `uint32_t operands[8]` with no roles - so the conservative version was tried instead: bail
+if a register number appears anywhere in an intervening instruction.
+
+**It never fires once.** Instrumented over the whole guest: 2358 `lvlx` sites, 0 matching `lvrx`
+found. The reason is specific and worth writing down, because it is invisible until measured:
+
+- In `lvlx v8,0,r4` the base register field is **`r0`** - the encoding's "no base register, treat as
+  zero". So `rA == 0`.
+- `operands[8]` is **zero-filled** for slots an instruction does not use.
+- So "does this instruction mention register 0" is true of very nearly every instruction, and the
+  scan bails on the first one every time.
+
+Distinguishing "slot 2 holds register r0" from "slot 5 is unused" requires the per-opcode operand
+descriptors, which is the same role information the sound version needed in the first place. The
+conservative shortcut does not exist.
+
+**Both attempts are reverted.** The adjacent matcher fired on 28 of 2358 sites and the forward scan
+on none, so neither earns its place in the tree; carrying a codegen path that never executes is
+worse than not having one. What survives is this note.
+
+## What a real attempt needs
+
+1. Operand role information - binutils-style `powerpc_opcode` carries operand descriptor indices, so
+   the data is there; it needs plumbing through `ppc_insn` or a lookup beside it.
+2. A block-local liveness scan built on that, not a "mentions" heuristic.
+3. Validation on ARM64 before it is enabled anywhere, per below.
+
+Worth doing when someone has a device in front of them, and not before: the payoff is real (2358
+sites, each currently four loads, two shuffles, two stores and an OR) but every failure mode is a
+silent miscompile.
 
 ## Why it stays off
 
