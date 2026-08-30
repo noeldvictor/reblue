@@ -132,6 +132,13 @@ fi
 
 echo
 echo "next:"
+echo "  python tools/perf_summary.py $OUT/perf.csv                 # field frames, not the tail"
+echo
+echo "  To compare a change on the device, do not run it twice - this workload"
+echo "  drifts far more than that can survive. Pass an A/B instead:"
+echo "     bash tools/verify_quest.sh bd_ab_flag=bd_cull_early,bd_ab_period=240"
+echo "  and perf_summary will report the two arms from the one run."
+echo
 echo "  python tools/symbolize_profile.py $OUT/guest_profile.txt   # what the guest spends its time on"
 echo "  python tools/stereo_check.py --raw $OUT/capture.raw        # does stereo still have depth"
 echo "  # and look at the capture. A frame-time number is not a substitute."
