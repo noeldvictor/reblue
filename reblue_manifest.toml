@@ -35,9 +35,25 @@ skip_lr = true
 ctr_as_local = true
 xer_as_local = true
 cr_as_local = true
+
+# The safe 96.7% of what non_argument_as_local would have given us.
+#
+# That flag is four independent changes wearing one name, and it is disabled
+# below because it kills the guest's IO path 0.2s after the VFS mounts. Counted
+# over generated/: r11 is 632,902 ctx accesses (85.1% of the flag's value) with
+# 16 functions that textually read it before writing it, and f0 is 85,929
+# (11.6%) with none. r12 is 22,833 (3.1%) with 6,208 such functions - and its
+# hazard has a named cause, `mflr r12` emitted as a comment under skip_lr, so
+# the next instruction reads a register nothing wrote.
+#
+# So r11 and f0 land and r12 stays out. Each is independently switchable, which
+# is what makes the remaining risk bisectable instead of all-or-nothing.
+scratch_r11_as_local = true
+scratch_f0_as_local = true
 reserved_as_local = true
 non_volatile_as_local = true
-# non_argument_as_local: DO NOT ENABLE. It miscompiles the guest.
+# non_argument_as_local: DO NOT ENABLE as a whole - see scratch_r11/f0 above,
+# which land 96.7% of its value safely. The combined flag still miscompiles.
 #
 # Enabling it cuts ctx. accesses across generated/ by 36% (2,049,797 ->
 # 1,306,101), which looked like a large free win. It is not: on device the game
