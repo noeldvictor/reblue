@@ -62,9 +62,39 @@ is not accepting commands. The resolve has to go somewhere the command list is p
 and the surface is still in `SHADER_READ`-able state, which means inside the present recording
 itself rather than in the routine that picks its source. Reverted.
 
-So the shape of the fix is known and its location is not: resolve the scene target once more before
-present reads it, from a point inside the recording. `RecordPresentPass` is the obvious candidate
-and was not tried.
+`RecordPresentPass` is the right place and the change is now in: it already issues barriers and
+discards, so the command list is provably open. With it, the log goes from
+
+```
+[mv] resolved 120x67 to side-by-side (501 times)      # bloom, every frame
+```
+
+to
+
+```
+[mv] resolved 1920x1080 to side-by-side (501 times)   # the scene target, every frame
+```
+
+**The scene target is now resolved every frame, and the frame is still black.** So that was a real
+bug and not the last one.
+
+## What the debug cvars then eliminated
+
+`bd_mv_debug_clear` paints the companion magenta before the copy draws - and the draws then run over
+it, so a black result means the pass *and* the draws execute and simply sample nothing. It is not a
+pass that never runs.
+
+`bd_mv_debug_known_srv` makes the copy sample the surface's own descriptor - the one the rest of the
+renderer uses and which is known to work - instead of the per-eye views this file registers. **Still
+black.** So the per-eye view registration is not the fault either, which is the fifth candidate
+eliminated and the one most people would have reached for.
+
+What is left is that the layered surface being resolved has no content in it at all. The scene is
+drawn with multiview pipelines into a `viewMask=3` framebuffer, and the surface present hands the
+resolve is apparently not the surface that received it. `SelectPresentSource` picks between
+`last_drawn_rt`, `back_buffer_surface`, `frontBuffer` and `last_resolved_dst`, and under multiview
+that chain has not been checked. **Start there**: log which surface `SelectPresentSource` returns and
+compare it against the one the scene draws bound, rather than assuming they are the same object.
 
 ## How to reproduce in 3 minutes, no device
 

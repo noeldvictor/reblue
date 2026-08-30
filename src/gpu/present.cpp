@@ -189,6 +189,25 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
                        plume::RenderTexture *back,
                        plume::RenderFramebuffer *back_fb) {
   BD_GPU_ZONE("RecordPresentPass");
+
+  // Flatten a still-dirty multiview target, because nothing else will.
+  //
+  // ResolveMultiviewSurfaceLocked otherwise runs only when the render target
+  // changes *away* from a dirty layered surface, and the scene target is still
+  // bound when the frame ends - so it never takes that path. Measured: the
+  // resolve fired 501 times on a 120x67 bloom target and never once on the
+  // 1920x1080 surface the scene draws into, while present reads
+  // rt->resolvedTexture and found a companion nothing had written. That is the
+  // black frame under bd_stereo_multiview.
+  //
+  // Here rather than in SelectPresentSource, which is where this was tried
+  // first: that routine only picks the surface and runs outside the window in
+  // which the command list accepts commands, so recording a resolve from it
+  // faults. This function is already issuing barriers and discards, so the list
+  // is provably open.
+  if (rt && rt->layers > 1 && rt->multiviewDirty && rt->resolvedTexture)
+    ResolveMultiviewSurfaceLocked(s, rt);
+
   if (rt->layout != plume::RenderTextureLayout::COLOR_WRITE &&
       rt->layout != plume::RenderTextureLayout::SHADER_READ) {
     const bool needs_discard =
