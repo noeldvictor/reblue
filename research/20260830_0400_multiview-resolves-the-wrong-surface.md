@@ -136,11 +136,36 @@ class of bug the comment a few lines above this log already records being found 
 
 The post-chain framebuffers legitimately have no depth. The 1920x1080 scene one must.
 
-**So: find why `ds` is null when the scene's framebuffer is built.** `container` is `ds ? ds : rt`
-and the cache entry lives on the depth surface, so a null `ds` there is not just a missing
-attachment - it changes which surface owns the cache entry. Start at the call site that passes `ds`
-into `BindDrawFramebuffer` under multiview and check whether the depth surface is being dropped
-because it is layered, or never bound in the first place.
+### But `ds` is not null where it is chosen - the draw path is not building these
+
+`ResolveEffectiveTargets` sets `ds = s.depth_stencil` and only discards it when it has no texture.
+Logged at the moment a layered framebuffer is created:
+
+```
+LAYERED fb 1920x1080 rtLayers=2 ds=null | s.depth_stencil=0001BBCACCD0 tex=yes layers=2 1920x1080
+```
+
+**`s.depth_stencil` is a valid two-layer 1920x1080 surface with a texture, and `ds` still arrived
+null.** That cannot come from `ResolveEffectiveTargets`, so these framebuffers are being built by a
+path that passes `nullptr` explicitly - present's late clear does exactly that
+(`GetFramebuffer(s, rt, nullptr)`).
+
+Widening the log settles it: **40 layered framebuffers are created in a run and not one of them has
+a depth attachment.** So the draw path never creates a layered framebuffer at all.
+
+That is the thing to explain next, and it has two candidate shapes:
+
+1. `rt->layers` is 1 when `BindDrawFramebufferLocked` runs, so the scene's draw framebuffer is built
+   single-view and the multiview pipelines are bound into it - a `viewMask` mismatch, which is
+   undefined and silent, and is the same failure the comment in this file already records for the
+   colour side.
+2. The scene's draw framebuffer is a **cache hit** from before the surface became layered.
+   `GetFramebuffer` keys on `container->framebuffers[rt->texture]`, so an entry built while the
+   target was mono is reused unchanged once it is not. Nothing in the key mentions the layer count.
+
+(2) would explain the whole symptom without anything else being wrong, and it is cheap to test: log
+`rt->layers` and hit/miss inside `BindDrawFramebufferLocked`. If it is (2), the fix is to include the
+layer count in the cache key or drop the entries when a surface is re-created with a different one.
 
 ## Superseded lead: the depth attachment The framebuffer log reads
 `rtLayers=2 dsLayers=0 -> viewMask=3` - colour is layered and there is no depth attachment on that

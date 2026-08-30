@@ -62,11 +62,18 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
     // target paired with a single-layer or absent depth attachment is a
     // render-pass incompatibility, and it is the one class of mismatch that has
     // already produced this exact symptom once on the colour side.
-    if (fb_layers > 1 && n.fetch_add(1, std::memory_order_relaxed) < 8)
-      BD_INFO("[mv] LAYERED fb {}x{} rtLayers={} ds={} dsLayers={} -> viewMask={}",
+    if (fb_layers > 1 && n.fetch_add(1, std::memory_order_relaxed) < 40)
+      BD_INFO("[mv] LAYERED fb {}x{} rtLayers={} ds={} dsLayers={} | "
+              "s.depth_stencil={:012X} tex={} layers={} {}x{} -> viewMask={}",
               rt ? rt->width : 0u, rt ? rt->height : 0u,
               rt ? rt->layers : 0u, ds ? "yes" : "null",
-              ds ? ds->layers : 0u, desc.viewMask);
+              ds ? ds->layers : 0u,
+              u64(uintptr_t(s.depth_stencil)),
+              (s.depth_stencil && s.depth_stencil->texture) ? "yes" : "no",
+              s.depth_stencil ? s.depth_stencil->layers : 0u,
+              s.depth_stencil ? s.depth_stencil->width : 0u,
+              s.depth_stencil ? s.depth_stencil->height : 0u,
+              desc.viewMask);
   }
   const plume::RenderTexture *color_attachments[1];
   if (rt) {
