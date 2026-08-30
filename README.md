@@ -35,9 +35,11 @@ can wander around and look at it instead of fighting things.
 
 Roughly in priority order. **Blue Dragon renders in stereo 3D on a Quest 2, with head tracking and
 Touch controllers, and a new game starts.** Stereo has real depth - measured off a captured frame as
-crossed disparity, near geometry separating 16px more than distant. It runs at 24.5 fps against the
-game's native 30, so it is not comfortable yet, and nobody has worn it for long enough to say more
-than that. A clone needs two things before it can
+crossed disparity, near geometry separating 16px more than distant. It is **not playable yet** - roughly 8-10 fps at full
+render scale against the game's native 30 - and the quarter-scale setting that reaches 30 reads as
+blurry through the lenses, so it is not a fix. The bottleneck is the recompiled guest running on the
+CPU, not the GPU and not VR: the GPU executes a whole frame's command buffer in about 2ms, and
+switching VR off entirely changes nothing. A clone needs two things before it can
 build — the ReXGlue SDK (a public release) and `default.xex` from your own disc, which
 `tools/extract_xex.py` lifts out of an ISO in under a second without copying it.
 
@@ -58,7 +60,7 @@ build — the ReXGlue SDK (a public release) and `default.xex` from your own dis
 | — **the game renders on a Quest 2** | **Working** | Title screen up: "press START", the 2007 Mistwalker/Microsoft copyright lines. Guest code executing, VFS serving the discs, shaders compiling, frames presenting. |
 | **Quest 2 VR** | **Stereo 3D, in a projection layer** | The scene is drawn once per eye with a real eye offset, so it has depth rather than being a screen hanging in front of you. |
 | — performance, title screen | **30 fps, the game's native rate** | Was 6.7. The renderer was drawing a 1280x720 game at the 3664x1920 headset panel resolution, and the flat Android present - a surface a headset never shows - cost 124ms of every 150ms frame. |
-| — performance, in game | **28.9 fps mono, 24.5 stereo** | Was 5.9. **The GPU half is fill-bound**: clipping the scissor to 25% takes the fence from 141ms to 0.1ms *while the draw count rises*, so fragments are the entire GPU cost and draws are free. Best mono config is `bd_render_scale=25`, `bd_reflections=false`, `bd_cull_distance=350` at 60Hz - the game's native rate. Stereo costs a pacing tier: the CPU barely moves (19.0 -> 20.2ms) but the frame goes 34.6 -> 50.0ms, so the cost is GPU work that the fence never shows. Trimming fill reaches 40.8ms. Getting stereo into the 33.3ms tier is the next job. |
+| — performance, in game | **Not playable, and the diagnosis was wrong** | Around 8-10 fps at full render scale, ~20 at quarter. This row used to say the frame was fill-bound, on the strength of a scissor test. It is not: measured with real GPU timers the **GPU executes the whole command buffer in ~2ms of a ~100ms frame**, forcing every tile load and depth store to `DONT_CARE` changes nothing, and culling almost the entire scene away still costs 73ms against 12ms of our own work. The cost is the recompiled guest on the CPU. See [research/20260829_2300_the-gpu-is-not-the-bottleneck.md](research/20260829_2300_the-gpu-is-not-the-bottleneck.md). |
 | — projection layer | **Working, captured** | Replaces the floating quad so the world surrounds you. Confirmed by capturing the frame handed to the compositor and looking at it. |
 | — character-anchored camera | **Does not work** | `SubmitCharacter()` is never called, so third-person and first-person quietly fall back to the game's own camera. |
 | — controllers | **Working** | Touch controllers are not Android gamepads — they exist only as OpenXR actions, which is why SDL reported no pad and `adb input keyevent` did nothing. 13 actions, Touch bindings, presented to the guest as a 360 pad. |
@@ -73,7 +75,7 @@ All reach the game through `args.txt` beside the game data on Android, or the pr
 
 | cvar | What it does |
 | --- | --- |
-| `bd_render_scale` | Scene at N% per axis. 50 quarters the fragment cost. **Verified.** |
+| `bd_render_scale` | Scene at N% per axis. Still the largest single lever on frame time, though not for the reason first recorded - the GPU is nearly idle either way, so the effect is most likely memory bandwidth shared with a guest that is itself memory-bound. **25 reads as blurry gibberish through the lenses**, which is the first thing a wearer said about it, so do not treat it as a free win. |
 | `bd_reflections` | Off pins the planar reflection, which re-renders the scene, to its floor. **Verified.** |
 | `bd_shadows` | Off renders the sun shadow map at 64x64. Unverified - the draw census cannot see a depth-only target. |
 | `bd_stereo` | Submits every scene draw twice, one viewport per eye. This is what gives depth. |
@@ -81,7 +83,7 @@ All reach the game through `args.txt` beside the game data on Android, or the pr
 | `bd_capture_after_s` | Writes the composited frame to `logs/capture/` N seconds in. The only way to see what a headset is actually being shown. |
 | `bd_vr_anchor_distance` | Game units from the follow camera to the party leader, for the anchored camera modes. |
 | `bd_tourist_mode` | Full HP and MP while walking the field. |
-| `bd_debug_fill_scale` | Diagnostic. Shrinks the scissor without touching the viewport, so only the fragment count moves. This is what proved the frame fill-bound. |
+| `bd_debug_fill_scale` | Diagnostic. Shrinks the scissor without touching the viewport, so only the fragment count moves. It was once read as proving the frame fill-bound; re-measured, cutting fragments to a sixteenth barely moves the frame. |
 
 `python tools/bench_quest.py all` runs the verified levers on a connected Quest, one variable at a
 time, and prints a comparison table. It builds nothing.
@@ -109,7 +111,16 @@ number. Three things carry that load now, and all three run with nobody in the h
   intents do nothing on this Horizon build and `adb screencap` cannot see compositor layers, so
   before this every VR claim rested on a log line.
 - `tools/stereo_check.py` turns "does stereo have depth" into one command, and is checked against the
-  three real captures that produced its three verdicts.
+  three real captures that produced its three verdicts. `--raw` reads a capture already on disk, so
+  it runs on a desktop build with no headset attached.
+- `bd_sample_profiler` plus `tools/symbolize_profile.py` - **a sampling profiler that works on a
+  Quest**, which `simpleperf` does not: Horizon OS refuses shell perf on this device whatever
+  `perf_event_paranoid` says, so `tools/profile_quest.py` had never produced a profile. A process
+  may always signal its own threads, so this one samples itself and resolves the PCs on the host
+  against the unstripped binary. It works on the desktop build too, where a run costs 170s and no
+  device at all.
+- `bash tools/verify_quest.sh` - install, run, and pull the frame breakdown, per-frame CSV, profile,
+  capture and per-thread CPU split, in one command.
 - Vulkan validation layers, packaged via `EXTRA_LIBS` in `tools/build_apk.sh`.
 
 ## Table of Contents
