@@ -1737,10 +1737,18 @@ game composites into a headset at its native frame rate with working controllers
    **A periodic sample whose period shares a factor with the thing sampled is not a sample** - the
    companion rule to "a bounded log answers what happened first, never what happens".
 
-   Still open: **multiview needs ~7x the separation side-by-side does and nobody knows why.** Both
-   add the same constant to `clip.x`, and a multiview layer is 1920 wide against side-by-side's 960,
-   so it should need *half*, not seven times. See
-   `research/20260830_0700_multiview-has-depth.md`.
+   **The stock default now gives correct stereo on the multiview path**, no tuning:
+   `far -4, near -26`. `bd_stereo_separation` is calibrated on the side-by-side path and the
+   multiview shader needs **23.3x** the same number for the same parallax, so it is converted at the
+   multiview seam - one knob, one meaning. Measured in one field scene, one build, both paths, which
+   is the only comparison this workload supports: side-by-side 0.03 gives 11px of a 960 eye,
+   multiview 0.7 gives 22px of a 1920 layer, the same angle, and the response is linear in between.
+
+   Still open: **why the ratio is 23 and not 1.** Both paths add a constant to `clip.x` and a
+   multiview layer is twice the width of a side-by-side eye, so it should need *half*. Likeliest
+   suspect is the host's constant landing on a coefficient of a position component that is not `w`,
+   which would scale it by a typical guest coordinate - and a Blue Dragon unit is a centimetre,
+   which is the right order of magnitude. See `research/20260830_0700_multiview-has-depth.md`.
 
    **Superseded, kept for the reasoning only:** The post chain was mono
    because `surface_pool` only gave two layers to surfaces at or above a quarter of the design
