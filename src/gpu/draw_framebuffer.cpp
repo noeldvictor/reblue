@@ -406,6 +406,8 @@ bool Video::BindDrawFramebufferLocked() {
   s.bound_fb_ds = ds;
   if (rt) {
     s.last_drawn_rt[slot] = rt;
+    if (ds)
+      s.last_scene_rt[slot] = rt;
     rt->surfaceDrawn = true;
   }
   if (ds)

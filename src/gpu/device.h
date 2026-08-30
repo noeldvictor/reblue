@@ -471,6 +471,11 @@ struct VideoState {
   // source. Per recording slot, so a slot seeds only from its own surface
   // history and the ring never cross-couples into composite feedback.
   GuestTexture *last_drawn_rt[kNumFrames] = {};
+  // The last colour target bound *with a depth attachment* - the scene, as
+  // opposed to the post chain that follows it and ends up in last_drawn_rt.
+  // Only the scene's surface answers "did multiview render", and capturing
+  // last_drawn_rt instead photographed the post output for a whole session.
+  GuestTexture *last_scene_rt[kNumFrames]{};
 
   // BD's depth resolve callers swap SetDepthStencilSurface to the resolve
   // destination first, so s.depth_stencil no longer names what the scene drew

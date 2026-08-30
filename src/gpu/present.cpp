@@ -975,6 +975,13 @@ void Video::Present(GuestTexture *frontBuffer) {
   // answered by looking at it rather than by inferring it from what leaves the
   // resolve.
   const bool force_array = REXCVAR_GET(bd_mv_capture_array);
+  // Photograph the *scene's* layered target, not whatever bound last. They are
+  // different surfaces - the post chain binds after the scene - and capturing
+  // the latter is what made the array look empty for a whole investigation.
+  if (force_array) {
+    if (GuestTexture *scene = s.last_scene_rt[s.recording_slot()])
+      rt = scene;
+  }
   if (force_array && rt && rt->layers > 1) {
     static std::atomic<u32> cn{0};
     if (cn.fetch_add(1, std::memory_order_relaxed) % 600 == 0)

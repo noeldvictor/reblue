@@ -69,29 +69,19 @@ Count into a total and print the total, or filter to the case you care about bef
    measured on ARM64, and the relative costs differ - CLAUDE.md already records
    `bdSceneNodeDrawSingle` measuring 23x on device against 1.9x on desktop. Every number above is a
    desktop number.
-2. **Multiview.** *The "empty array" finding is void* - the capture was photographing the post-chain
-   output, not the scene target. Logged at both ends: the scene clears into guest `B0710` / plume
-   `F27100`, present captures guest `B0310` / plume `F26020`. Fix the capture source first (select
-   the last bind that had a depth attachment, not `last_drawn_rt`), then re-ask. What follows was
-   written before that was known: the array is empty - both layers, max pixel value zero - while
-   pipelines,
-   framebuffers, view masks, the device feature, the resolve and the SRVs are all verified correct.
-   Nine hypotheses checked, nine correct.
+2. **Multiview: the bug is what it was always said to be.** With the capture finally pointed at the
+   scene's target (`last_scene_rt`, the last bind carrying depth - not `last_drawn_rt`, which is the
+   end of the post chain), both layers are **populated and identical**: `mean (0,60,0)` in each.
 
-   The obvious tool is **Vulkan validation layers**, which this project has already used to settle a
-   multiview question in one run after three sessions of inference. Two obstacles, both checked:
-   they are not installed on this machine, and the Khronos
-   `Vulkan-ValidationLayers` releases publish **Android binaries only** - `android-binaries-*.zip`,
-   nothing for Windows. Desktop layers come inside the Vulkan SDK installer, which is a deliberate
-   decision to make rather than a download. On Android the existing route works:
-   `EXTRA_LIBS=/path/to/libVkLayer_khronos_validation.so bash tools/build_apk.sh`, which is a reason
-   to do this on the Quest rather than the desktop.
+   So multiview renders; it just renders the same view twice. That is exactly what CLAUDE.md
+   recorded before this session - "the two layers come out identical, `SV_ViewID` is still not
+   varying the skew" - and a day went past it because the instrument was photographing the wrong
+   texture. The nine checks this session made on pipelines, view masks, the device feature,
+   framebuffers, the resolve and the SRVs were all correct and all beside the point.
 
-   Without them, the discriminating test is a **host draw into the layered scene target** with a
-   multiview pipeline - the resolve already proves host draws into a *single-layer* target work. If
-   a known-good host draw into the layered one also produces nothing, the fault is the multiview
-   render path itself; if it appears, the fault is in the guest pipelines or state feeding it. That
-   separates the two halves without any layer.
+   The work is in XenosRecomp's emitted vertex shader and the per-eye constants, and the shader-cache
+   trap in CLAUDE.md must be read first - a previous session lost a day to the skew sitting in 0 of
+   55 shaders while the C++ looked right.
 3. **The guest CPU**, which is still the largest share and still barely understood. Start from an
    on-device profile, not a desktop one.
 4. **Seeding**, worth 0.42ms of GPU. The provable case - a pending clear that overwrites the surface

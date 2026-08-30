@@ -315,7 +315,44 @@ concluded "both layers empty, max pixel zero" - photographed the post-chain outp
 at. Multiview may be rendering correctly into `B0710` and failing somewhere in the post chain, which
 is a completely different bug from the one this note has been chasing.
 
-## What to do with that
+## With the capture pointed at the scene, the array is not empty
+
+`last_scene_rt` now tracks the last colour target bound *with a depth attachment* - the scene, as
+opposed to the post chain that binds after it - and `bd_mv_capture_array` photographs that:
+
+```
+layer0  mean (0,60,0)  max 60
+layer1  mean (0,60,0)  max 60
+```
+
+**Both layers are populated, and they are identical.**
+
+So the entire "the array is empty, nothing is drawn, not even a clear arrives" line was an artifact
+of photographing the post-chain output. Multiview renders. What it does not do is render *two
+different views* - which is the symptom CLAUDE.md recorded before this session began:
+
+> the two layers come out *identical* - `SV_ViewID` is still not varying the skew, with a fresh
+> shader cache and validation clean.
+
+A day was spent walking past a correct diagnosis because the instrument pointed at the wrong
+texture. The nine "verified correct" checks were all real and all beside the point.
+
+## Where that leaves it
+
+The bug is what it was said to be: **`SV_ViewID` is not varying per view.** That is in XenosRecomp's
+emitted vertex shader and the per-eye constants feeding it, not in the resolve, the surfaces, the
+framebuffers or the pipelines - all of which this session verified at length.
+
+Two things are now better than they were, though:
+
+- `bd_mv_capture_array` plus `last_scene_rt` means the question "what is actually in each eye's
+  layer" is answerable in one desktop run, which it was not before. That is the instrument the
+  `SV_ViewID` work needs.
+- The shader-cache trap is worth re-reading before touching it (CLAUDE.md, "A XenosRecomp change
+  needs two manual steps or it never reaches the device"). A previous session lost a day to the skew
+  sitting in 0 of 55 shaders while the C++ looked right.
+
+## Superseded: what to do with the wrong-array finding
 
 1. **Capture `B0710`, not `last_drawn_rt`.** `bd_mv_capture_array` needs to select the surface the
    scene drew into - the last bind that had a depth attachment - rather than the last bind of any
