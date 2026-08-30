@@ -48,6 +48,19 @@ REXCVAR_DEFINE_BOOL(bd_vr_enabled, false, kCvarGroup,
 // Distance is in game units, where the field camera sits about 150 above the
 // ground - so roughly 100 units to the metre. 0 disables the derivation and
 // restores the old fall-back behaviour.
+// Detail culling: the smallest a node may project before it is dropped.
+//
+// The one kind of culling Blue Dragon has no reason to do. A Xenon command
+// processor made draws nearly free, so the engine submits every node its
+// frustum keeps however small it lands; on an Adreno each of those is a full
+// trip through bdSceneNodeDrawSingle, the single largest consumer of guest CPU
+// on device. 0 disables. Start around 2-4 pixels: below that a node cannot
+// resolve to more than a speck even before the VR render scale shrinks it.
+REXCVAR_DEFINE_DOUBLE(bd_cull_min_pixels, 0.0, kCvarGroup,
+                      "Drop scene nodes whose projected radius is under this "
+                      "many pixels. 0 disables.")
+    .range(0.0, 64.0);
+
 REXCVAR_DEFINE_DOUBLE(bd_vr_anchor_distance, 300.0, kCvarGroup,
                       "Game units from the follow camera to the party leader, "
                       "used to anchor the third- and first-person VR camera "

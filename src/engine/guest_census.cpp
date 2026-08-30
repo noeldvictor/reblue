@@ -16,6 +16,8 @@
 #include <rex/types.h>
 
 #include "core/logging.h"
+#include "gpu/output.h"
+#include "xr/xr_game_camera.h"
 #include "engine/guest_census.h"
 
 REXCVAR_DECLARE(bool, bd_guest_census);
@@ -109,6 +111,7 @@ namespace {
 // silently does nothing is distinguishable from one that is working and simply
 // has nothing to remove.
 std::atomic<u64> g_culled_count{0};
+std::atomic<u64> g_detail_culled{0};
 std::atomic<u64> g_tested_count{0};
 } // namespace
 
@@ -118,6 +121,8 @@ void CensusReportDistinct() {
     return;
   BD_INFO("[census]   sceneNodeDrawSingle distinct r3={} r4={}", g_distinct_r3,
           g_distinct_r4);
+  BD_INFO("[census]   detail cull: {} nodes under bd_cull_min_pixels",
+          g_detail_culled.exchange(0, std::memory_order_relaxed));
   BD_INFO("[census]   distance cull: {} of {} nodes rejected",
           g_culled_count.exchange(0, std::memory_order_relaxed),
           g_tested_count.exchange(0, std::memory_order_relaxed));
@@ -145,6 +150,7 @@ void bdCensusbdEffectEmitterUpdate() { bd::engine::CensusNote(13); }
 
 REXCVAR_DECLARE(f64, bd_cull_bias);
 REXCVAR_DECLARE(f64, bd_cull_distance);
+REXCVAR_DECLARE(f64, bd_cull_min_pixels);
 
 
 // Set by the hook before the visibility test, read by the one after it. Per
@@ -193,6 +199,41 @@ void bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // object - a cliff, a building - does not pop out while the pebble beside it
   // stays.
   g_cull_this_node = (len - f1.f64) > limit;
+  if (g_cull_this_node)
+    return;
+
+  // Detail culling: drop what is too small on screen to be worth a draw.
+  //
+  // This is the one kind of culling a 2006 Xenon engine had no reason to do.
+  // The hardware command processor made draws nearly free, so Blue Dragon
+  // submits every node its frustum test keeps, however small it lands - and on
+  // an Adreno each of those costs a full trip through bdSceneNodeDrawSingle,
+  // which is 23x the next consumer of guest CPU on device.
+  //
+  // The projected radius of a sphere at view-space depth z is
+  // r/z * (height/2) / tan(vfov/2), and everything on the right of that is
+  // known: the centre is already in view space with the camera at the origin,
+  // so there is no matrix and no space conversion to get wrong.
+  const f64 min_px = REXCVAR_GET(bd_cull_min_pixels);
+  if (min_px <= 0.0)
+    return;
+  // +Z forward, D3D9-era left-handed. Anything at or behind the eye is either
+  // already gone or degenerate here, and dividing by it would invert the test.
+  const f64 z = f64(c[2]);
+  if (z <= 1.0)
+    return;
+
+  f32 half_v = 0.0f, aspect = 1.0f;
+  const f64 tan_v = bd::xr::RenderFov(half_v, aspect) && half_v > 0.0f
+                        ? f64(std::tan(half_v))
+                        // Not in VR: Blue Dragon's own vertical half angle.
+                        : 0.4142f;
+  const f64 height = f64(bd::gpu::kDesignCanvasHeight);
+  const f64 radius_px = (f1.f64 / z) * (height * 0.5) / tan_v;
+  if (radius_px < min_px) {
+    g_cull_this_node = true;
+    g_detail_culled.fetch_add(1, std::memory_order_relaxed);
+  }
 }
 
 // Zeroes the visibility result the guest is about to compare against 0, which

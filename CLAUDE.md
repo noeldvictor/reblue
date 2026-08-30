@@ -104,6 +104,28 @@ bdSceneNodeCullTraverse            <- already hooked, for bd_cull_distance
 So the per-node cost is the *work in the function*, not redundant state churn, and the modern
 replacement is to stop calling it per node at all: collect nodes, batch by pipeline, submit once.
 
+### What a renderer rewrite like this actually consists of
+
+Standard practice, and it matches what the numbers here say. These **compound** - each one alone
+moves little, which is why they get built together:
+
+| technique | why it applies here |
+| --- | --- |
+| **State sorting** - group draws by material/pipeline | **715 PSO switches against 2070 draws.** Sorting collapses most of those and cuts descriptor rebinds with them |
+| **Batching + instancing** into `DrawIndirect` | ~1000 individually placed nodes a frame, and 2083 `DrawSingle` calls take only **1270 distinct first arguments** - the repeats are instancing candidates |
+| **Front-to-back depth order** for opaque | Adreno is a tiler; submitting near-first lets early-Z reject before shading, and the frame was proven fill-bound |
+| **Barrier batching** | already partly done; worth checking against the per-draw transition scan |
+
+**Detail culling was tried and measures nothing here.** `bd_cull_min_pixels` drops nodes whose
+projected radius is under N pixels - the one kind of culling a Xenon engine had no reason to do. On
+device the census says `detail cull: 0 nodes` while `distance cull: 837600 of 880650`. The 350-unit
+distance cull already rejects 95% of nodes, so nothing reaching the size test is small enough to
+drop. The two overlap completely. Left in at a default of 0 because it is correct and would matter
+if the distance cull were relaxed, but it is not a lever on its own.
+
+That is the lesson for the rest of this list: **measure what is left after the culls, not what the
+technique would save in isolation.**
+
 ### Rip out the X360 patterns. This is the top priority.
 
 The recompiled code still thinks in 360 terms - big-endian structs, 360 resource layouts, D3D9 call
