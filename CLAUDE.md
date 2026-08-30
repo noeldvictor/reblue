@@ -1596,6 +1596,13 @@ game composites into a headset at its native frame rate with working controllers
    silently relaxes the Android build too.
 
 1. **Two things a user spotted immediately, both real, both open.**
+   - **2D overlays across the eye seam: closed under multiview, verified from a capture.** Every
+     content pass in a `bd_stereo_multiview` frame is `mask=3`, so the hardware replicates each 2D
+     draw into both layers and each eye gets the whole overlay; the only mono passes left are the
+     resolves and the present blit. It was never a 2D problem - it was both stereo paths running at
+     once. `bd_vr_hud_mode` is still the right answer for where a HUD sits in *depth*, which is a
+     separate question. The side-by-side path keeps its own fix, below, and it is still correct
+     there.
    - **2D overlays land across the eye seam, not in each eye**, and this is partly fixed. The
      mechanism: 2D draws fail the `scene_pass` gate, so they were emitted once at full viewport
      width and straddled the join. `VideoState::overlay2D` now marks the guest's glyph batch and
