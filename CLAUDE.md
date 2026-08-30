@@ -410,9 +410,17 @@ nominal configuration measured **3.75 to 6.84ms** `other_ms`. So the rule stands
   with its arm; `tools/perf_summary.py` then reports the two populations separately. Both come from
   one run, one scene and one thermal state, interleaved, so whatever drifts drifts through both.
 
-  It settles in a single run what three pairs of runs could not. `bd_host_sincos`, which two
-  back-to-back reversed pairs made look like a third of the frame, comes out at **+2.9% over 4,857
-  against 4,772 frames** - marginally *slower*, and that is why its default is off.
+  It settles in a single run what three pairs of runs could not. Both of today's headline numbers
+  were wrong and it found both:
+
+  | change | two-run claim | within-run A/B |
+  | --- | --- | --- |
+  | `bd_host_sincos` | -33 to -45% | **+2.9%** (slower; default off) |
+  | `bd_cull_early` | -18% | **-5.6%** (real, overstated 3x) |
+
+  Roughly 4,800 frames an arm in each case. The cull redirect's *mechanism* was never in doubt - it
+  stops computing a visibility test whose result is discarded for 95% of nodes - but a sound
+  mechanism does not make a number right.
 
 ### Building for the desktop, which does work
 

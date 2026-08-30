@@ -153,9 +153,11 @@ pair of runs.
 Three claims made today rest on paired desktop runs and all of them are now suspect at anything
 under about 50%:
 
-- The `-18%` cull redirect. Its draw counts matched within 1.6% and the mechanism is clear - it
-  stops computing a visibility test whose result is discarded for 95% of nodes - but the *number*
-  came from the same method and should be treated as directional rather than exact.
+- The `-18%` cull redirect. **Re-run through the within-run A/B: it is real, and it is -5.6%.**
+  Arm 0 (off) 10.91us/draw over 4,866 frames, arm 1 (on) 10.30 over 4,776. The mechanism was never
+  in doubt - it stops computing a visibility test whose result is discarded for 95% of nodes - but
+  the magnitude was overstated threefold by the two-run method, the same way sincos was overstated
+  into existence.
 - `bd_host_matrix_copy` at "+9.1%, wrong direction". Inside the drift. It says nothing.
 - `bd_host_sincos`, retracted above.
 
