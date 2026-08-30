@@ -31,6 +31,10 @@
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(f64, bd_xr_refresh_rate);
 
+#if defined(__ANDROID__)
+#include <unistd.h>
+#endif
+
 namespace bd::xr {
 
 namespace {
@@ -208,6 +212,15 @@ bool Session::CreateInstance() {
   const size_t requiredExtensions = extensions.size();
   if (REXCVAR_GET(bd_xr_refresh_rate) > 0.0)
     extensions.push_back(XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+  // Without these the runtime leaves the app on its default power profile and
+  // paces it into a low tier no matter how little it draws: measured here at
+  // 13fps with the whole scene culled away, big cores at 77% of their ceiling
+  // and the prime core at 38%. They are the standard Quest setup and the port
+  // had neither.
+  extensions.push_back(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME);
+#if defined(__ANDROID__)
+  extensions.push_back(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME);
+#endif
 
   create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
   create.enabledExtensionNames = extensions.data();
@@ -358,6 +371,7 @@ bool Session::CreateSession(VkInstance_T *instance,
              "xrCreateSession"))
     return false;
   session_ = session;
+  ApplyPerformanceHints();
 
   // STAGE would put the origin on the floor, which is what a room-scale game
   // wants. LOCAL follows the headset's own recentre and is the safer default
@@ -381,6 +395,50 @@ bool Session::CreateSession(VkInstance_T *instance,
   RequestDisplayRefreshRate();
   BD_INFO("OpenXR: session created");
   return true;
+}
+
+void Session::ApplyPerformanceHints() {
+  PFN_xrPerfSettingsSetPerformanceLevelEXT setLevel = nullptr;
+  if (XR_SUCCEEDED(xrGetInstanceProcAddr(
+          AsInstance(instance_), "xrPerfSettingsSetPerformanceLevelEXT",
+          reinterpret_cast<PFN_xrVoidFunction *>(&setLevel))) &&
+      setLevel) {
+    // SUSTAINED_HIGH rather than BOOST: BOOST is documented as a short-lived
+    // burst for transitions and the runtime will pull it back, where a game
+    // wants the highest level it can hold for the whole session.
+    const XrResult cpu =
+        setLevel(AsSession(session_), XR_PERF_SETTINGS_DOMAIN_CPU_EXT,
+                 XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+    const XrResult gpu =
+        setLevel(AsSession(session_), XR_PERF_SETTINGS_DOMAIN_GPU_EXT,
+                 XR_PERF_SETTINGS_LEVEL_SUSTAINED_HIGH_EXT);
+    BD_INFO("[xr] performance level SUSTAINED_HIGH: cpu={} gpu={}",
+            static_cast<int>(cpu), static_cast<int>(gpu));
+  } else {
+    BD_INFO("[xr] XR_EXT_performance_settings unavailable; the runtime keeps "
+            "the app on its default power profile");
+  }
+}
+
+void Session::RegisterThread(int type_raw) {
+#if defined(__ANDROID__)
+  PFN_xrSetAndroidApplicationThreadKHR setThread = nullptr;
+  if (XR_FAILED(xrGetInstanceProcAddr(
+          AsInstance(instance_), "xrSetAndroidApplicationThreadKHR",
+          reinterpret_cast<PFN_xrVoidFunction *>(&setThread))) ||
+      !setThread)
+    return;
+  // Telling the runtime which thread is which is what lets it put them on the
+  // big cores and raise their priority. Left unsaid, the render thread competes
+  // with whatever guest worker threads happen to be runnable.
+  const uint32_t tid = static_cast<uint32_t>(gettid());
+  const XrResult r = setThread(
+      AsSession(session_), static_cast<XrAndroidThreadTypeKHR>(type_raw), tid);
+  BD_INFO("[xr] registered thread {} as type {}: {}", tid, type_raw,
+          static_cast<int>(r));
+#else
+  (void)type_raw;
+#endif
 }
 
 bool Session::PollEvents() {
@@ -431,6 +489,14 @@ bool Session::PollEvents() {
 }
 
 bool Session::BeginFrame(FrameState &out) {
+  static bool thread_registered = false;
+  if (!thread_registered && session_) {
+    thread_registered = true;
+    // BeginFrame runs on the thread that drives the frame loop, so gettid()
+    // here names the renderer without having to plumb it from elsewhere.
+    RegisterThread(3 /* XR_ANDROID_THREAD_TYPE_RENDERER_MAIN_KHR */);
+  }
+
   out = FrameState{};
   if (!running_ || !session_)
     return false;

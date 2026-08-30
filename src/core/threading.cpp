@@ -6,6 +6,7 @@
  */
 #include "core/threading.h"
 
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <mutex>
@@ -33,9 +34,19 @@ std::once_flag g_timer_init;
 
 #if defined(__x86_64__) || defined(_M_X64)
 inline void CpuPause() { _mm_pause(); }
+#elif defined(__aarch64__) || defined(__arm__)
+// The analogue of PAUSE is the YIELD *instruction* - a hint to the core that
+// costs a few cycles. std::this_thread::yield() is sched_yield(), a syscall,
+// and spinning on it turns a wait into a scheduler storm that starves every
+// other thread in the process.
+inline void CpuPause() { __asm__ __volatile__("yield" ::: "memory"); }
 #else
 inline void CpuPause() { std::this_thread::yield(); }
 #endif
+
+// Guest Sleep traffic, so the cost is visible rather than inferred.
+std::atomic<u64> g_sleep_calls{0};
+std::atomic<u64> g_sleep_req_us{0};
 } // namespace
 
 namespace bd {
@@ -83,6 +94,13 @@ void TerminateProcessNow(int exit_code) {
 u32 Sleep_hook(u32 ms) {
   bd::EnableHighResTimer();
 
+  const u64 n = g_sleep_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+  g_sleep_req_us.fetch_add(u64(ms) * 1000u, std::memory_order_relaxed);
+  if ((n % 20000u) == 0u) {
+    BD_INFO("[sleep] {} guest Sleep() calls, {} ms requested in total", n,
+            g_sleep_req_us.load(std::memory_order_relaxed) / 1000u);
+  }
+
   if (ms == 0) {
     std::this_thread::yield();
     return 0;
@@ -91,6 +109,16 @@ u32 Sleep_hook(u32 ms) {
   auto target =
       std::chrono::steady_clock::now() + std::chrono::milliseconds(u32(ms));
 
+#if defined(__ANDROID__)
+  // No busy-wait tail here. Sleep is a floor, not a deadline: the guest asked
+  // to be woken no earlier than ms, and Linux honours that to well under the
+  // 1.5ms guard band this used to spin out. Spinning it instead cost a full
+  // core per sleeping guest thread - with five of them the render thread could
+  // not get scheduled, which showed up as a 77ms "GPU fence wait" on a frame
+  // whose command buffer measured 2ms.
+  std::this_thread::sleep_for(std::chrono::milliseconds(u32(ms)));
+  (void)target;
+#else
   if (ms >= 2) {
     std::this_thread::sleep_for(std::chrono::milliseconds(u32(ms)) -
                                 std::chrono::microseconds(1500));
@@ -100,6 +128,7 @@ u32 Sleep_hook(u32 ms) {
 
   while (std::chrono::steady_clock::now() < target)
     CpuPause();
+#endif
 
   return 0;
 }

@@ -35,6 +35,13 @@ struct SlotTiming {
   std::vector<Cat> journal;
   u32 used = 0;
   bool pending = false;
+  // The last query index is reserved for the frame-end timestamp so the total
+  // stays honest once the per-segment journal saturates. Without it a frame
+  // with more transitions than the pool holds reports only the time up to the
+  // point it filled - which read as a 2ms GPU on a frame the CPU waited 74ms
+  // for, and sent two sessions looking for the cost on the wrong side.
+  bool end_written = false;
+  bool saturated = false;
 };
 
 SlotTiming g_slots[kNumFrames];
@@ -46,8 +53,10 @@ bool g_supported = !g_mvk;
 bool g_open = false;
 
 void WriteMark(SlotTiming &st, plume::RenderCommandList *cmd, Cat closing) {
-  if (st.used >= kQueryCount)
-    return; // saturated: tail lumps into last seg
+  if (st.used >= kQueryCount - 1) {
+    st.saturated = true;
+    return; // tail lumps into the last segment; the total is still exact
+  }
   cmd->writeTimestamp(st.pool.get(), st.used++);
   st.journal.push_back(closing);
 }
@@ -99,6 +108,8 @@ void FrameBegin(plume::RenderDevice *device, plume::RenderCommandList *cmd,
   }
   st.pending = false;
   st.used = 0;
+  st.end_written = false;
+  st.saturated = false;
   st.journal.clear();
   st.journal.push_back(Cat::Inter); // slot 0 = frame start marker
   cmd->resetQueryPool(st.pool.get(), 0, kQueryCount);
@@ -121,6 +132,18 @@ void FrameEnd(plume::RenderCommandList *cmd) {
     return;
   auto &st = g_slots[g_active_slot];
   WriteMark(st, cmd, g_cat);
+  // Always close the frame, even when the journal filled.
+  cmd->writeTimestamp(st.pool.get(), kQueryCount - 1);
+  st.end_written = true;
+  if (st.saturated) {
+    static bool warned = false;
+    if (!warned) {
+      warned = true;
+      BD_INFO("[perf] gpu timing journal saturated at {} queries; per-category "
+              "split is partial but gpu_total_ms spans the whole frame",
+              kQueryCount);
+    }
+  }
   // No tail padding: writeTimestamp resolves ONE query per call, so padding to
   // kQueryCount cost 512 EndQuery + ResolveQueryData every frame to fill slots
   // nothing reads. queryResults still copies and rescales the whole pool, so
@@ -160,7 +183,10 @@ void CollectGPUTimings(u32 slot) {
       resolve_ns += r[i] - r[i - 1];
     }
   }
-  RecordGPUTime((r[n - 1] - r[0]) * 1e-6, draw_ns * 1e-6, resolve_ns * 1e-6);
+  const u64 end_ns = st.end_written ? r[kQueryCount - 1] : r[n - 1];
+  const f64 total_ms = (end_ns > r[0]) ? (end_ns - r[0]) * 1e-6
+                                       : (r[n - 1] - r[0]) * 1e-6;
+  RecordGPUTime(total_ms, draw_ns * 1e-6, resolve_ns * 1e-6);
 }
 
 } // namespace bd::gpu

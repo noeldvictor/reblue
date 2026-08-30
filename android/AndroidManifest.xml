@@ -53,5 +53,11 @@
                 <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
         </activity>
+
+        <!-- simpleperf refuses to attach to an app that is neither debuggable
+             nor profileable, whatever perf_event_paranoid says. Without this
+             every profiling attempt returns "Permission denied", which is why
+             tools/profile_quest.py had never actually produced a profile. -->
+        <profileable android:shell="true" />
     </application>
 </manifest>

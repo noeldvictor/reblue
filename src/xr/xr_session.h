@@ -89,6 +89,11 @@ public:
   // Pumps the event queue and tracks session state. Call once per frame before
   // BeginFrame; returns false when the runtime has asked us to exit.
   bool PollEvents();
+  // Asks the runtime for a sustained-high power profile, and tells it which
+  // host thread drives the frame loop. Both are no-ops if the runtime lacks
+  // the extension.
+  void ApplyPerformanceHints();
+  void RegisterThread(int type_raw);
 
   // True between xrBeginSession and xrEndSession. While false, do not render -
   // just keep polling, or the runtime will never bring the session up.
