@@ -374,6 +374,25 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
+### The FLAT present path renders black - on the Thor and the desktop. The VR path is fine.
+
+Not a desktop bug. Measured 2026-08-30 on three targets:
+
+| target | present path | renders |
+| --- | --- | --- |
+| Quest 2 | OpenXR, XR swapchain | **yes** |
+| AYN Thor (Adreno 740) | flat swapchain | **no** |
+| Desktop Vulkan | flat swapchain | **no** |
+
+Two very different GPUs and three independent instruments (`adb exec-out screencap`,
+`tools/shot_window.ps1`, the in-app capture) agree. It predates the constant rewrite. See
+`research/20260830_1900_the-thor-runs-and-the-flat-path-is-black.md`.
+
+**The AYN Thor is otherwise unblocked and fast.** `Int64` is gone, so shader compilation failures
+went to **0** and pipeline failures 21,615 -> 245, and it runs a field scene at
+`dt 33.75ms | gpu_total 21.50ms | 833 draws` - **29.6 fps** against the Quest's 15.0. It renders
+nothing only because the flat path does not present.
+
 ### Desktop 3D is broken, it predates today's work, and it is NOT a blocker
 
 Bisected 2026-08-30 with a capture gated on draw count: the desktop Vulkan build renders an
