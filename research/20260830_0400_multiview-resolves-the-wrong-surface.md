@@ -114,7 +114,35 @@ Six things are now ruled out, each by measurement rather than reading:
 So the layered surface genuinely has no content: the draws are issued, into a correctly-masked
 framebuffer, with correctly-masked pipelines, and nothing lands.
 
-**The next lead is the depth attachment.** The framebuffer log reads
+## Root cause candidate: the layered framebuffers have no depth attachment
+
+Checked, and it is not subtle:
+
+```
+[mv] LAYERED fb 1920x1080 rtLayers=2 ds=null dsLayers=0 -> viewMask=3
+[mv] LAYERED fb  960x540  rtLayers=2 ds=null dsLayers=0 -> viewMask=3
+[mv] LAYERED fb  480x270  rtLayers=2 ds=null dsLayers=0 -> viewMask=3
+```
+
+**Every layered framebuffer has `ds=null`, including the scene target**, while
+`[mv] layered surface 1920x1080 layers=2 depth=true` says a two-layer depth surface was created. It
+exists and is never attached.
+
+A graphics pipeline built with a depth target format, bound into a render pass that has no depth
+attachment, is a render-pass incompatibility. Vulkan calls that undefined; in practice it is silent,
+produces no validation error and draws nothing - which is precisely the symptom, and precisely the
+class of bug the comment a few lines above this log already records being found and fixed on the
+*colour* side. The same mistake, one attachment over.
+
+The post-chain framebuffers legitimately have no depth. The 1920x1080 scene one must.
+
+**So: find why `ds` is null when the scene's framebuffer is built.** `container` is `ds ? ds : rt`
+and the cache entry lives on the depth surface, so a null `ds` there is not just a missing
+attachment - it changes which surface owns the cache entry. Start at the call site that passes `ds`
+into `BindDrawFramebuffer` under multiview and check whether the depth surface is being dropped
+because it is layered, or never bound in the first place.
+
+## Superseded lead: the depth attachment The framebuffer log reads
 `rtLayers=2 dsLayers=0 -> viewMask=3` - colour is layered and there is no depth attachment on that
 framebuffer at all, while `[mv] layered surface 1920x1080 layers=2 depth=true` says a two-layer
 depth surface was created. Vulkan requires every attachment in a multiview render pass to have at

@@ -58,10 +58,15 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   desc.viewMask = fb_layers > 1 ? 0x3u : 0u;
   {
     static std::atomic<int> n{0};
-    if (n.fetch_add(1, std::memory_order_relaxed) < 24)
-      BD_INFO("[mv] framebuffer {}x{} rtLayers={} dsLayers={} -> viewMask={}",
+    // Only the layered ones, and beyond the first few: a multiview colour
+    // target paired with a single-layer or absent depth attachment is a
+    // render-pass incompatibility, and it is the one class of mismatch that has
+    // already produced this exact symptom once on the colour side.
+    if (fb_layers > 1 && n.fetch_add(1, std::memory_order_relaxed) < 8)
+      BD_INFO("[mv] LAYERED fb {}x{} rtLayers={} ds={} dsLayers={} -> viewMask={}",
               rt ? rt->width : 0u, rt ? rt->height : 0u,
-              rt ? rt->layers : 0u, ds ? ds->layers : 0u, desc.viewMask);
+              rt ? rt->layers : 0u, ds ? "yes" : "null",
+              ds ? ds->layers : 0u, desc.viewMask);
   }
   const plume::RenderTexture *color_attachments[1];
   if (rt) {
