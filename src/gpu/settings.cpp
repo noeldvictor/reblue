@@ -453,6 +453,11 @@ REXCVAR_DEFINE_BOOL(bd_thread_policy, true, kCvarGroup,
 // are marshalled guest loads and cost relatively more.
 REXCVAR_DEFINE_BOOL(bd_host_sincos, false, kCvarGroup,
                     "Compute bdSinCos on the host instead of the guest.");
+// bdMatrixCopyAligned is 2.0% of samples and copies 64 bytes with four rounds
+// of the unaligned-vector idiom. Whether that is exactly a byte copy is checked
+// by bd_verify_guest_math rather than assumed.
+REXCVAR_DEFINE_BOOL(bd_host_matrix_copy, false, kCvarGroup,
+                    "Copy matrices on the host instead of the guest.");
 REXCVAR_DEFINE_BOOL(bd_verify_guest_math, false, kCvarGroup,
                     "Compare host maths replacements against the guest.");
 REXCVAR_DEFINE_BOOL(bd_cull_early, true, kCvarGroup,

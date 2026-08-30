@@ -128,6 +128,30 @@ character, foliage, cliffs and shadows all present and nothing popping.
 
 `bd_cull_early` reverts to the old ordering without a rebuild.
 
+## The measurement floor, which decides what is worth trying next
+
+Cross-run variance on the desktop is around +/-20%: the same binary measured 4.20, 5.93 and 6.69ms
+`other_ms` depending on where autoplay had wandered. So **a change worth less than about 2% cannot
+be resolved by comparing two runs**, however carefully they are set up.
+
+That is the reason to stop picking single-digit functions off the profile one at a time. What can
+still be measured:
+
+- **Effects above ~5%**, like the cull redirect (-18%) - two runs settle those.
+- **A function's own share within one profile**, which is far more stable than the frame time
+  because it is normalised by the run. `bdMatrixCopyAligned` going 1.2% -> 0.9% is real even though
+  the frame times around it are not comparable.
+- **Anything toggled within a single run** - a cvar flipped per frame, two code paths alternating.
+  CLAUDE.md already says this and it is the only way to see a 1% change honestly.
+
+**`bdMatrixCopyAligned` is exactly a 64-byte byte copy** - proven, not assumed: the verification
+path ran the original and compared destination against source, `identical=true` on every sample
+across several threads and address pairs. The guest does it with four rounds of the
+lvlx/lvrx/vor unaligned idiom and a store through a full byte-reverse mask, so the reversal on the
+way in is undone on the way out. `bd_host_matrix_copy` replaces it with `memcpy` and is **off by
+default**: correct, and worth 0.3% by profile share, which is under the floor above. It is left in
+because the ARM64 cost of that idiom is relatively higher and it should be re-measured there.
+
 ## Closed on the way
 
 **Memoising `FindPhysicalBufferByStruct` does not help.** It is 3.2-3.4% of samples, a mutex
