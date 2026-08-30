@@ -1166,6 +1166,12 @@ it is not sufficient on a Quest 2.
 
 ### Vulkan validation layers run on device, and should be used before guessing
 
+**`bash tools/validate_quest.sh` is that, in one command**: it packages the layer via `EXTRA_LIBS`,
+enables the debug-layer settings for the app, runs autoplay, prints the VUIDs sorted by frequency,
+and **turns the layers back off again** - left on they change what every later frame time means.
+Khronos publishes Android binaries and no Windows ones, so the Quest is the only place this runs;
+fetch the `.so` once into `out/vvl` (the script's header has the URL).
+
 There are none in the NDK. Fetch the Khronos Android build from the Vulkan-ValidationLayers
 releases and package it - Android only loads layers from the app's own lib directory, which is what
 `EXTRA_LIBS` in `tools/build_apk.sh` is for (also the route for a replacement Turnip driver).
