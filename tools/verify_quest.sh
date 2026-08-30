@@ -122,7 +122,12 @@ mkdir -p "$OUT"
 echo
 echo "== pulling artefacts to $OUT =="
 CSV="$(run_adb shell "ls -t $FILES/logs/perf/*.csv 2>/dev/null | head -1" | tr -d '\r')"
-[ -n "$CSV" ] && run_adb shell "tail -400 '$CSV'" > "$OUT/perf.csv" && echo "  perf.csv"
+# The WHOLE file, not its tail. Pulling `tail -400` here would hand
+# perf_summary exactly the window that made every measurement in this project
+# wrong until 2026-08-30: a run does not end in a steady state, and its last
+# stretch is a menu at ~20 draws a frame. Field filtering and the within-run A/B
+# both need the full run to select from.
+[ -n "$CSV" ] && run_adb shell "cat '$CSV'" > "$OUT/perf.csv" &&   echo "  perf.csv ($(wc -l < "$OUT/perf.csv" | tr -d ' ') rows)"
 run_adb shell "cat $FILES/logs/guest_profile.txt 2>/dev/null" > "$OUT/guest_profile.txt" 2>/dev/null
 [ -s "$OUT/guest_profile.txt" ] && echo "  guest_profile.txt"
 CAP="$(run_adb shell "ls -t $FILES/logs/capture/*.raw 2>/dev/null | head -1" | tr -d '\r')"
