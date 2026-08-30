@@ -538,6 +538,37 @@ reintroduce a reach into the cvar singleton from either file.
 left-handed with +Z forward, row-vector, row-major. They differ by a mirror on Z. Everything
 crossing that boundary goes through `FromOpenXRPose` in `xr_math.h`. Do not convert at a call site.
 
+## The AYN Thor renders nothing: a named, spec-level vertex format bug
+
+**First ARM64 run of the current code, 2026-08-30.** The app installs, starts, mounts the VFS, runs
+autoplay and writes a capture - and renders **nothing**. The capture is one uniform clear colour and
+the log is **21,615 lines** of `CreateHostGraphicsPipeline failed: backend pipeline null`, about 86
+a frame, retried for ever because nothing caches a failure. `dt_ms 370` (2.7 fps) with
+`gpu_total_ms 1.94`, because there is nothing to draw. **Not multiview** - 22,180 failures with
+`bd_stereo_multiview=false`.
+
+Validation named it in one run (`tools/validate_quest.sh`, `SERIAL=` at the Thor):
+
+```
+VUID-VkGraphicsPipelineCreateInfo-Input-08733
+  pVertexAttributeDescriptions[3].format (VK_FORMAT_R16G16B16A16_UINT) at Location 7
+  does not match [VERTEX] [Input variable, Location 7] type of (vec4 of float32)
+```
+
+An integer-class vertex format against a float-class shader input. Adreno 650 tolerates it,
+Adreno 740 does not. **`gpu/format.cpp:285` already states the rule** - "an integer class IA format
+against a float class shader input is a D3D12 contract violation" - and
+`gpu/vertex_declaration.cpp:199-208` overrides `SNORM` back to `*_UINT` for `kTexCoord`, breaking
+it. The `!g_mvk` guard beside it describes the correct behaviour.
+
+The fix is `SSCALED` (float-class and unnormalised, so no shader-side sign extension), which plume
+does not yet expose. Specified step by step in
+`research/20260830_0820_arm64-the-thor-renders-nothing.md`. **Not written**: it crosses two repos and
+changes what every texcoord-reading shader receives.
+
+**Read this before trusting any Quest number too**: the same declaration is undefined behaviour
+there, it just happens to work.
+
 ## Android / Quest state
 
 The Android target builds and runs on a Quest 2. `tools/build_apk.sh` packages it, game data comes

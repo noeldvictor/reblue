@@ -46,6 +46,17 @@ if [ -z "${SERIAL:-}" ]; then
   done
 fi
 
+# Say what was passed over, always. This filter silently hid the only ARM64
+# hardware attached for an entire session while the work reported itself as
+# "desktop only" - an AYN Thor is a stated target of this fork and answers adb
+# exactly like a headset does. A tool that filters should name what it skipped.
+if [ -n "${SERIAL:-}" ]; then
+  for cand in $(MSYS_NO_PATHCONV=1 "$ADB" devices | awk '$2 == "device" {print $1}'); do
+    [ "$cand" = "$SERIAL" ] && continue
+    echo "note: also attached, not used: $cand ($(MSYS_NO_PATHCONV=1 "$ADB" -s "$cand" shell getprop ro.product.model 2>/dev/null | tr -d ''))" >&2
+  done
+fi
+
 if [ -z "${SERIAL:-}" ]; then
   echo "no Quest attached. Devices adb can see:" >&2
   MSYS_NO_PATHCONV=1 "$ADB" devices -l | sed 1d >&2
