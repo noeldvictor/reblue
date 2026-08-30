@@ -22,6 +22,8 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 
+REXCVAR_DECLARE(bool, bd_seed_targets);
+
 namespace bd::gpu {
 
 // The entry lives on the depth surface if present, else the color RT. The key
@@ -328,7 +330,16 @@ bool Video::BindDrawFramebufferLocked() {
     // single-sample dst) and does not need to be: the MSAA pass reaching here
     // is the scene, the chain source, which writes the whole tile fresh.
     s.command_list->discardTexture(rt->texture);
-  } else if (discard_rt) {
+  } else if (discard_rt && REXCVAR_GET(bd_seed_targets)) {
+    // Seeding copies a previous surface into a freshly acquired one so a pass
+    // reading untouched pixels sees what a Xenon's EDRAM tile would have held.
+    // It is 14 full-surface copies a frame and the bulk of the resolve
+    // category's 19% of GPU time - a copy that exists only to reproduce the
+    // persistence of a tile buffer that is not there.
+    //
+    // The cvar is a measurement handle, not a feature: turned off the frame is
+    // wrong wherever a pass genuinely relied on inherited content. Pair it with
+    // bd_ab_flag to get the cost without having to keep the wrong image.
     SeedFreshColorTarget(s, rt, slot, full_screen);
   }
   // Every fullscreen class bind advances the head, fresh or persistent: EDRAM

@@ -168,10 +168,25 @@ copies a frame** from `SeedFreshColorTarget`, which copies prior content into a 
 surface so that a pass reading untouched pixels sees what a Xenon's EDRAM tile would have held.
 
 That is the X360 artifact in its purest form - a copy that exists only to reproduce the persistence
-of a tile buffer that is not there - and it is the thing to attack in this category, not the resolve
-machinery around it. The question to answer first is how many of those 14 are seeding a surface the
-pass then completely overwrites, which is a copy for nothing. `bd_ab_flag` can settle whether
-removing them helps, now that a within-run A/B exists to measure it with.
+of a tile buffer that is not there.
+
+**Measured, with the within-run A/B, ~4,800 frames an arm:**
+
+| `bd_seed_targets` | `gpu_total_ms` | `gpu_resolve_ms` | `other_ms` | `rs_seed` |
+| --- | --- | --- | --- | --- |
+| off | 5.46 | **0.50** | 5.99 | 0 |
+| on | 5.88 | **1.14** | 6.10 | 14 |
+
+**Seeding costs 0.42ms of GPU a frame - about 7% of it - and more than half of the entire resolve
+category.** The CPU side does not move, which is what it should do. This is the first GPU-side A/B
+this project has been able to run at all: it needs both the timestamp fix and the within-run
+harness, and neither existed twelve hours ago.
+
+`bd_seed_targets` is a **measurement handle, not a feature**. Off, the frame is wrong wherever a
+pass genuinely relied on inherited content - that is precisely what seeding is for. The real change
+is to skip the copy only where the pass then overwrites the surface completely, which is a copy for
+nothing, and the A/B above says what the ceiling on that is worth: 0.42ms here, and proportionally
+more on a Quest 2 whose GPU is several times weaker.
 
 It also reframes the GPU's share. 5.83ms of a 16.67ms frame is a third, against a CPU side of
 5.42ms. The GPU is still not *the* bottleneck on a desktop, but it is no longer a rounding error,

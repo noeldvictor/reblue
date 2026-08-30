@@ -263,6 +263,14 @@ REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
 
 // Capture the layered array itself, both slices, rather than the resolved
 // companion. Diagnostic: it answers whether the array has content at all.
+// Seeding a freshly acquired colour target from its predecessor reproduces the
+// persistence of an EDRAM tile that does not exist. 14 full-surface copies a
+// frame, and the bulk of the resolve category's 19% of GPU time. Off renders
+// incorrectly wherever a pass relied on inherited content - it is a
+// measurement handle, meant to be paired with bd_ab_flag.
+REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
+                    "Seed freshly acquired colour targets from their "
+                    "predecessor (EDRAM persistence emulation).");
 REXCVAR_DEFINE_BOOL(bd_mv_capture_array, false, kCvarGroup,
                     "Capture the multiview array instead of its companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
