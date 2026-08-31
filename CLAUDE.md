@@ -1141,6 +1141,29 @@ two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. O
 new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
 per handout.
 
+## The frame rate is QUANTISED. Quote gpu_total_ms, never fps. (2026-08-30)
+
+The compositor paces to whole refresh intervals, so `dt_ms` is
+`ceil(work / 16.67) * 16.67` at 60Hz, not a continuous function of the work. Measured: at
+`gpu_total 56.18ms` 100% of field frames sit on 4 slots (66.7ms); at `gpu_total 70.00ms` 90% sit on
+5 (83.4ms).
+
+| GPU under | slots | fps |
+| --- | --- | --- |
+| 66.7 ms | 4 | 15 |
+| **50.0 ms** | **3** | **20** |
+| 33.3 ms | 2 | 30 |
+
+The port is at 56.18ms. **6.2ms is worth a whole tier** - 15 to 20 fps for an 11% GPU saving. This
+is why several changes measured "neutral" today: a saving inside a tier is worth exactly zero fps
+and is still real work. **Quote `gpu_total_ms` and the distance to the next boundary**, never fps or
+`dt_ms`. See `research/20260830_2359_the-frame-rate-is-quantised.md`.
+
+The nearest 6.2ms: five of the frame's ~22 passes are single-draw full-screen post passes at
+1376x720 **and two layers**, so each rasterises twice under multiview - and the post chain does not
+need stereo, since the resolve flattens the pair first. `bd_mv_small_targets_mono` exists for this
+and is limited to targets below half the design canvas, which excludes exactly the ones that pay.
+
 ## Where the GPU time is, MEASURED: the scene pass, 81% of it (2026-08-30)
 
 The per-target census now reports **measured GPU milliseconds per render target** instead of
