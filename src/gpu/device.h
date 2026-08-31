@@ -646,8 +646,13 @@ void RetireTextureBindingsLocked(VideoState &s, GuestTexture *dead);
 // Null-rewrite and free every slot parked in descriptor_graveyard[slot].
 // Callable only once that slot's fence has been awaited (DrainSlot entry).
 void DrainDescriptorSlotsLocked(VideoState &s, u32 slot);
+// view_mask is 3 when the destination is a two-layer multiview target. Only the
+// resolve pipeline carried one before, so every other host pass drawing into a
+// layered surface wrote array layer 0 and left layer 1 exactly as it found it -
+// which is a black second eye downstream.
 plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
-                                                    plume::RenderFormat fmt);
+                                                    plume::RenderFormat fmt,
+                                                    u32 view_mask = 0);
 // view_mask is 3 when the destination is a two-layer multiview target, so the
 // copy runs once per eye. It must match the framebuffer's mask or the render
 // passes are incompatible, which Vulkan leaves undefined rather than reporting.
@@ -657,7 +662,7 @@ plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
 plume::RenderPipeline *
 GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat dst_format,
                                plume::RenderSampleCounts src_samples,
-                               bool depth);
+                               bool depth, u32 view_mask = 0);
 bool DiagShouldLog(u64 site, const GuestTexture *t, u32 *n_out);
 void DestroyResourceNow(u32 guest_va, ResourceType type);
 // Callable only at DrainSlot entry (post-fence) and without s.mutex held.

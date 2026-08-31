@@ -242,6 +242,9 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
         plume::RenderFramebufferDesc desc;
         desc.depthAttachment = dst->texture;
         desc.colorAttachmentsCount = 0;
+        // Same rule as the colour path: a layered destination needs a view
+        // mask or the copy writes layer 0 only.
+        desc.viewMask = dst->layers > 1 ? 0x3u : 0u;
         fb = s.device->createFramebuffer(desc);
       } else {
         const plume::RenderTexture *attachments[1] = {dst->texture};
@@ -297,10 +300,12 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     if (src->sampleCount != plume::RenderSampleCount::COUNT_1) {
       // Bound as a Texture2DMS SRV by plume: resolve N samples, stretching and
       // applying the color exp bias scale on the way.
-      pipeline = GetOrCreateResolveMSAAPipeline(s, dst->format,
-                                                src->sampleCount, depth_dst);
+      pipeline = GetOrCreateResolveMSAAPipeline(
+          s, dst->format, src->sampleCount, depth_dst,
+          dst->layers > 1 ? 0x3u : 0u);
     } else if (depth_dst) {
-      pipeline = GetOrCreateCopyDepthPipeline(s, dst->format);
+      pipeline = GetOrCreateCopyDepthPipeline(s, dst->format,
+                                              dst->layers > 1 ? 0x3u : 0u);
     } else {
       pipeline = GetOrCreateResolvePipeline(s, dst->format,
                                             dst->layers > 1 ? 0x3u : 0u);

@@ -242,3 +242,34 @@ which are already in the log:
 
 `layers=1` or `0` two-layer targets means the run is not testing multiview,
 whatever the intent was.
+
+
+## The black right eye is fixed: host pipelines had no view masks
+
+The correction above named it and it was right. Only the resolve pipeline
+carried a `viewMask`; `GetOrCreateCopyDepthPipeline` and
+`GetOrCreateResolveMSAAPipeline` did not, and the depth-only resolve framebuffer
+did not either - so any of those drawing into a two-layer target wrote array
+layer 0 and left layer 1 as it found it.
+
+All three now take a `view_mask`, keyed into their pipeline caches the same way
+the resolve pipeline is, and the callers pass `dst->layers > 1 ? 3 : 0`.
+
+| | left half | right half | halves differ |
+| --- | --- | --- | --- |
+| before | 95.8% | **0.0%** | n/a |
+| after | 95.8% | **95.8%** | **no** (0.00) |
+
+**Layer 1 is now written.** What it is written with is layer 0's content, so the
+frame is back to two identical halves - the same place the non-layered path
+sits, but reached honestly: every layer is now populated by a pass that knows
+about layers.
+
+So the remaining question is the narrow one it always should have been: **the
+scene renders two different layers (measured `far -4, near -26`) and something
+between there and present is copying one of them into both.** With every host
+pass now view-masked, the candidates are down to the shaders those passes run -
+and `copy_depth_ps` is a known one: it was given `BD_L0(uv)` with a hardcoded
+layer 0, not the per-eye `g_ViewIndex` that `copy_color_ps` got. Start there.
+
+Flat path unregressed throughout: 95.5% non-black, mean RGB 61/55/44.

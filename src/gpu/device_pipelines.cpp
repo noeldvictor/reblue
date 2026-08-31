@@ -381,10 +381,15 @@ bool BuildCopyPipeline(VideoState &s) {
 }
 
 plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
-                                                    plume::RenderFormat fmt) {
+                                                    plume::RenderFormat fmt,
+                                                    u32 view_mask) {
   if (!IsDepthFormat(fmt))
     return nullptr;
-  auto it = s.copy_depth_pipelines_by_format.find(fmt);
+  // Keyed on the mask too: multiview and mono variants are different pipelines
+  // against different render passes.
+  const auto key = static_cast<plume::RenderFormat>(
+      static_cast<u32>(fmt) | (view_mask ? 0x8000u : 0u));
+  auto it = s.copy_depth_pipelines_by_format.find(key);
   if (it != s.copy_depth_pipelines_by_format.end())
     return it->second.get();
   plume::RenderGraphicsPipelineDesc desc;
@@ -398,6 +403,7 @@ plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
   desc.cullMode = plume::RenderCullMode::NONE;
   desc.renderTargetCount = 0;
   desc.depthTargetFormat = fmt;
+  desc.viewMask = view_mask;
   auto pso = CreateHostGraphicsPipeline(s.device.get(), desc, "copy-depth");
   if (!pso) {
     BD_ERROR("Plume createGraphicsPipeline for copy_depth (fmt={}) failed",
@@ -405,7 +411,7 @@ plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
     return nullptr;
   }
   auto *raw = pso.get();
-  s.copy_depth_pipelines_by_format.emplace(fmt, std::move(pso));
+  s.copy_depth_pipelines_by_format.emplace(key, std::move(pso));
   return raw;
 }
 
@@ -466,12 +472,13 @@ int MsaaTierIndex(plume::RenderSampleCounts count) {
 plume::RenderPipeline *
 GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat dst_format,
                                plume::RenderSampleCounts src_samples,
-                               bool depth) {
+                               bool depth, u32 view_mask) {
   const int tier = MsaaTierIndex(src_samples);
   if (tier < 0)
     return nullptr;
   const u64 key = (static_cast<u64>(dst_format) << 8) |
-                  (static_cast<u64>(tier) << 1) | (depth ? 1u : 0u);
+                  (static_cast<u64>(tier) << 1) | (depth ? 1u : 0u) |
+                  (view_mask ? (1ull << 32) : 0ull);
   auto it = s.resolve_msaa_pipelines.find(key);
   if (it != s.resolve_msaa_pipelines.end())
     return it->second.get();
@@ -498,6 +505,7 @@ GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat dst_format,
     desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
     desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
   }
+  desc.viewMask = view_mask;
   auto pipeline =
       CreateHostGraphicsPipeline(s.device.get(), desc, "resolve-msaa");
   if (!pipeline)
