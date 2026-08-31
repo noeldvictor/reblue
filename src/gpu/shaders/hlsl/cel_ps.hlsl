@@ -18,7 +18,13 @@
 // block has no room left, and the useful range is narrow enough that a cvar
 // per knob would be more dial than anyone wants before seeing it in a headset.
 
-Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+// Binding 3, not the default 0: the guest constant blocks took bindings 0-2
+// of this set when they became dynamic uniform buffers, and the texture
+// array moved up to make room. DXC maps register(t0, space0) to binding 0
+// without this, so the sample silently reads a uniform buffer and returns
+// black - which is exactly how the desktop present went black.
+// Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
+[[vk::binding(3, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 
 // Luminance bands. Four reads as animation cel, eight is closer to the game's

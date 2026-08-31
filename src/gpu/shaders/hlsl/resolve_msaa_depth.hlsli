@@ -3,7 +3,13 @@
 
 // Plume picks the depth-plane format (R32_FLOAT_X8X24_TYPELESS) for a
 // D32_FLOAT_S8_UINT MS texture, so a Texture2DMS<float> reads depth.
-Texture2DMS<float, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
+// Binding 3, not the default 0: the guest constant blocks took bindings 0-2
+// of this set when they became dynamic uniform buffers, and the texture
+// array moved up to make room. DXC maps register(t0, space0) to binding 0
+// without this, so the sample silently reads a uniform buffer and returns
+// black - which is exactly how the desktop present went black.
+// Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
+[[vk::binding(3, 0)]] Texture2DMS<float, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
 
 float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Depth
 {
