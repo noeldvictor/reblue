@@ -202,7 +202,7 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
   // The barrier ends the render pass, so anything queued has to come out first
   // or it would be emitted against a pass that no longer exists. Same
   // null-framebuffer guard as above.
-  if (s.draw_framebuffer_bound)
+  if (s.plume_framebuffer_bound)
     bd::gpu::DrawQueueFlush(s.command_list);
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, sampled,
                            sampled_count);
@@ -376,16 +376,6 @@ bool Video::BindDrawFramebufferLocked() {
   if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds) {
     return true;
   }
-  // Anything queued belongs to the framebuffer that is about to be replaced -
-  // emit it while that framebuffer is still bound.
-  //
-  // Only when one actually is. plume starts a render pass lazily on the first
-  // draw, from the bound framebuffer, so emitting with none bound dereferences
-  // a null framebuffer inside getRenderPass - which is what the first four
-  // attempts at this crashed on, at address 0x10.
-  if (s.draw_framebuffer_bound)
-    bd::gpu::DrawQueueFlush(s.command_list);
-
   // The pass is about to end regardless, so any barrier issued here is free.
   if (REXCVAR_GET(bd_barrier_hoist))
     FlushWriteLayoutToRead(s, rt, ds);
@@ -463,7 +453,15 @@ bool Video::BindDrawFramebufferLocked() {
   plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, ds);
   if (!fb)
     return false;
+  // Anything queued was recorded against the outgoing framebuffer, so it leaves
+  // here - but the queue rebinds its own framebuffer per draw, so this needs no
+  // guard and cannot land on the wrong target.
+  bd::gpu::DrawQueueFlush(s.command_list);
+
   s.command_list->setFramebuffer(fb);
+  s.plume_framebuffer_bound = (fb != nullptr);
+  // What deferred draws recorded from here on belong to.
+  s.pending_framebuffer = fb;
   {
     // bd_mv_test_clear: clear the layered scene target to magenta inside its
     // own render pass, every bind. Paired with bd_mv_capture_array this asks

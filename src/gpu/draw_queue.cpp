@@ -39,11 +39,24 @@ struct EmitState {
                                           plume::RenderFormat::R16_UINT};
   plume::RenderViewport viewport{};
   plume::RenderRect scissor{};
+  plume::RenderFramebuffer *framebuffer = nullptr;
   bool any = false;
 };
 
 void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
              EmitState &st) {
+  // Its own framebuffer, always. Whatever is bound at flush time is not
+  // necessarily what this draw was recorded against, and may be nothing at all.
+  if (!d.framebuffer) {
+    static u32 told = 0;
+    if (told++ < 8)
+      BD_ERROR("[draw-queue] queued draw with no framebuffer, skipped");
+    return;
+  }
+  if (d.framebuffer != st.framebuffer) {
+    cmd->setFramebuffer(d.framebuffer);
+    st.framebuffer = d.framebuffer;
+  }
   // A queued draw with no pipeline means the capture missed one - the bind is
   // dirty-gated, so a draw reusing the previous pipeline records nothing unless
   // the whole binding is captured. setPipeline(nullptr) is an access violation,
@@ -194,6 +207,25 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     ++told;
     BD_INFO("[draw-queue] flush #{}: {} draws now, {} emitted so far",
             flushes, g_queue.size(), emitted_total);
+  }
+
+  // Are these draws being emitted against the target they were recorded for?
+  // "The draws execute and do no GPU work" is equally consistent with landing
+  // on the wrong framebuffer and with being clipped away, and those need
+  // opposite fixes.
+  {
+    static u32 told = 0;
+    const void *live = Video::CurrentRenderTargetForDiag();
+    u32 mismatched = 0;
+    for (const QueuedDraw &d : g_queue)
+      if (d.recorded_rt != live)
+        ++mismatched;
+    if (told < 6 && mismatched) {
+      ++told;
+      BD_INFO("[draw-queue] flushing {} draws, {} recorded against a DIFFERENT "
+              "render target than the live one ({} vs {})",
+              g_queue.size(), mismatched, g_queue.front().recorded_rt, live);
+    }
   }
 
   EmitState st;

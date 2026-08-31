@@ -224,7 +224,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         // against its framebuffer and its viewport rather than their own,
         // which is why the deferred path rendered a black scene target on the
         // Quest while the same code was correct with a flush after every draw.
-        if (s.draw_framebuffer_bound)
+        if (s.plume_framebuffer_bound)
           bd::gpu::DrawQueueFlush(s.command_list);
         bd::gpu::ResolveMultiviewSurfaceLocked(s, surf);
       }
@@ -246,7 +246,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // A draw that cannot wait forces out everything that was waiting, so the
   // order the guest submitted in is preserved exactly. Without this, an
   // immediate draw would land before draws the guest issued before it.
-  if (!s.deferring_draw && s.draw_framebuffer_bound)
+  if (!s.deferring_draw && s.plume_framebuffer_bound)
     bd::gpu::DrawQueueFlush(s.command_list);
   if (s.deferring_draw)
     s.pending = bd::gpu::QueuedDraw{};
@@ -321,6 +321,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // Front-to-back needs a view-space distance per node, which is the next
     // piece and comes from the same place bd_cull_distance reads.
     q.depth = 0.0f;
+    q.recorded_rt = s.render_target;
+    q.framebuffer = s.pending_framebuffer;
     bd::gpu::DrawQueuePush(q);
     s.deferring_draw = false;
     // Flush every draw: functionally identical to immediate submission, but it

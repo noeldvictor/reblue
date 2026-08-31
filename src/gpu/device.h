@@ -174,6 +174,9 @@ public:
   // the guest constant blocks.
   static plume::RenderDescriptorSet *TextureDescriptorSet();
 
+  // Diagnostic for the draw queue: which render target is bound right now.
+  static const void *CurrentRenderTargetForDiag();
+
   // Publish the guest constant buffer into the three dynamic uniform
   // descriptors the shaders read. Called once, when the buffer is created.
   //
@@ -433,6 +436,18 @@ struct VideoState {
   // the moment draws are reordered.
   u32 bound_vertex_first = 0;
   u32 bound_vertex_count = 0;
+
+  // Whether plume currently holds a framebuffer. NOT the same as
+  // draw_framebuffer_bound, which SetRenderTarget clears the moment the guest
+  // changes target - before the old framebuffer has actually been replaced.
+  // Every draw-queue flush needs this one: plume starts a render pass lazily
+  // from the bound framebuffer, so flushing with none is a null dereference,
+  // and guarding on the other flag skipped the flush on exactly the event that
+  // needed it most.
+  bool plume_framebuffer_bound = false;
+
+  // The framebuffer deferred draws are currently being recorded against.
+  plume::RenderFramebuffer *pending_framebuffer = nullptr;
 
   bool deferring_draw = false;
   QueuedDraw pending{};

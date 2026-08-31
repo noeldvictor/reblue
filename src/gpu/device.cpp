@@ -883,6 +883,10 @@ plume::RenderDescriptorSet *Video::TextureDescriptorSet() {
   return state().texture_descriptor_set.get();
 }
 
+const void *Video::CurrentRenderTargetForDiag() {
+  return state().render_target;
+}
+
 bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
                                     u64 vertex_bytes, u64 pixel_bytes,
                                     u64 shared_bytes) {

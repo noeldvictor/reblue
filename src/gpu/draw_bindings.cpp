@@ -229,13 +229,22 @@ void Video::FlushViewport() {
       sw = sw * float(pct) / 100.0f;
       sh = sh * float(pct) / 100.0f;
     }
-    s.pending.viewport = vp;
-    s.pending.scissor =
-        plume::RenderRect{static_cast<i32>(s.viewport.x),
-                          static_cast<i32>(s.viewport.y),
-                          static_cast<i32>(s.viewport.x + sw),
-                          static_cast<i32>(s.viewport.y + sh)};
-    s.pending.has_viewport = true;
+    const plume::RenderRect rc{static_cast<i32>(s.viewport.x),
+                               static_cast<i32>(s.viewport.y),
+                               static_cast<i32>(s.viewport.x + sw),
+                               static_cast<i32>(s.viewport.y + sh)};
+    // Only a viewport that would actually rasterise something. The immediate
+    // path is dirty-gated and so can never push one the guest has not
+    // established; recording unconditionally can, and a degenerate viewport
+    // clips the draw away entirely - which looks like "the draws execute and
+    // do no GPU work", exactly the symptom being chased.
+    s.pending.has_viewport =
+        vp.width > 0.0f && vp.height > 0.0f && rc.right > rc.left &&
+        rc.bottom > rc.top;
+    if (s.pending.has_viewport) {
+      s.pending.viewport = vp;
+      s.pending.scissor = rc;
+    }
     s.dirtyStates.viewport = false;
     s.dirtyStates.scissorRect = false;
     return;

@@ -278,6 +278,7 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
       s.command_list->setFramebuffer(rt_fb);
       s.command_list->clearColor(0, ArgbToRenderColor(s.clear_color_argb));
       s.command_list->setFramebuffer(nullptr);
+  s.plume_framebuffer_bound = false;
     }
   }
 
@@ -369,6 +370,7 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   }
 
   s.command_list->setFramebuffer(nullptr);
+  s.plume_framebuffer_bound = false;
 
   // bd_capture_after_s, recorded HERE and not after the present.
   //
@@ -438,6 +440,7 @@ void Video::RequestClear(u32 flags, u32 color_argb, float depth, u32 stencil) {
       s.command_list->setFramebuffer(fb);
       s.command_list->clearColor(0, ArgbToRenderColor(color_argb));
       s.command_list->setFramebuffer(nullptr);
+  s.plume_framebuffer_bound = false;
       s.clear_flags &= ~0x1u;
       if ((s.clear_flags & 0x30u) == 0)
         s.clear_pending = false;
@@ -1313,6 +1316,7 @@ void Video::PresentOverlayFrame() {
     g_overlay_draw_hook(s.command_list, back_fb, swap_w, swap_h);
   }
   s.command_list->setFramebuffer(nullptr);
+  s.plume_framebuffer_bound = false;
   s.command_list->barriers(
       plume::RenderBarrierStage::GRAPHICS,
       plume::RenderTextureBarrier(back, plume::RenderTextureLayout::PRESENT));

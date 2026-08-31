@@ -62,6 +62,19 @@ struct QueuedDraw {
   plume::RenderRect scissor{};
   bool has_viewport = false;
 
+  // The framebuffer this draw was recorded against, rebound at emit.
+  //
+  // Carrying it makes the flush self-sufficient. Every earlier attempt guarded
+  // the flush on some flag meaning "a framebuffer is bound" and every one of
+  // them went stale somewhere - SetRenderTarget clears one before the switch, a
+  // command list reset discards the binding, present unbinds it - and a stale
+  // guard means flushing into a null framebuffer, which faults inside plume's
+  // lazy getRenderPass. Depending on no ambient state removes the whole class.
+  plume::RenderFramebuffer *framebuffer = nullptr;
+
+  // Diagnostic: the render target this draw was recorded against.
+  const void *recorded_rt = nullptr;
+
   bool indexed = false;
   u32 count = 0;
   u32 start_index = 0;

@@ -54,6 +54,11 @@ void BeginCommandList(VideoState &s) {
   // frame and a tile must never seed from a stale or cross-chain buffer.
   s.subchain_resolve.clear();
   s.command_list->begin();
+  // A fresh command list holds no framebuffer, whatever was bound on the last
+  // one. The draw queue's flush guard reads this, and a stale true here meant
+  // flushing into a null framebuffer - plume starts its render pass lazily from
+  // that, so it faulted inside getRenderPass.
+  s.plume_framebuffer_bound = false;
   if (!s.null_texture_barriers_submitted) {
     plume::RenderTextureBarrier barriers[kNullTextureDescriptorCount];
     for (u32 i = 0; i < kNullTextureDescriptorCount; ++i) {

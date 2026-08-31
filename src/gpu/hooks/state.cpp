@@ -17,6 +17,7 @@
 #include <plume_render_interface.h>
 
 #include "core/logging.h"
+#include "gpu/draw_queue.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/frame_stats.h"
@@ -97,8 +98,23 @@ void D3DDevice_SetRenderTarget_hook(
 
   // FlushRenderState bakes the new RT's format into the PSO, so the cached
   // framebuffer holding the old RTV has to go with it.
-  if (s.render_target != surface)
+  if (s.render_target != surface) {
+    // Deferred draws belong to the target they were recorded against, and this
+    // is the moment it stops being current. Emit them while the old
+    // framebuffer is still bound.
+    //
+    // This is the flush that was missing, and it was missing for a subtle
+    // reason: the queue's other flush points are guarded on
+    // draw_framebuffer_bound, and the very next line clears it - so on the one
+    // event that most needs a flush, every guard downstream was already false.
+    // The draws then came out against the new target, which is why the scene
+    // rendered black while a flush-after-every-draw run was pixel-perfect.
+    // No queue flush here. It reads as the natural place, but this hook also
+    // runs with no command list open, and the draws are emitted a moment later
+    // in BindDrawFramebuffer, immediately before the new framebuffer is bound -
+    // which is the only instant the outgoing one is still valid.
     s.draw_framebuffer_bound = false;
+  }
 
 
 
