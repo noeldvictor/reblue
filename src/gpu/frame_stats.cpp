@@ -86,6 +86,11 @@ std::atomic<u32> g_pso_switch_count{0};
 // costs every later draw its early rejection.
 std::atomic<u32> g_blended_depth_writes{0};  // real blend + depth write
 std::atomic<u32> g_suppressed{0};
+// Reported four times and then never again. NoteBlendDepthMode is called once
+// per blended depth-writing draw - 337 times a frame - so holding a mutex for
+// the life of the process would add a per-draw cost in the middle of removing
+// one.
+std::atomic<bool> g_bdmode_wanted{true};
 std::mutex g_bdmode_mutex;
 std::map<std::pair<u32, u32>, u32> g_bdmode;             // override actually fired
 std::atomic<u32> g_misclassified{0};         // heuristic says blend, D3D9 says not
@@ -278,6 +283,8 @@ void UpdateFrameStats() {
       for (const auto &[mode, n] : g_bdmode)
         BD_INFO("[lrz]   src={} dst={} : {} draws", mode.first, mode.second, n);
       g_bdmode.clear();
+      if (told >= 4)
+        g_bdmode_wanted.store(false, std::memory_order_relaxed);
     }
   }
 }
@@ -358,6 +365,8 @@ void NotePSOSwitch() {
 }
 
 void NoteBlendDepthMode(u32 src, u32 dst) {
+  if (!g_bdmode_wanted.load(std::memory_order_relaxed))
+    return;
   std::lock_guard<std::mutex> lock(g_bdmode_mutex);
   ++g_bdmode[{src, dst}];
 }
