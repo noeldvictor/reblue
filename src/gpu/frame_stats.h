@@ -85,6 +85,10 @@ void NoteBlendedDepthWrite(bool real_blend, bool heuristic_blend,
                           bool writes_depth);
 // Draws whose depth write bd_blend_no_depth_write actually suppressed.
 void NoteDepthWriteSuppressed();
+// Histogram of the blend modes used by draws that blend AND write depth, so a
+// narrower discriminator than alphaBlendEnable can be found: additive glows
+// never belong in the depth buffer, alpha-tested foliage does.
+void NoteBlendDepthMode(u32 src, u32 dst);
 
 // Per frame, like NoteDraw. On Vulkan every barriers() call ends the active
 // render pass and every framebuffer bind starts one, so these measure

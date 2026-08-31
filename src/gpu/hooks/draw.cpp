@@ -308,9 +308,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     const bool heuristic =
         !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
           s.pipelineState.destBlend == plume::RenderBlend::ZERO);
+    const bool writes_depth =
+        s.pipelineState.zWriteEnable && s.pipelineState.zEnable;
     bd::gpu::NoteBlendedDepthWrite(s.pipelineState.alphaBlendEnable, heuristic,
-                                   s.pipelineState.zWriteEnable &&
-                                       s.pipelineState.zEnable);
+                                   writes_depth);
+    if (s.pipelineState.alphaBlendEnable && writes_depth)
+      bd::gpu::NoteBlendDepthMode(u32(s.pipelineState.srcBlend),
+                                  u32(s.pipelineState.destBlend));
   }
 
   // Stereo, renderer side. Re-entering the guest to render a second view does

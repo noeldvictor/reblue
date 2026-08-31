@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <mutex>
 
 #include <rex/system/kernel_state.h>
@@ -84,7 +85,9 @@ std::atomic<u32> g_pso_switch_count{0};
 // low-resolution Z for the remainder of the pass, so one early in the scene
 // costs every later draw its early rejection.
 std::atomic<u32> g_blended_depth_writes{0};  // real blend + depth write
-std::atomic<u32> g_suppressed{0};             // override actually fired
+std::atomic<u32> g_suppressed{0};
+std::mutex g_bdmode_mutex;
+std::map<std::pair<u32, u32>, u32> g_bdmode;             // override actually fired
 std::atomic<u32> g_misclassified{0};         // heuristic says blend, D3D9 says not
 std::atomic<u32> g_resolve_op_count[5]{};
 
@@ -271,6 +274,10 @@ void UpdateFrameStats() {
               g_misclassified.exchange(0, std::memory_order_relaxed));
       BD_INFO("[lrz] depth-write suppressed on {} draws this frame",
               g_suppressed.exchange(0, std::memory_order_relaxed));
+      std::lock_guard<std::mutex> lock(g_bdmode_mutex);
+      for (const auto &[mode, n] : g_bdmode)
+        BD_INFO("[lrz]   src={} dst={} : {} draws", mode.first, mode.second, n);
+      g_bdmode.clear();
     }
   }
 }
@@ -348,6 +355,11 @@ void NoteFbBind() { g_fb_bind_count.fetch_add(1, std::memory_order_relaxed); }
 
 void NotePSOSwitch() {
   g_pso_switch_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteBlendDepthMode(u32 src, u32 dst) {
+  std::lock_guard<std::mutex> lock(g_bdmode_mutex);
+  ++g_bdmode[{src, dst}];
 }
 
 void NoteDepthWriteSuppressed() {

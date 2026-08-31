@@ -105,6 +105,33 @@ write depth) from alpha-blended geometry the depth buffer is expected to
 contain. `bd_blend_no_depth_write` stays off by default and is now a probe
 rather than a candidate default.
 
+## Both naive levers are closed, by capture
+
+Every one of the 337 uses **`src=SRC_ALPHA dst=INV_SRC_ALPHA`** - classic alpha
+blending, and **not one is additive**. So there is no blend-mode discriminator
+to separate glows (which never belong in depth) from cutouts (which do); they
+are all the same mode.
+
+Two state changes were tried against them and both destroy the frame:
+
+| probe | mean RGB | result |
+| --- | --- | --- |
+| correct reference | 62 / 57 / 45 | the field scene |
+| `bd_blend_no_depth_write` - stop writing depth | 98 / 103 / 94 | cliffs become flat grey, a pale plane crosses the scene, everything blurs: **the post chain samples depth** |
+| `bd_blend_off_when_opaque` - stop blending | 1 / 1 / 1 | **0.4% non-black. The frame is gone.** |
+
+The second was the more promising theory and it is now dead: 64% of a frame is
+far too much to be real transparency, so the suspicion was an X360 habit of
+leaving blending enabled where alpha is always 1.0 and the blend is a no-op. It
+is not a no-op. Those draws need the blend *and* the depth write.
+
+**So the LRZ cost is real and is not removable by a state change.** What is left
+is ordering - getting the opaque set to populate low-resolution Z before the
+blended majority - which is what the shipped sort already attempts and which
+measured zero. Whether that is because the guest already submits opaque-first is
+the next thing to instrument, and it is cheap: record the sequence positions of
+the 166 opaque draws.
+
 ## What is owed
 
 One Quest run, and the flag is already built and committed:

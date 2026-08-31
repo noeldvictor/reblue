@@ -27,6 +27,7 @@
 #include "gpu/pipeline/pso_recorder.h"
 
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
+REXCVAR_DECLARE(bool, bd_blend_off_when_opaque);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
 
 namespace bd::gpu {
@@ -130,6 +131,15 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
       bd::gpu::NoteDepthWriteSuppressed();
     }
     Video::SetDirtyValue(dirty, ps.zWriteEnable, z_write);
+
+    // Probe: does the blending on these draws do anything? If the image is
+    // unchanged with it off, the blend was a no-op the tiler was paying for.
+    if (z_write && ps.alphaBlendEnable &&
+        REXCVAR_GET(bd_blend_off_when_opaque)) {
+      Video::SetDirtyValue(dirty, ps.alphaBlendEnable, false);
+      Video::SetDirtyValue(dirty, ps.srcBlend, plume::RenderBlend::ONE);
+      Video::SetDirtyValue(dirty, ps.destBlend, plume::RenderBlend::ZERO);
+    }
     Video::SetDirtyValue(dirty, ps.cullMode, ConvertCullMode(rs->cullMode));
     // The debug wireframe toggle (Shift+F3) and the Visual prim recorder both
     // reach the host only here: they bracket their draws in

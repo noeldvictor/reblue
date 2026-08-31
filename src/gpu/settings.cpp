@@ -395,6 +395,19 @@ REXCVAR_DEFINE_BOOL(bd_blend_no_depth_write, false, kCvarGroup,
                     "Blended draws test depth but do not write it, which is "
                     "what lets a tiler keep low-resolution Z.");
 
+// The other way round, and the more promising one. All 337 of those draws use
+// SRC_ALPHA/INV_SRC_ALPHA - not one is additive - and 64% of a frame is far too
+// much to be real transparency. That is the shape of an X360 habit: leaving
+// blending enabled on geometry whose alpha is always 1.0, where the blend is a
+// no-op the hardware still has to honour.
+//
+// If they are no-op blends, clearing alphaBlendEnable restores the tiler's
+// early rejection AND leaves the image untouched - unlike suppressing the depth
+// write, which breaks the depth-of-field and fog passes that sample depth.
+REXCVAR_DEFINE_BOOL(bd_blend_off_when_opaque, false, kCvarGroup,
+                    "Clear alphaBlendEnable on blended draws that write depth, "
+                    "to test whether those blends do anything at all.");
+
 REXCVAR_DEFINE_INT32(bd_capture_min_draws, 0, kCvarGroup,
                      "Delay bd_capture_after_s until a frame has this many "
                      "draws, so the capture lands on a scene not a menu.")
