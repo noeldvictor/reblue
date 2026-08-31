@@ -379,6 +379,22 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
+// 337 of 530 field-scene draws blend AND write depth - 64% of the frame,
+// counted on the desktop, not inferred. On a Xenon that was free: EDRAM had no
+// low-resolution Z to lose. On a tiler it is the documented way to invalidate
+// LRZ, and it invalidates it for the REST OF THE PASS, so those 337 draws cost
+// every later draw its early rejection.
+//
+// That matches what is measured: the scene carries ~2x overdraw (forcing depth
+// ALWAYS doubles desktop GPU time) and front-to-back sorting buys exactly
+// nothing, which is the signature of a tiler that never rejects.
+//
+// Transparent geometry conventionally tests depth and does not write it - a
+// blended surface does not occlude what comes after it. This restores that.
+REXCVAR_DEFINE_BOOL(bd_blend_no_depth_write, false, kCvarGroup,
+                    "Blended draws test depth but do not write it, which is "
+                    "what lets a tiler keep low-resolution Z.");
+
 REXCVAR_DEFINE_INT32(bd_capture_min_draws, 0, kCvarGroup,
                      "Delay bd_capture_after_s until a frame has this many "
                      "draws, so the capture lands on a scene not a menu.")

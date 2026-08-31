@@ -80,6 +80,12 @@ std::atomic<u32> g_barrier_count{0};
 std::atomic<u32> g_barrier_site_count[4]{};
 std::atomic<u32> g_fb_bind_count{0};
 std::atomic<u32> g_pso_switch_count{0};
+// Draws that blend AND write depth, per frame. Each one invalidates a tiler's
+// low-resolution Z for the remainder of the pass, so one early in the scene
+// costs every later draw its early rejection.
+std::atomic<u32> g_blended_depth_writes{0};  // real blend + depth write
+std::atomic<u32> g_suppressed{0};             // override actually fired
+std::atomic<u32> g_misclassified{0};         // heuristic says blend, D3D9 says not
 std::atomic<u32> g_resolve_op_count[5]{};
 
 // UpdateFrameStats drains the per-frame atomics, and RecordFrameSample runs
@@ -247,6 +253,26 @@ void UpdateFrameStats() {
   g_last.fb_binds = g_fb_bind_count.exchange(0, std::memory_order_relaxed);
   g_last.pso_switches =
       g_pso_switch_count.exchange(0, std::memory_order_relaxed);
+
+  // Depth rejection is the largest lever on the board - forcing depth ALWAYS
+  // doubles desktop GPU time, so the scene carries ~2x overdraw - and front-to-
+  // back sorting buys exactly nothing, which is the signature of a tiler that
+  // is not rejecting. This counts the most-documented reason for that.
+  //
+  // Reported on field frames only; a menu draws nothing worth counting.
+  {
+    const u32 bdw = g_blended_depth_writes.exchange(0, std::memory_order_relaxed);
+    static u32 told = 0;
+    if (told < 4 && draws > 300) {
+      ++told;
+      BD_INFO("[lrz] {} of {} draws REALLY blend and write depth; {} more are "
+              "opaque but the sort treats them as blended",
+              bdw, draws,
+              g_misclassified.exchange(0, std::memory_order_relaxed));
+      BD_INFO("[lrz] depth-write suppressed on {} draws this frame",
+              g_suppressed.exchange(0, std::memory_order_relaxed));
+    }
+  }
 }
 
 void NoteDraw() { g_draw_count.fetch_add(1, std::memory_order_relaxed); }
@@ -322,6 +348,22 @@ void NoteFbBind() { g_fb_bind_count.fetch_add(1, std::memory_order_relaxed); }
 
 void NotePSOSwitch() {
   g_pso_switch_count.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteDepthWriteSuppressed() {
+  g_suppressed.fetch_add(1, std::memory_order_relaxed);
+}
+
+void NoteBlendedDepthWrite(bool real_blend, bool heuristic_blend,
+                           bool writes_depth) {
+  if (real_blend && writes_depth)
+    g_blended_depth_writes.fetch_add(1, std::memory_order_relaxed);
+  // D3D9 ignores the blend factors when alphaBlendEnable is false, so a draw
+  // carrying leftover SRC_ALPHA state is opaque. The draw queue sorts on the
+  // factor test alone, so every one of these is pinned in submission order as
+  // though it were transparent - and therefore never depth-sorted.
+  if (heuristic_blend && !real_blend)
+    g_misclassified.fetch_add(1, std::memory_order_relaxed);
 }
 
 void NoteResolveOp(ResolveOp op) {

@@ -78,6 +78,14 @@ void NoteDrawPhases(u64 enter, u64 locked, u64 fb, u64 state);
 // frame end; used by the bd_debug_max_draws diagnostic.
 u32 DrawsThisFrame();
 
+// Draws that blend AND write depth. Each one invalidates the tiler's
+// low-resolution Z for the rest of the pass, so on a scene with real overdraw
+// a single early one costs every later draw its early rejection.
+void NoteBlendedDepthWrite(bool real_blend, bool heuristic_blend,
+                          bool writes_depth);
+// Draws whose depth write bd_blend_no_depth_write actually suppressed.
+void NoteDepthWriteSuppressed();
+
 // Per frame, like NoteDraw. On Vulkan every barriers() call ends the active
 // render pass and every framebuffer bind starts one, so these measure
 // render pass churn.

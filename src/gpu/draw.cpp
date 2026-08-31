@@ -26,6 +26,7 @@
 #include "gpu/pipeline/pipeline_cache.h"
 #include "gpu/pipeline/pso_recorder.h"
 
+REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
 
 namespace bd::gpu {
@@ -116,8 +117,19 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
     Video::SetDirtyValue(dirty, ps.zFunc,
                          z_func ? ConvertCompareFunc(z_func)
                                 : plume::RenderComparisonFunction::LESS_EQUAL);
-    Video::SetDirtyValue(dirty, ps.zWriteEnable,
-                         z_func == 0u || rs->zWriteEnable != 0u);
+    bool z_write = z_func == 0u || rs->zWriteEnable != 0u;
+    // A blended draw that writes depth invalidates a tiler's low-resolution Z
+    // for the remainder of the pass. 64% of a field frame does exactly that,
+    // which is an EDRAM-era habit: on a Xenon there was no LRZ to lose.
+    //
+    // Transparent geometry does not occlude what follows it, so testing depth
+    // without writing it is both the conventional behaviour and the one that
+    // keeps early rejection alive.
+    if (z_write && ps.alphaBlendEnable && REXCVAR_GET(bd_blend_no_depth_write)) {
+      z_write = false;
+      bd::gpu::NoteDepthWriteSuppressed();
+    }
+    Video::SetDirtyValue(dirty, ps.zWriteEnable, z_write);
     Video::SetDirtyValue(dirty, ps.cullMode, ConvertCullMode(rs->cullMode));
     // The debug wireframe toggle (Shift+F3) and the Visual prim recorder both
     // reach the host only here: they bracket their draws in

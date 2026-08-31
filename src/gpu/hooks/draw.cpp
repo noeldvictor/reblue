@@ -296,6 +296,23 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     return;
   bd::gpu::MarkDraw(cmd_list);
 
+  // Blended draws that also write depth. Qualcomm's and Mesa's documentation
+  // both say writing depth with blend enabled forces low-resolution Z to be
+  // invalidated - so one such draw early in a pass costs early rejection for
+  // every draw after it. The scene carries ~2x overdraw (measured: forcing
+  // depth ALWAYS doubles desktop GPU time), so that would be expensive.
+  //
+  // Counted rather than assumed, because two theories for why LRZ is off have
+  // already been tested and disproved.
+  {
+    const bool heuristic =
+        !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
+          s.pipelineState.destBlend == plume::RenderBlend::ZERO);
+    bd::gpu::NoteBlendedDepthWrite(s.pipelineState.alphaBlendEnable, heuristic,
+                                   s.pipelineState.zWriteEnable &&
+                                       s.pipelineState.zEnable);
+  }
+
   // Stereo, renderer side. Re-entering the guest to render a second view does
   // not work - it yields +21% draws rather than a second scene, because the
   // render list is built once per frame above every seam worth hooking (see
