@@ -305,7 +305,33 @@ instruments is lying - and `bd_mv_capture_array` has lied before (it once
 decoded an `R16G16B16A16_FLOAT` target as RGBA8 and stacked the slices half a
 slice early).
 
-**The next step is to stop trusting either and settle it in one pass**: use the
+**SETTLED, and the answer is the view.** `bd_mv_debug_layer_diff` samples layer
+0 and layer 1 through the blit's own view and outputs the difference:
+
+```
+|layer1 - layer0| through the BLIT VIEW: 0.0% of pixels differ
+```
+
+Two `Sample` calls on the same descriptor, coordinates differing only in the
+array slice (literal `0.0` vs `1.0`), returning byte-identical data - while a
+`copyTextureRegion` of that same image shows two different layers. **The view
+the descriptor holds delivers one layer twice.**
+
+That narrows it to the view or the descriptor write, and both look correct by
+inspection, which is why it needs a tool rather than another read:
+
+- `textureViewLayers` logs 2, and that value is `view_desc.arraySize` as passed
+- plume computes `layerCount = min(desc.arraySize, texture.arraySize - arrayIndex)`
+  and the image is genuinely two-layer (39 `x2L` targets in the census)
+- so a 2-layer view over a 2-layer image should not read one layer twice
+
+**The instrument for this is RenderDoc**, which shows the actual
+`VkImageView` bound at that descriptor slot with its real `subresourceRange`.
+`bd_renderdoc` already captures headlessly and the workflow is in the devloop
+skill. One capture answers whether the bound view is what this code believes it
+built.
+
+The superseded plan was: use the
 `bd_mv_debug_layer_diff` probe already in present, which samples layer 0 and
 layer 1 *through the same view the blit uses* and outputs the difference. If it
 reads 0, the view genuinely delivers one layer twice and the fault is in the
