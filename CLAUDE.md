@@ -2,6 +2,41 @@
 
 Guidance for Claude Code working in this repository.
 
+## 19 full-resolution passes a frame is the ceiling, and it is bandwidth (2026-08-31)
+
+Counted from a RenderDoc capture with `tools/rdc_outline.py`:
+
+```
+50 render passes in the frame
+  full-resolution (>=1280 wide): 19, carrying 481 draws
+  smaller post targets:          31, carrying 132 draws
+```
+
+The per-target census agrees: **20 distinct full-size colour-only surfaces
+carrying about 18 draws between them.** A pass per effect, each taking a fresh
+full-size surface - free on a Xenon's EDRAM, ruinous on a tiler.
+
+**The arithmetic, on a Quest 2:** one full-res two-layer target is 7.9 MB; a
+pass that loads and stores it moves 15.9 MB; nineteen of them is **301 MB per
+frame**. That is 4.5 GB/s at today's 15fps and **21.7 GB/s at 72Hz** - against
+an LPDDR4X budget of roughly 25-30 GB/s for the *entire system*.
+
+So **72Hz is arithmetically out of reach at this pass count**, before a single
+texel is sampled. It is not a shading problem, a draw-call problem or a CPU
+problem, and that is consistent with this session's two negative results: host
+code replacing guest code measured *slower*, and draw batching measured zero.
+
+**Foveation and render scale attack the wrong axis** - they reduce shading
+inside a pass, not the number of loads and stores. (Render scale does help, but
+by shrinking the targets, which is why quarter-scale was dramatic *and*
+destroyed the image.)
+
+The order of work is: confirm the count on a Quest, then `LOAD_OP_DONT_CARE` on
+every pass that fully overwrites its target (halves the traffic per pass - and
+the old "DONT_CARE changed nothing" result was measured when the frame was
+CPU-bound at 100ms+, so **re-test it**), then merge post passes. See
+`research/20260831_1300_nineteen-full-res-passes-is-the-ceiling.md`.
+
 ## The recomp rewrite has a working seam. `bdSceneNodeDrawSingle` is host code now (2026-08-31)
 
 `src/gpu/hooks/scene_node.cpp` defines a **strong** `bdSceneNodeDrawSingle` with
