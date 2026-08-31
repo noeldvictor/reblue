@@ -99,6 +99,14 @@ struct UploadState {
   UploadChunk buffer;
   SharedConstants shared{};
   SharedConstants lastUploaded{};
+  // Which texture slots were non-default last call. The slot loop used to
+  // rewrite all 64 index entries every draw - 16 slots x 4 arrays, ~2000 draws
+  // a frame - when Blue Dragon binds only a handful. Clearing just what was
+  // actually set leaves the rest already correct from last time.
+  // Starts all-dirty so the first call writes a real default into every slot -
+  // SharedConstants is value-initialised to zero, and zero is a VALID
+  // descriptor index, not the null one.
+  u32 populatedSlots = 0xFFFFu;
   SamplerSlotCache samplerSlots[16];
   float shadowPcfScale = 1.0f;
   bool sharedBound = false;
@@ -365,6 +373,8 @@ bool TryInit() {
   }
   for (auto &slot : s.samplerSlots)
     slot.valid = false;
+  // Same reason as the initialiser: after a reset every slot must be rewritten.
+  s.populatedSlots = 0xFFFFu;
   s.sharedBound = false;
   RecomputeShadowPcfScale(s);
   s.ready = true;
@@ -486,11 +496,20 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // last real texture per slot, exactly what the GPU would still be sampling.
   auto &vs = bd::gpu::state();
   const auto *device_p = bd::mem::at<const D3DDevice>(device_guest);
-  for (u32 i = 0; i < 16; ++i) {
+  // Only the slots that carried something last time need resetting; every
+  // other entry already holds the default from whenever it was last cleared.
+  u32 prev_populated = s.populatedSlots;
+  while (prev_populated) {
+    const u32 i = u32(__builtin_ctz(prev_populated));
+    prev_populated &= prev_populated - 1u;
     s.shared.samplerIndices[i] = 0;
     s.shared.texture2DIndices[i] = bd::gpu::kNullTexture2DDescriptorIndex;
     s.shared.texture3DIndices[i] = bd::gpu::kNullTexture3DDescriptorIndex;
     s.shared.textureCubeIndices[i] = bd::gpu::kNullTextureCubeDescriptorIndex;
+  }
+  u32 populated_now = 0;
+
+  for (u32 i = 0; i < 16; ++i) {
 
     bd::gpu::GuestTexture *tex = vs.textures[i];
     if (tex && tex->sourceSurface && tex->sourceSurface->texture &&
@@ -502,6 +521,7 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       tex = tex->sourceSurface;
     }
     if (tex && tex->descriptorIndex != bd::gpu::kInvalidDescriptorIndex) {
+      populated_now |= 1u << i;
       switch (tex->viewDimension) {
       case plume::RenderTextureViewDimension::TEXTURE_3D:
         s.shared.texture3DIndices[i] = tex->descriptorIndex;
@@ -564,6 +584,10 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       }
     }
   }
+  // Whatever is published now is what the next call has to clear. Getting this
+  // wrong leaves a stale descriptor index in a slot the guest has unbound,
+  // which is why it is stored from the same variable the loop set.
+  s.populatedSlots = populated_now;
 
   // Shader bool constants: VS at device+0x2700, PS at device+0x2710, 4 BE
   // dwords each. Shaders branch on BOOL_BIT(n) of a 256-bit register file

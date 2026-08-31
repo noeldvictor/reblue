@@ -96,6 +96,22 @@ plume::RenderPipeline *ResolvePipelineFor(VideoState &s,
 } // namespace
 
 void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
+  // Unconditional entry census, by size. Everything so far has inferred what
+  // reaches this function from the fact that the frame is black; this says.
+  {
+    static std::mutex m;
+    static std::map<u64, u32> seen;
+    static u32 told = 0;
+    std::lock_guard<std::mutex> lock(m);
+    const u64 key = tex ? (u64(tex->width) << 32 | tex->height) : 0;
+    if (++seen[key] == 1 && told < 12) {
+      ++told;
+      BD_INFO("[mv] resolve ENTERED for {}x{} layers={} companion={} dirty={}",
+              tex ? tex->width : 0, tex ? tex->height : 0,
+              tex ? tex->layers : 0, tex && tex->resolvedTexture,
+              tex && tex->multiviewDirty);
+    }
+  }
   if (!REXCVAR_GET(bd_mv_resolve))
     return;
   if (!tex || tex->layers < 2 || !tex->resolvedTexture ||
@@ -195,6 +211,28 @@ void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
   };
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
                            done, 2);
+
+  // Publish the companion under a slot the resolve owns. Built here rather than
+  // at surface creation for the same reason the per-eye views are: the pool can
+  // hand this GuestTexture a different physical texture at any time, and a view
+  // registered against the old one samples black.
+  if (tex->resolvedViewOf != tex->resolvedTexture) {
+    plume::RenderTextureViewDesc rv;
+    rv.format = tex->format;
+    rv.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+    rv.mipLevels = 1;
+    tex->resolvedView = tex->resolvedTexture->createTextureView(rv);
+    if (tex->resolvedView) {
+      if (tex->resolvedDescriptorIndex == kInvalidDescriptorIndex)
+        tex->resolvedDescriptorIndex = Video::AllocateBindlessTextureSlot();
+      if (tex->resolvedDescriptorIndex != kInvalidDescriptorIndex) {
+        SetBindlessTextureLocked(s, tex->resolvedDescriptorIndex,
+                                 tex->resolvedTexture,
+                                 tex->resolvedView.get());
+        tex->resolvedViewOf = tex->resolvedTexture;
+      }
+    }
+  }
 
   tex->multiviewDirty = false;
 

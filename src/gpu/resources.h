@@ -83,6 +83,16 @@ struct GuestTexture {
   std::unique_ptr<plume::RenderTextureView> layerView[2];
   // Bindless slots for the two single-slice views the resolve pass samples.
   u32 layerDescriptorIndex[2] = {~u32{0}, ~u32{0}};
+  // A slot bound to the *companion*, owned by the resolve rather than by the
+  // pool. descriptorIndex cannot be relied on for this: ResetPooled re-binds a
+  // recycled surface with BindTextureSRV, which points the slot back at the
+  // array image, and BindResolvedSRV then early-outs because the surface
+  // already has a descriptor. The redirect is therefore lost the first time a
+  // layered surface comes back out of the pool - which is every frame, and is
+  // why present sampled a two-layer array through a 2D view and got black.
+  u32 resolvedDescriptorIndex = ~u32{0};
+  std::unique_ptr<plume::RenderTextureView> resolvedView;
+  plume::RenderTexture *resolvedViewOf = nullptr;
   // Which physical texture layerView was built against, so a pooled surface
   // that gets re-pointed rebuilds them instead of sampling a dead image.
   plume::RenderTexture *layerViewOf = nullptr;

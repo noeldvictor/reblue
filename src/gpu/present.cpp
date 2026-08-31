@@ -233,8 +233,35 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // which the command list accepts commands, so recording a resolve from it
   // faults. This function is already issuing barriers and discards, so the list
   // is provably open.
-  if (rt && rt->layers > 1 && rt->multiviewDirty && rt->resolvedTexture)
+  // No multiviewDirty check here, deliberately. That flag means "a draw landed
+  // on this surface since the last resolve", which is the right guard mid-frame
+  // - it stops a resolve firing on a surface nothing touched. It is the WRONG
+  // guard at present: the scene alternates between two pooled 1920x1080
+  // surfaces (the census shows both at 0.50 binds/frame), so the one being
+  // presented is routinely not the one that was resolved this frame, and it
+  // arrives here with dirty=false and a companion nothing has written.
+  //
+  // Measured: the resolve is entered for 1920x1080 with dirty=true, while
+  // present's own rt reports dirty=false in the same run. Resolving whatever is
+  // about to be displayed is always correct - it is by definition the last
+  // thing drawn - and a redundant resolve is idempotent.
+  if (rt && rt->layers > 1 && rt->resolvedTexture)
     ResolveMultiviewSurfaceLocked(s, rt);
+  // Which of those four is false when the frame comes back black? The scene
+  // target is layered and present samples it, but the resolve log never names
+  // 1920x1080 - so one of these is stopping it and guessing has already cost
+  // two sessions.
+  if (rt && rt->layers > 1) {
+    static u32 told = 0;
+    if (told < 3) {
+      ++told;
+      BD_INFO("[mv] present resolve gate: {}x{} layers={} dirty={} companion={} "
+              "fb={} desc={}",
+              rt->width, rt->height, rt->layers, rt->multiviewDirty,
+              rt->resolvedTexture != nullptr,
+              rt->resolvedFramebuffer != nullptr, rt->descriptorIndex);
+    }
+  }
   {
     // Which surface does present actually hand the resolve, and is it the one
     // the scene drew into? Sampling it through its own known-good descriptor
@@ -292,7 +319,15 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
 
   const u32 swap_w = s.swap_chain->getWidth();
   const u32 swap_h = s.swap_chain->getHeight();
-  const u32 gamma_src_desc = rt->descriptorIndex;
+  // Under multiview the surface is a two-layer array, and rt->descriptorIndex
+  // may be bound to that array rather than to the flattened side-by-side
+  // companion - sampling it through a 2D view yields black. The resolve owns a
+  // slot that is always the companion, so prefer it when there is one.
+  const bool use_companion = rt->layers > 1 &&
+                             rt->resolvedDescriptorIndex !=
+                                 bd::gpu::kInvalidDescriptorIndex;
+  const u32 gamma_src_desc =
+      use_companion ? rt->resolvedDescriptorIndex : rt->descriptorIndex;
 
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS,
                            plume::RenderTextureBarrier(
