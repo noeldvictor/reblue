@@ -1141,6 +1141,50 @@ two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. O
 new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
 per handout.
 
+## The draw path is rewritten and correct. It is not where the GPU time is. (2026-08-30)
+
+`bd_draw_defer` replaces one-guest-draw-one-Vulkan-draw with a deferred queue: `DispatchDraw` has
+four call sites and every guest draw funnels through them, so this needed **no guest change**. It is
+correct and free, verified on a Quest 2 with stereo crossed in every arm:
+
+| | `dt_ms` | `gpu_total_ms` | pipeline binds |
+| --- | --- | --- | --- |
+| immediate | 66.82 | 56.40 | - |
+| deferred | 66.84 | 55.95 | 14 |
+| deferred + depth-major sort | 66.87 | 55.98 | 39 |
+
+**Sorting fires and buys nothing**, and the data says why - both facts contradict what this file
+assumed:
+
+- **The guest is already pipeline-coherent**: 166 opaque draws take **14 pipeline binds**. The
+  "715 PSO switches against 2070 draws" figure this plan was built on counts `NotePSOSwitch()` at
+  *record* time in `FlushRenderState` - guest state changes, not pipeline binds. Do not plan
+  batching work against that number again.
+- **Most of a frame cannot be reordered**: of 562 draws only 166 are opaque, and two of the three
+  flushes per frame contain **zero** opaque draws - they are blended full-screen passes where
+  submission order is the image.
+
+**Pipeline-major sorting is actively wrong on a tiler** and was the first thing built here: it
+scatters near and far geometry across pipeline groups so low-resolution Z never sees a near occluder
+first. Depth-major, pipeline to break ties.
+
+The queue is still the seam instancing, indirect draws and GPU culling attach to, so it was not
+wasted - but **the next lever is not the order of the draws.**
+
+**What it cost, and the lesson**: seven distinct bugs, six of them the same shape. Every attempt
+guarded the flush on a flag meaning "a framebuffer is bound", and each went stale somewhere -
+`SetRenderTarget` clears `draw_framebuffer_bound` before the switch, a command list reset discards
+plume's binding, present unbinds it. A stale guard either flushes into a null framebuffer (faults
+inside plume's lazy `getRenderPass` - `ACCESS_VIOLATION` at `0x10`, six times) or skips the flush so
+draws land on the wrong target and the scene goes black. **A `QueuedDraw` now carries its own
+framebuffer, viewport and scissor and rebinds them**, depending on no ambient state at all.
+
+Two instruments settled what reasoning could not, after several confident wrong guesses:
+`bd_draw_defer_each` (flush after every draw - isolates "capture is wrong" from "batching is
+wrong"), and recording the render target per draw and comparing it at flush, which printed
+`17 recorded against a DIFFERENT render target than the live one` and named the bug in one run.
+**Symbolise the backtrace and instrument the state before reasoning about either.**
+
 ## Start here if you are picking this up
 
 **Read `research/20260830_1200_the-quest-is-gpu-bound.md` first.** It is the newest and it corrects
