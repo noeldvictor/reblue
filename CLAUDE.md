@@ -1159,10 +1159,15 @@ is why several changes measured "neutral" today: a saving inside a tier is worth
 and is still real work. **Quote `gpu_total_ms` and the distance to the next boundary**, never fps or
 `dt_ms`. See `research/20260830_2359_the-frame-rate-is-quantised.md`.
 
-The nearest 6.2ms: five of the frame's ~22 passes are single-draw full-screen post passes at
-1376x720 **and two layers**, so each rasterises twice under multiview - and the post chain does not
-need stereo, since the resolve flattens the pair first. `bd_mv_small_targets_mono` exists for this
-and is limited to targets below half the design canvas, which excludes exactly the ones that pay.
+**The post chain is not that 6.2ms.** `bd_mv_force_mono_targets` - a measurement probe that renders
+wrongly on purpose - gives every target one layer and reads `gpu_total 35.68ms` against the
+baseline's 56.18. That 20.5ms is mostly **the second eye**, because the probe makes the scene mono
+too, and the scene is ~45ms of the 56. It quantifies stereo's cost under multiview at 36% of GPU;
+it is not available, because it is the product.
+
+Doing only the post chain mono - the careful version - is worth **~3ms**, from the per-target
+census. Short of a tier on its own. See
+`research/20260831_0010_the-second-eye-costs-20ms.md`.
 
 ## Where the GPU time is, MEASURED: the scene pass, 81% of it (2026-08-30)
 

@@ -30,6 +30,7 @@
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_small_targets_mono);
+REXCVAR_DECLARE(bool, bd_mv_force_mono_targets);
 REXCVAR_DECLARE(bool, bd_mv_redirect_srv);
 REXCVAR_DECLARE(i32, bd_stereo_debug_layer);
 
@@ -486,7 +487,21 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   const bool small = REXCVAR_GET(bd_mv_small_targets_mono) &&
                      (width * 2u < u32(kDesignCanvasWidth) ||
                       height * 2u < u32(kDesignCanvasHeight));
-  const u32 layers = (multiview_scene && !small) ? 2u : 1u;
+
+  // MEASUREMENT ONLY, and it renders wrongly on purpose.
+  //
+  // Under multiview every render target is two-layer, so every full-screen post
+  // pass rasterises twice - and five of a frame's ~22 passes are exactly that.
+  // The post chain does not need stereo, but making it mono for real means the
+  // resolve has to feed it, and doing that carelessly collapsed the stereo pair
+  // once before and cost a session and a half.
+  //
+  // So before paying for the careful version, this measures its ceiling: force
+  // every target to one layer and read gpu_total_ms. The image is wrong - only
+  // one eye's worth of post - and that is the point. If the ceiling is small the
+  // careful version is not worth building.
+  const bool measure_mono = REXCVAR_GET(bd_mv_force_mono_targets);
+  const u32 layers = (multiview_scene && !small && !measure_mono) ? 2u : 1u;
 
   plume::RenderTextureDesc desc;
   desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;

@@ -388,6 +388,13 @@ REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
                     "Batch render-target layout transitions at framebuffer "
                     "changes rather than mid-pass.");
 
+// Measurement only: force every multiview target to a single layer. The image
+// is wrong by construction - one eye's worth of post chain - and the number it
+// produces is the ceiling on what making the post chain mono could ever save.
+REXCVAR_DEFINE_BOOL(bd_mv_force_mono_targets, false, kCvarGroup,
+                    "Measurement: force every multiview target to one layer. "
+                    "Renders incorrectly on purpose.");
+
 REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
                     "Under multiview, give two layers only to surfaces at or "
                     "above half the design canvas.");
