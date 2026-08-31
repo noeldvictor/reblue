@@ -136,6 +136,38 @@ Nothing dominates. On a Quest the frame is **GPU-bound** - 56.4ms GPU against
 The seam is worth having because instancing and indirect draws have to attach
 somewhere, not because the function itself is expensive.
 
+## Start here, 2026-08-31 evening. Ordered, and the first two need no code.
+
+1. **Attach a Quest and run `bd_stereo`.** It works, it renders correct stereo,
+   and **it has never been measured on a headset since the constant rewrite**.
+   The 56.4ms / 14.9fps baseline everyone quotes was taken with
+   `bd_stereo_multiview=true`, which then carried five extra full-resolution
+   resolve passes - 301 MB/frame of tile traffic against `bd_stereo`'s 103 MB.
+   One run, no build, and it may move the headline number on its own.
+2. **Then re-run the levers that were dismissed against the wrong baseline.**
+   `LOAD_OP_DONT_CARE` landed in plume this session and is unmeasurable on a
+   desktop by construction (an immediate-mode GPU has no tile load/store).
+   Foveation measured +17ms on a 155ms frame that is now 66ms. Neither number
+   is current.
+3. **Finish multiview: give resolve destinations two layers.** Everything else
+   is done - the array bindless heap, per-eye `SV_ViewID` in pixel shaders, the
+   per-eye EDRAM resolve, present's own flatten. What remains is that the guest
+   resolves its two-layer scene into an *ordinary guest texture*, and those are
+   single-layer, so the pair collapses there. A resolve with a layered source
+   needs a layered destination, allocated the way `surface_pool` already
+   allocates layered render targets.
+4. **The LRZ question**, which is worth ~2x the scene pass and has no known
+   safe lever yet: 64% of draws blend AND write depth, and both naive fixes
+   destroy the image (see the 0500 note). Needs a narrower discriminator than
+   `alphaBlendEnable`.
+
+**Do not trust `tools/stereo_check.py` without looking at the capture.** It
+reported `far -90, near +90, INVERTED` on a frame that was simply mono - it was
+matching two halves of unrelated scene content. It has now produced a confidently
+wrong verdict three times: on a composited Quest panel, on a misdecoded array
+grab, and here. The numbers are only meaningful once the image is known to be a
+stereo pair.
+
 ## Use `bd_stereo`, not multiview. VR is not blocked (2026-08-31)
 
 Verified on the desktop the same day the black screen was fixed, same build,
