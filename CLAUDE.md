@@ -32,6 +32,27 @@ the forbidden comparison: multiview *as implemented here* adds five
 full-resolution passes. The technique does not. See
 `research/20260831_1500_the-resolve-chain-is-the-multiview-bug-and-the-cost.md`.
 
+## Measure `bd_stereo` on a Quest first - the baseline was taken on the slow path
+
+**The 56.4ms / 14.9fps Quest baseline was measured with
+`bd_stereo_multiview=true`**, which is the configuration that renders black on
+the desktop and carries five extra full-resolution resolve passes. Captured pass
+counts, same build, same scene:
+
+| | passes | full-res | MB/frame (Quest) | at 72Hz |
+| --- | --- | --- | --- | --- |
+| **`bd_stereo`** (works) | 29 | 13, 1 layer | **103** | **7.4 GB/s** |
+| `bd_stereo_multiview` | 50 | 19, 2 layers | 301 | 21.7 GB/s |
+
+Against 25-30 GB/s of LPDDR4X, **the working path fits and the measured one does
+not.** Nobody has measured `bd_stereo` on a headset since the constant rewrite.
+One run may move the headline number with no new work.
+
+**This corrects a claim made earlier the same day** - that 19 full-resolution
+passes put 72Hz arithmetically out of reach. That is true of the multiview
+implementation and false of the port: on the path that renders, tile bandwidth
+is comfortable, which puts shading, overdraw and foveation back on the table.
+
 ## 19 full-resolution passes a frame is the ceiling, and it is bandwidth (2026-08-31)
 
 Counted from a RenderDoc capture with `tools/rdc_outline.py`:

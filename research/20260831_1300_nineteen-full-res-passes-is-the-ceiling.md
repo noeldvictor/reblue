@@ -1,5 +1,13 @@
 # 72Hz is arithmetically impossible at 19 full-resolution passes
 
+> **CORRECTED the same day. The title is true only of the multiview path, which
+> does not render.** Captured the working `bd_stereo` path afterwards: **29
+> passes, 13 full-resolution, no layered targets, 103 MB/frame - 7.4 GB/s at
+> 72Hz**, which fits comfortably in a Quest 2's 25-30 GB/s. Bandwidth is *not*
+> the ceiling on the path that works. The 301 MB figure below is the cost of the
+> broken multiview implementation and its five resolve passes, and reading it as
+> a property of the port was an overclaim. See the correction section at the end.
+
 2026-08-31. Desktop RenderDoc capture, Quest 2 arithmetic.
 
 ## The count
@@ -78,3 +86,45 @@ proportional to how many times the frame is loaded and stored, which is what
    clearest possible statement that these are separable-by-habit rather than by
    need. Each pair merged removes 15.9 MB/frame.
 4. Only then worry about what happens inside a pass.
+
+
+## CORRECTION: this ceiling belongs to the broken path, not to the port
+
+Captured `bd_stereo=true, bd_stereo_multiview=false` - the path that actually
+renders - immediately after writing the above:
+
+```
+side-by-side stereo: 29 passes, 13 full-resolution, 16 smaller
+  passes with a view mask (layered): 0
+```
+
+| | passes | MB/frame | at 30 fps | at 72 fps |
+| --- | --- | --- | --- | --- |
+| **side-by-side (works)** | 13 full-res, 1 layer | **103** | 3.1 GB/s | **7.4 GB/s** |
+| multiview as implemented | 19 full-res, 2 layers | 301 | 9.0 GB/s | 21.7 GB/s |
+
+**7.4 GB/s at 72Hz fits comfortably in 25-30 GB/s.** So on the working path,
+tile bandwidth is not what stands between this port and 72Hz, and the claim in
+the title is wrong as a statement about the port. It is right as a statement
+about the multiview implementation: 6 extra full-resolution passes (five of them
+resolves) and 2x the bytes per pass, for a path that presently renders black.
+
+**And it matters for what the Quest numbers mean.** The 56.4ms / 14.9fps
+baseline this project keeps quoting was measured with `bd_stereo_multiview=true`
+- the 301 MB configuration. Nobody has measured `bd_stereo` on a Quest since the
+constant rewrite. That is the first thing to run when a headset is attached, and
+it may move the number substantially without any new work at all.
+
+So the honest ordering changes:
+
+1. **Measure `bd_stereo` on a Quest.** It works, it is 2.9x cheaper in tile
+   traffic than the configuration the baseline was taken in, and it costs one
+   run.
+2. If bandwidth is comfortable there, the remaining GPU cost is **shading and
+   overdraw**, which puts foveation and the LRZ question back on the table -
+   both of which this note previously argued were attacking the wrong axis. That
+   argument was made against the 301 MB figure and does not survive the 103 MB
+   one.
+3. The `Texture2DArray` heap remains the right multiview fix, for correctness
+   first: it is what makes the black frame render, and removing 6 passes is the
+   bonus rather than the point.
