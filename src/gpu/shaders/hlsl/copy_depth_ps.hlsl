@@ -15,10 +15,17 @@ SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 // Which array layer this pass reads. The heap is Texture2DArray now; these are
 // mono passes over a single-layer surface, so layer 0. A multiview-aware
 // present would pick the eye here instead.
-#define BD_L0(uv) float3((uv), 0.0)
+// Per eye, like copy_color_ps. A hardcoded layer 0 here copies the left eye's
+// depth into both layers of a multiview destination, which flattens the pair
+// just as surely as a mono colour copy does.
+static uint g_ViewIndex = 0;
+#define BD_L0(uv) float3((uv), float(g_ViewIndex))
 
-float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Depth
+float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+           in uint viewId : SV_ViewID) : SV_Depth
 {
+    g_ViewIndex = viewId;
+
     // Sample (not Load) so dim-mismatched depth resolves (672x720 -> 1280x720) stretch instead of pasting 1:1.
     return g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
         .Sample(g_SamplerDescriptorHeap[0], BD_L0(texCoord));

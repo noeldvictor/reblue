@@ -273,3 +273,46 @@ and `copy_depth_ps` is a known one: it was given `BD_L0(uv)` with a hardcoded
 layer 0, not the per-eye `g_ViewIndex` that `copy_color_ps` got. Start there.
 
 Flat path unregressed throughout: 95.5% non-black, mean RGB 61/55/44.
+
+
+## Where the trail ends, with everything eliminated
+
+`copy_depth_ps` also had a hardcoded layer 0 and now reads `SV_ViewID` (and
+`ps_6_1`), matching `copy_color_ps`. Correct, and it did not change the symptom
+either.
+
+**The contradiction, stated exactly, because it is what the next person has to
+resolve:**
+
+- present's rt is the **scene surface itself** - same pointer the array capture
+  names
+- `bd_mv_capture_array`, which `copyTextureRegion`s that image, reads
+  **`far -4, near -26`, crossed and correct**. Both layers hold different,
+  correct content
+- `[stereo] separation applied to 1043086 draws ... sep=0.699` - the skew is
+  live and non-zero
+- present's sample site is **verified correct**: `image == viewOf`,
+  `rt.layers=2`, `view.layers=2`, valid descriptor, companion path unused
+- plume's view creation is **correct**: `layerCount = min(desc.arraySize,
+  texture.arraySize - arrayIndex)`, view type `2D_ARRAY`
+- the present blit visibly splits into two halves, so its `eye` branch is taken
+- and the two halves are **byte-identical**: mean diff `0.00`, `0.0%` of pixels
+  differing
+
+A copy of that image sees two different layers. A sample of a verified 2-layer
+view of the same image sees one layer twice. Both cannot be true, so one of the
+instruments is lying - and `bd_mv_capture_array` has lied before (it once
+decoded an `R16G16B16A16_FLOAT` target as RGBA8 and stacked the slices half a
+slice early).
+
+**The next step is to stop trusting either and settle it in one pass**: use the
+`bd_mv_debug_layer_diff` probe already in present, which samples layer 0 and
+layer 1 *through the same view the blit uses* and outputs the difference. If it
+reads 0, the view genuinely delivers one layer twice and the fault is in the
+view or the descriptor write. If it reads non-zero, the blit's `eye` selection
+is wrong and the fault is six lines of shader. That distinction is one run and
+it has not been made.
+
+Everything upstream is eliminated: the scene, the guest resolve (colour and
+depth, both per-eye), every host pipeline's view mask, the layered destinations,
+the stale-view guard, and plume's copy and view paths.
