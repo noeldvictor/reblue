@@ -102,6 +102,10 @@ struct GuestTexture {
   // different image later, and the descriptor then samples an image the surface
   // no longer owns.
   plume::RenderTexture *textureViewOf = nullptr;
+  // How many array layers the primary view actually exposes. Recorded so a
+  // sample that reads the wrong layer can be told apart from a view that never
+  // had that layer to give - the two look identical from the output.
+  u32 textureViewLayers = 0;
   // Set when a draw lands on this surface, cleared by the resolve. Stops a
   // resolve firing on a target nothing has touched this frame.
   bool multiviewDirty = false;

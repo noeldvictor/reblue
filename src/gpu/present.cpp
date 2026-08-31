@@ -324,6 +324,23 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // may be bound to that array rather than to the flattened side-by-side
   // companion - sampling it through a 2D view yields black. The resolve owns a
   // slot that is always the companion, so prefer it when there is one.
+  // What is present actually sampling? The scene array holds both layers, the
+  // blit reads layer 1 as black, and four fixes aimed upstream all missed - so
+  // this reports the sample site itself rather than another theory: the image
+  // the view was built against, how many layers it exposes, and whether the
+  // companion path is being taken at all.
+  {
+    static u32 told = 0;
+    if (told < 3 && rt->layers > 1) {
+      ++told;
+      BD_INFO("[mv] present sample site: image={:012X} viewOf={:012X} "
+              "rt.layers={} view.layers={} desc={} resolvedDesc={}",
+              u64(uintptr_t(rt->texture)), u64(uintptr_t(rt->textureViewOf)),
+              rt->layers, rt->textureViewLayers, rt->descriptorIndex,
+              rt->resolvedDescriptorIndex);
+    }
+  }
+
   const bool use_companion = rt->layers > 1 &&
                              rt->resolvedDescriptorIndex !=
                                  bd::gpu::kInvalidDescriptorIndex;

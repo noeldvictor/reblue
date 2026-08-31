@@ -183,11 +183,32 @@ each is committed, and none made the right eye render:
    eye and dropped the right. Now copies every layer, and that is a correctness
    fix independent of multiview.
 
-And the decisive observation, which rules out everything upstream: with
-`bd_mv_layered_textures=true` the **scene array holds both layers at 100%
-non-black** (`bd_mv_capture_array`, same surface pointer present later samples),
-while present's blit reads layer 1 as empty. The image is right; something about
-how it is *sampled* at present is not.
+**CORRECTION.** That reasoning was wrong, and the instrument that settled it is
+in `present.cpp` now:
+
+```
+[mv] present sample site: image=02249D40F410 viewOf=02249D40F410
+     rt.layers=2 view.layers=2 desc=125 resolvedDesc=INVALID
+```
+
+The sample site is **correct in every respect** - the view is built against the
+live image, it exposes both layers, the descriptor is valid, and the companion
+path is not being taken. So sampling is not the fault.
+
+The earlier conclusion ("the image is right, the sampling is wrong") came from
+comparing the **scene** array capture against **present's rt**. Those are
+different surfaces: `bd_mv_capture_array` picks the largest colour+depth target,
+which is the scene, while present's rt is the end of the post chain. The scene
+having two good layers says nothing about what present is handed.
+
+So the fault is upstream after all, and inspection names the shape of it:
+**only one host pipeline in the renderer sets a view mask** - the resolve
+pipeline fixed above. `GetOrCreateCopyDepthPipeline`,
+`GetOrCreateResolveMSAAPipeline` and `copy_color_pipeline` do not, so any of
+them drawing into a two-layer target writes layer 0 and leaves layer 1 as it
+found it. That is exactly the symptom, and it is a mechanical fix: give those
+three the same `view_mask` parameter and cache key the resolve pipeline now has,
+then find which one is actually in the chain.
 
 Also eliminated by reading rather than by running: `state.cpp` sets
 `pipelineState.multiview = surface->layers > 1`, so a two-layer guest texture

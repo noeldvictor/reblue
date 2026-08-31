@@ -129,6 +129,7 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
     view_desc.arrayIndex = 0;
     tex->textureView = tex->texture->createTextureView(view_desc);
     tex->textureViewOf = tex->texture;
+    tex->textureViewLayers = view_desc.arraySize;
   }
   if (!tex->textureView) {
     return kInvalidDescriptorIndex;
