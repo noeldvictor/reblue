@@ -73,7 +73,9 @@ bool BuildNullTextureDescriptors(VideoState &s) {
     switch (i) {
     case kNullTexture2DDescriptorIndex:
       desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
-      view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+      // Must match the heap's declared type, or an unbound slot is a
+      // type mismatch rather than a null read.
+      view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
       break;
     case kNullTexture3DDescriptorIndex:
       desc.dimension = plume::RenderTextureDimension::TEXTURE_3D;

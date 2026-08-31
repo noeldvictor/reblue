@@ -6,12 +6,20 @@
 // without this, so the sample silently reads a uniform buffer and returns
 // black - which is exactly how the desktop present went black.
 // Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
-[[vk::binding(3, 0)]] Texture2D<float> g_Texture2DDescriptorHeap[] : register(t0, space0);
+// The bindless 2D heap is declared Texture2DArray under Vulkan so a multiview
+// target can be sampled per eye without being flattened first. Every descriptor
+// in it is an array view, so this host shader has to agree on the type. Layer 0
+// unless the shader has a reason to pick another - these are mono passes.
+[[vk::binding(3, 0)]] Texture2DArray<float> g_Texture2DDescriptorHeap[] : register(t0, space0);
 SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+// Which array layer this pass reads. The heap is Texture2DArray now; these are
+// mono passes over a single-layer surface, so layer 0. A multiview-aware
+// present would pick the eye here instead.
+#define BD_L0(uv) float3((uv), 0.0)
 
 float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Depth
 {
     // Sample (not Load) so dim-mismatched depth resolves (672x720 -> 1280x720) stretch instead of pasting 1:1.
     return g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
-        .Sample(g_SamplerDescriptorHeap[0], texCoord);
+        .Sample(g_SamplerDescriptorHeap[0], BD_L0(texCoord));
 }

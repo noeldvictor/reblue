@@ -232,7 +232,7 @@ bool CreateBackBufferTexture(VideoState &s, GuestTexture *bb, u32 w, u32 h) {
 
   plume::RenderTextureViewDesc view_desc;
   view_desc.format = bb->format;
-  view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+  view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
   view_desc.mipLevels = 1;
   bb->textureView = bb->texture->createTextureView(view_desc);
   return true;
@@ -678,7 +678,7 @@ GuestTexture *GetOrCreateDebugTexture() {
 
   plume::RenderTextureViewDesc view_desc;
   view_desc.format = t->format;
-  view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+  view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
   view_desc.mipLevels = 1;
   t->textureView = t->texture->createTextureView(view_desc);
 

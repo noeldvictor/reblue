@@ -132,7 +132,7 @@ void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
       continue;
     plume::RenderTextureViewDesc eye;
     eye.format = tex->format;
-    eye.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+    eye.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
     eye.mipLevels = 1;
     eye.arraySize = 1;
     eye.arrayIndex = layer;
@@ -219,7 +219,7 @@ void ResolveMultiviewSurfaceLocked(VideoState &s, GuestTexture *tex) {
   if (tex->resolvedViewOf != tex->resolvedTexture) {
     plume::RenderTextureViewDesc rv;
     rv.format = tex->format;
-    rv.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+    rv.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
     rv.mipLevels = 1;
     tex->resolvedView = tex->resolvedTexture->createTextureView(rv);
     if (tex->resolvedView) {

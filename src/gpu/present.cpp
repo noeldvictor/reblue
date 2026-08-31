@@ -380,8 +380,12 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
     u32 descriptor_index_2;
     float gamma;
     float display_correction;
-  } pc{gamma_src_desc, 0, s.guest_gamma * kPresentGamma,
-       kPresentDisplayCorrection};
+    // 1 tells the gamma shader the source is a two-layer multiview target, so
+    // it emits a side-by-side pair by reading layer 0 into the left half and
+    // layer 1 into the right. That is the whole of the multiview flatten now -
+    // the five full-resolution resolve passes it replaces are gone.
+  } pc{gamma_src_desc, rt->layers > 1 ? 1u : 0u,
+       s.guest_gamma * kPresentGamma, kPresentDisplayCorrection};
   s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &pc,
                                            kCopyPushConstantByteOffset,
                                            sizeof(pc));

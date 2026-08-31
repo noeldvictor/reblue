@@ -26,9 +26,9 @@ struct PS_IN
 
 float4 main(PS_IN In) : SV_Target
 {
-    Texture2D<float4> tex  = g_Texture2DDescriptorHeap[Tex0_ResourceDescriptorIndex];
+    Texture2DArray<float4> tex  = g_Texture2DDescriptorHeap[Tex0_ResourceDescriptorIndex];
     // bdBeginTextBatch asks for LINEAR, bdRenderDebugTextBegin for NEAREST, so a
     // hardcoded slot gets one of the two wrong.
     SamplerState      samp = g_SamplerDescriptorHeap[Tex0_SamplerDescriptorIndex];
-    return tex.Sample(samp, In.UV) * In.Color;
+    return tex.Sample(samp, float3(In.UV, 0.0)) * In.Color;
 }

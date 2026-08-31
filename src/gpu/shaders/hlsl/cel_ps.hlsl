@@ -24,8 +24,16 @@
 // without this, so the sample silently reads a uniform buffer and returns
 // black - which is exactly how the desktop present went black.
 // Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
-[[vk::binding(3, 0)]] Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+// The bindless 2D heap is declared Texture2DArray under Vulkan so a multiview
+// target can be sampled per eye without being flattened first. Every descriptor
+// in it is an array view, so this host shader has to agree on the type. Layer 0
+// unless the shader has a reason to pick another - these are mono passes.
+[[vk::binding(3, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+// Which array layer this pass reads. The heap is Texture2DArray now; these are
+// mono passes over a single-layer surface, so layer 0. A multiview-aware
+// present would pick the eye here instead.
+#define BD_L0(uv) float3((uv), 0.0)
 
 // Luminance bands. Four reads as animation cel, eight is closer to the game's
 // own toon ramp and much more forgiving of gradients.
@@ -46,22 +54,22 @@ float Luma(float3 c) { return dot(c, float3(0.299, 0.587, 0.114)); }
 
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
 {
-    Texture2D<float4> tex = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
+    Texture2DArray<float4> tex = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
     SamplerState samp = g_SamplerDescriptorHeap[0];
 
-    float4 sampled = tex.Sample(samp, texCoord);
+    float4 sampled = tex.Sample(samp, BD_L0(texCoord));
 
-    uint w, h;
-    tex.GetDimensions(w, h);
+    uint w, h, layers;
+    tex.GetDimensions(w, h, layers);
     const float2 texel = 1.0 / float2(max(w, 1u), max(h, 1u));
 
     // Roberts cross on luminance: two diagonal differences, four taps. A Sobel
     // is nine taps for a line that is barely different once it has been
     // thresholded, and this pass runs over every pixel of a fill-bound frame.
-    const float l00 = Luma(tex.Sample(samp, texCoord).rgb);
-    const float l10 = Luma(tex.Sample(samp, texCoord + float2(texel.x, 0.0)).rgb);
-    const float l01 = Luma(tex.Sample(samp, texCoord + float2(0.0, texel.y)).rgb);
-    const float l11 = Luma(tex.Sample(samp, texCoord + texel).rgb);
+    const float l00 = Luma(tex.Sample(samp, BD_L0(texCoord)).rgb);
+    const float l10 = Luma(tex.Sample(samp, BD_L0(texCoord + float2(texel.x, 0.0))).rgb);
+    const float l01 = Luma(tex.Sample(samp, BD_L0(texCoord + float2(0.0, texel.y))).rgb);
+    const float l11 = Luma(tex.Sample(samp, BD_L0(texCoord + texel)).rgb);
     const float grad = abs(l00 - l11) + abs(l10 - l01);
     const float edge = smoothstep(kEdgeLo, kEdgeHi, grad);
 

@@ -535,7 +535,13 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
       // framebuffer does not use it: plume builds its own attachment view from
       // the texture and takes the layer count from arraySize, which is what
       // multiview needs.
-      view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+      // An ARRAY view, always. The bindless 2D heap is declared
+      // Texture2DArray so a multiview target can be sampled per eye without
+      // being flattened first, and a Texture2DArray sampler requires an array
+      // view for every descriptor it might read - a one-layer 2D view bound
+      // there is a type mismatch. arraySize stays 1 for ordinary textures;
+      // Vulkan clamps the layer coordinate, so they read layer 0.
+      view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
       view_desc.mipLevels = 1;
       // ...and it has to SAY layer 0, not just intend it. arraySize defaults to
       // UINT32_MAX, which plume turns into the image's full layer count - so on

@@ -94,10 +94,17 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
     view_desc.format = (tex->format == plume::RenderFormat::D32_FLOAT)
                            ? plume::RenderFormat::R32_FLOAT
                            : tex->format;
+    // An ARRAY view, always. The bindless 2D heap is declared
+    // Texture2DArray so a multiview target can be sampled per eye without
+    // being flattened first, and a Texture2DArray sampler requires an array
+    // view for every descriptor it might read - a one-layer 2D view bound
+    // there is a type mismatch. arraySize stays 1 for ordinary textures;
+    // Vulkan clamps the layer coordinate, so they read layer 0.
     view_desc.dimension =
-        tex->viewDimension != plume::RenderTextureViewDimension::UNKNOWN
+        (tex->viewDimension != plume::RenderTextureViewDimension::UNKNOWN &&
+         tex->viewDimension != plume::RenderTextureViewDimension::TEXTURE_2D)
             ? tex->viewDimension
-            : plume::RenderTextureViewDimension::TEXTURE_2D;
+            : plume::RenderTextureViewDimension::TEXTURE_2D_ARRAY;
     view_desc.mipLevels = tex->mipLevels ? tex->mipLevels : 1;
     // One layer, explicitly. arraySize defaults to UINT32_MAX, which plume
     // expands to the image's full layer count - so on a two-layer multiview
