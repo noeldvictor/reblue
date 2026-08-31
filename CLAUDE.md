@@ -1157,6 +1157,25 @@ two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. O
 new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
 per handout.
 
+## Depth rejection is worth HALF the frame, and the Quest may not be getting it (2026-08-31)
+
+`bd_debug_depth_always` forces every depth compare to ALWAYS. On the desktop, same scene and draw
+count: `gpu_total` **4.63 -> 9.36ms**. The scene carries ~2x overdraw and early-Z is throwing it
+away.
+
+Overdraw is a property of the content, not the GPU - so the Quest submits the same overdraw. And
+there it is fragment-bound while front-to-back ordering buys **exactly zero**, which says
+low-resolution Z is not rejecting. If so, **~20ms of the 56ms frame is overdraw that early rejection
+should remove** - past the 50.0ms tier and close to 33.3ms.
+
+Best lead on the board, and the only one with all three: it is large (~20ms against a 6.2ms tier),
+it costs **no image quality**, and `bd_draw_sort` is already shipped and idle waiting for it.
+
+Confirm it in one command, probe already committed:
+`bash tools/verify_quest.sh "bd_stereo=false,bd_stereo_multiview=true,bd_debug_depth_always=true"`
+- unchanged from 56.18ms means nothing is being rejected and the 20ms is there to take. See
+`research/20260831_0300_depth-rejection-is-worth-half-the-scene.md`.
+
 ## The frame IS fragment-bound (2026-08-31)
 
 `bd_debug_fill_scale=50` - a quarter of the fragments, identical draw count, identical everything
