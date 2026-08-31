@@ -138,6 +138,31 @@ for the passes that target these textures, and note the census line
 `of 4000 draws on two-layer targets, N had a multiview pipeline` only covers
 draws the census sees.
 
+### Gated off, not reverted
+
+`bd_mv_layered_textures` defaults **false**. With it off, multiview present is
+back to a complete image duplicated into both halves - measured byte-identical,
+`mean abs diff 0.00`, `0.0%` of pixels differing - which is not stereo but is
+better than a black right eye. With it on, the left half renders and the right
+is empty.
+
+The change is kept rather than reverted because the destination genuinely has to
+be layered: a resolve whose source has two layers cannot preserve them into a
+one-layer texture. It is the symptom that is unexplained, not the requirement.
+
+**Where the two states leave multiview, precisely:**
+
+| | present | halves |
+| --- | --- | --- |
+| `bd_mv_layered_textures=false` (default) | 95.8% non-black | **identical** (0.00 diff) |
+| `bd_mv_layered_textures=true` | 47.9% non-black | left renders, **right black** |
+
+Both are wrong; the first is wrong in a less destructive way. Note the pipeline
+flag is not the obvious culprit - `state.cpp` sets
+`pipelineState.multiview = surface->layers > 1`, so a two-layer guest texture
+bound as a render target does get multiview pipelines. That eliminates the first
+guess.
+
 ## And a process failure worth recording
 
 Two "multiview" measurements in this session were actually **flat-path runs**.

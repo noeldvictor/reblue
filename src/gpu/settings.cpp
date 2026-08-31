@@ -484,6 +484,20 @@ REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
                     "Point a multiview surface's sampled view at the resolved "
                     "companion rather than at array layer 0.");
 
+// Guest render-target textures get two layers under multiview, so the guest's
+// EDRAM resolve has a layered destination instead of collapsing the stereo pair
+// into a mono texture.
+//
+// Architecturally right and OFF by default, because with it on the right eye
+// comes out black - present emits a side-by-side pair whose left half renders
+// and whose right half is empty, which is worse than the mono-but-complete
+// frame without it. The flatten and the resolve are correct; something writing
+// these textures is not producing layer 1. Off until that is found, rather than
+// reverted, because the destination genuinely has to be layered.
+REXCVAR_DEFINE_BOOL(bd_mv_layered_textures, false, kCvarGroup,
+                    "Give guest render-target textures two layers under "
+                    "multiview so the EDRAM resolve keeps both eyes.");
+
 // Diagnostic: present outputs |layer1 - layer0| amplified instead of the frame.
 // Black means the surface present samples has identical layers, so the stereo
 // pair was already flattened upstream and the present-side flatten is innocent.

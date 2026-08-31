@@ -30,6 +30,7 @@
 #include "gpu/texture_upload.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_layered_textures);
 
 namespace {
 
@@ -116,8 +117,11 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   const bool rt_capable_2d = !is_cube && !is_volume &&
                              !bd::gpu::IsDepthFormat(plume_format) &&
                              bd::gpu::IsRenderTargetCapable(plume_format);
-  const u32 texture_layers =
-      (rt_capable_2d && REXCVAR_GET(bd_stereo_multiview)) ? 2u : 1u;
+  const u32 texture_layers = (rt_capable_2d &&
+                              REXCVAR_GET(bd_stereo_multiview) &&
+                              REXCVAR_GET(bd_mv_layered_textures))
+                                 ? 2u
+                                 : 1u;
   desc.arraySize = is_cube ? 6 : texture_layers;
   desc.format = plume_format;
   // BD binds CreateTexture(usage=0) textures as render targets
