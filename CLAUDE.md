@@ -1141,6 +1141,29 @@ two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. O
 new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
 per handout.
 
+## The frame IS fragment-bound (2026-08-31)
+
+`bd_debug_fill_scale=50` - a quarter of the fragments, identical draw count, identical everything
+else - takes `gpu_total` from **56.18ms to 27.88ms**. The work is in fragments.
+
+That **corrects the cause** behind today's foveation result, though not its number. Foveation
+measured +17ms and was written up as overhead against ~3ms of savings. The overhead is real; the
+savings figure is the tell. If a quarter of the fragments is worth 28ms, then shading the periphery
+at 15% should have been worth far more than 3.2ms - so the density map was barely reducing shading
+while still costing the pass its fast path. `VK_EXT_fragment_density_map` on an app-owned pass is
+expensive AND largely ineffective on this driver; the workload has plenty to give.
+
+That points at `XR_FB_foveation` through the runtime's own integration - which needs the scene in
+the XR swapchain, Track B1. The runtime logs `Vulkan FFR is supported` and forces dynamic foveation
+for its own compositing, so the fast path exists and reblue is simply not on it.
+
+**And it makes the sorting result suspicious.** A fragment-bound pass with overdraw should get
+something from front-to-back through low-resolution Z, and it measured exactly zero with the sort
+provably firing. That means **LRZ is not rejecting**. Adreno disables LRZ under several conditions,
+and a depth attachment *loaded* rather than *cleared* at pass start is one - plume defaults depth to
+`VK_ATTACHMENT_LOAD_OP_LOAD`. Free to check, and worth checking first. See
+`research/20260831_0040_the-frame-is-fragment-bound-so-foveation-should-work.md`.
+
 ## The frame rate is QUANTISED. Quote gpu_total_ms, never fps. (2026-08-30)
 
 The compositor paces to whole refresh intervals, so `dt_ms` is
