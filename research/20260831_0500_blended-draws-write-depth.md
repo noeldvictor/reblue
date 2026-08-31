@@ -75,6 +75,36 @@ What the desktop did establish is that the change is free there: no CPU
 regression beyond noise (+3.3% on `us/draw`, one arm), and no new validation or
 pipeline errors.
 
+## The naive lever breaks the image. Do not ship it.
+
+Captured on the desktop the moment the desktop could render again (see below),
+`bd_blend_no_depth_write=true` against the same field scene:
+
+| | mean RGB | what it looks like |
+| --- | --- | --- |
+| off | 62 / 57 / 45 | correct - cliffs, foliage, shadows, crisp |
+| on  | 98 / 103 / 94 | **broken** |
+
+Broken specifically: the rock cliffs on the right are replaced by a flat grey
+wall, a large pale plane cuts across the middle of the scene, and the whole
+frame is heavily blurred.
+
+That is the signature of **the post chain reading the depth buffer**. Blue
+Dragon's depth-of-field and distance fog sample depth, so a transparent surface
+that stops writing depth leaves the post pass reading whatever is *behind* it -
+and it blurs and fogs the scene as though the near geometry were not there.
+
+So the 337 draws are not simply careless. Some fraction of them are genuinely
+load-bearing for a depth-consuming post pass, and a blanket suppression trades
+a frame rate win for an unusable image - the one trade this project has ruled
+out from the start.
+
+**The finding stands; the lever does not.** What is needed is a discriminator
+narrower than `alphaBlendEnable`, separating true translucency (which should not
+write depth) from alpha-blended geometry the depth buffer is expected to
+contain. `bd_blend_no_depth_write` stays off by default and is now a probe
+rather than a candidate default.
+
 ## What is owed
 
 One Quest run, and the flag is already built and committed:
@@ -94,8 +124,13 @@ This is a correctness change before it is a performance one.
 
 ## Method notes
 
-- **The desktop game window presents black at 1920x1080** while rendering a real
-  field scene (530 draws, `gpu_total 4.7ms`). Known, predates this work.
+- **The black desktop was this rewrite's own bug, and it was found here.** Six
+  host blit shaders still declared their texture heap at `register(t0, space0)`
+  - set 0 binding 0 - which the constant rewrite had reassigned to the vertex
+  constant UBO. The gamma blit sampled a uniform buffer as a texture and
+  produced black. Decoding the compiled SPIR-V settled it in one step after two
+  sessions of retracted screenshot claims: **read the binding out of the
+  module, do not read the HLSL.**
 - **`tools/shot_window.ps1` will photograph the wrong window.** Two shots came
   back 355x159 and 99.6% non-black at mean 237 - a dialog, not the game, and
   near-white rather than black, which reads like a *success* if the size is not
