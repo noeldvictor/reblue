@@ -53,3 +53,39 @@ Note the survey that was going to confirm the extension list from inside the app
 a backslash: `"...%s\n"` written through a Python edit became a literal newline inside the C string
 literal. That trap is already in CLAUDE.md and was walked into anyway. The runtime's own log
 answered the question without it.
+
+
+---
+
+## Confirmed on the device, and the one trap in the implementation
+
+`VK_EXT_fragment_density_map` is now in plume's optional device extensions and surfaces as a
+capability. The Quest 2 reports it:
+
+```
+GPU caps: Vulkan 1.1.284 on Adreno (TM) 650 | MSAA color=0x7 depth=0x7 usable=0x7 |
+geometry GPU_UPLOAD on | fragment density map yes
+```
+
+### The trap: pipelines build their own render pass
+
+`VulkanGraphicsPipeline` does not use the framebuffer's render pass. It calls `createRenderPass(...)`
+from the pipeline description's formats (`plume_vulkan.cpp:1668`) and creates the pipeline against
+*that*. The two only ever work because they are **compatible** - same attachment count, formats and
+references; load/store ops and layouts are allowed to differ.
+
+**A fragment density map is an extra attachment.** Adding it to the framebuffer's render pass and
+not the pipeline's makes them incompatible, and Vulkan treats using an incompatible pass as
+*undefined* rather than as an error. This repo has already paid for that once: the multiview resolve
+bound a pipeline built for `B8G8R8A8_UNORM` against a differently-formatted companion and the
+result was "an entirely black frame with a normal draw count", which cost a session to find.
+
+So the density attachment has to be added to **both** sides, which means it is not purely a
+framebuffer property - `RenderGraphicsPipelineDesc` needs to carry a flag too, and every pipeline
+drawn into a foveated pass must set it. That is the same shape as the `viewMask` work this fork
+already carries for multiview, where the pipeline and the framebuffer must agree on the mask or the
+draw is undefined.
+
+Getting that wrong will not produce a validation error or a crash. It will produce a plausible black
+frame, so **check the pixels, not the draw count**, and treat a clean run with no image as evidence
+of exactly this.
