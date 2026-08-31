@@ -135,6 +135,28 @@ wrong.
 - **The deferred draw queue.** `bd_draw_defer=false` under multiview is black
   too. It has now been exonerated twice, on two different symptoms.
 
+## Where to start next, and why it needs the Quest
+
+Eleven desktop runs went into this. What is now known, all measured:
+
+- the scene **renders correctly** into the layered target - the array grab still
+  reads `far -4, near -26`, crossed and correct, on the current build
+- **copies off that image work** (the array grab is a `copyTextureRegion`)
+- **every sample of it returns black**, through the companion, through the
+  array's own view, and through the per-eye slice views
+- it is not the resolve, not the draw queue, not the descriptor redirect, not
+  `multiviewDirty`, and not the view's `arraySize`
+- the image is created with the same flags as every single-layer target, which
+  sample fine
+
+An image that copies but does not sample, with a legal view and correct
+contents, is a layout or a usage-flag problem - and both are exactly what the
+validation layers report in one line. **Khronos publishes no Windows validation
+binaries**, so the next step is `bash tools/validate_quest.sh` on a Quest, not
+another desktop hypothesis. That is where this should resume.
+
+`bd_stereo` works and is the stereo path to use meanwhile.
+
 ## Note on the instrument
 
 The resolve's own log prints on the 1st and 501st call of a **single shared

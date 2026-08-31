@@ -99,6 +99,17 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
             ? tex->viewDimension
             : plume::RenderTextureViewDimension::TEXTURE_2D;
     view_desc.mipLevels = tex->mipLevels ? tex->mipLevels : 1;
+    // One layer, explicitly. arraySize defaults to UINT32_MAX, which plume
+    // expands to the image's full layer count - so on a two-layer multiview
+    // target this builds a 2-layer view with VK_IMAGE_VIEW_TYPE_2D, which
+    // Vulkan forbids (that view type requires layerCount == 1), and nothing can
+    // sample the surface through it.
+    //
+    // surface_pool sets this at creation, but that is not enough: ResetPooled
+    // re-binds every recycled surface through here, and a pooled surface whose
+    // view was dropped rebuilds it on this path - every frame.
+    view_desc.arraySize = 1;
+    view_desc.arrayIndex = 0;
     tex->textureView = tex->texture->createTextureView(view_desc);
   }
   if (!tex->textureView) {
