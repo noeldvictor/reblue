@@ -96,6 +96,45 @@ Windows validation binaries, so this needs either the Android layer via
 `tools/rdc_outline.py`, which prints per-pass formats and view masks and named a
 multiview bug in one line once before.
 
+## The whole multiview frame is black, not just present
+
+The decisive run: `bd_mv_redirect_srv=false`, which points every sampled read at
+the array's own layer-0 2D view instead of at the resolved companion.
+
+**Still 0.0% non-black.** So this is not a resolve bug and never was - *nothing*
+can sample the two-layer scene target, which is why the post chain, the resolve
+and present are black together. One cause, three symptoms.
+
+That reframes every earlier entry in this note: they were all measuring the same
+failure from different ends.
+
+### `bd_mv_debug_known_srv` is not a valid probe, and it misled this hunt
+
+It samples `tex->descriptorIndex` "instead of the per-eye views" - but with
+`bd_mv_redirect_srv` on (the default) `descriptorIndex` *is the companion*. So
+inside the resolve it samples the companion in order to write the companion.
+That is circular and returns black by construction, whatever the per-eye views
+are doing. It was read here as evidence exonerating them; it is not evidence of
+anything. Either fix it to sample the array explicitly or delete it.
+
+### One real Vulkan bug found and fixed, which was not the cause
+
+`RenderTextureViewDesc::arraySize` defaults to `UINT32_MAX`, which plume turns
+into the image's full layer count. surface_pool never set it, so the sampling
+view a comment describes as "a plain 2D view of layer 0 even when the image has
+two layers" was in fact a **2-layer view with `VK_IMAGE_VIEW_TYPE_2D`** - which
+Vulkan forbids, that view type requiring `layerCount == 1`. Now sets
+`arraySize = 1, arrayIndex = 0`.
+
+Correct on its own terms and verified not to regress the flat path (95.5%
+non-black), but the multiview frame stays black, so something else is still
+wrong.
+
+### Also eliminated
+
+- **The deferred draw queue.** `bd_draw_defer=false` under multiview is black
+  too. It has now been exonerated twice, on two different symptoms.
+
 ## Note on the instrument
 
 The resolve's own log prints on the 1st and 501st call of a **single shared

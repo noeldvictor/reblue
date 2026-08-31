@@ -537,6 +537,14 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
       // multiview needs.
       view_desc.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
       view_desc.mipLevels = 1;
+      // ...and it has to SAY layer 0, not just intend it. arraySize defaults to
+      // UINT32_MAX, which plume turns into the image's full layer count - so on
+      // a two-layer multiview target this built a 2-layer view with
+      // VK_IMAGE_VIEW_TYPE_2D, which Vulkan forbids (that view type requires
+      // layerCount == 1). Nothing could sample the scene through it, which made
+      // the post chain, the resolve and present all black at once.
+      view_desc.arraySize = 1;
+      view_desc.arrayIndex = 0;
 
       if (layers > 1) {
         // A two-layer target gets a companion the same size holding both eyes
