@@ -109,3 +109,53 @@ about `--raw` on a composited Quest panel.
 `bd_stereo` remains the working stereo path and is unaffected by any of this.
 Flat path re-verified after every step above: 95.6% non-black, mean RGB
 60/54/44.
+
+
+## Layered resolve destinations: built, and the right eye is now black
+
+Guest textures that can be render targets are allocated with **two layers** when
+`bd_stereo_multiview` is on - they are what the guest resolves its two-layer
+scene into, and a single-layer destination collapsed the pair at that copy. The
+view exposes both layers and `texture->layers` is set.
+
+With that in, and a correct config (`39` two-layer targets, present rt
+`layers=2`), present emits a side-by-side pair in which **the left half renders
+the scene and the right half is black**. So layer 1 of the final surface is
+never written.
+
+That is a step past "both halves identical" - the halves are now genuinely
+different surfaces - but it is a **regression against the previous state**,
+where the scene array at least held two populated layers. Multiview is off by
+default, so nothing shipped is affected, and the flat path is unregressed
+(95.7% non-black, mean RGB 64/58/46).
+
+The likely cause, for whoever continues: giving these textures two layers makes
+framebuffers built from them layered, so `draw_framebuffer.cpp` gives them
+`viewMask = 3` - but the draws that write them must then have multiview
+*pipelines*. A framebuffer with a view mask and a pipeline without one writes
+layer 0 only, which is exactly the symptom. Check `s.pipelineState.multiview`
+for the passes that target these textures, and note the census line
+`of 4000 draws on two-layer targets, N had a multiview pipeline` only covers
+draws the census sees.
+
+## And a process failure worth recording
+
+Two "multiview" measurements in this session were actually **flat-path runs**.
+`tools/`-style helper scripts that write `profiles/default/reblue.toml` - the
+`dtest` helper used throughout this session for regression checks - overwrite
+whatever configuration was there. Running a flat regression check between two
+multiview experiments silently reconfigured the next one.
+
+The symptom was a confident `far -90, near +90, INVERTED` from
+`stereo_check --raw` on a frame that was simply mono. **Print the `[config]`
+audit line and the two-layer target count in every multiview run**, both of
+which are already in the log:
+
+```
+[config] all 8 settings in reblue.toml took effect
+[mv] present rt=... layers=2
+2-layer targets: 39
+```
+
+`layers=1` or `0` two-layer targets means the run is not testing multiview,
+whatever the intent was.

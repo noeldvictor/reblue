@@ -29,6 +29,8 @@
 #include "gpu/surface_pool.h"
 #include "gpu/texture_upload.h"
 
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
+
 namespace {
 
 using bd::gpu::ResolveGuestBufferVa;
@@ -100,7 +102,23 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   // Guest cube creation passes depth=6, but host faces ride arraySize instead.
   desc.depth = is_volume ? depth : 1;
   desc.mipLevels = levels;
-  desc.arraySize = is_cube ? 6 : 1;
+  // Two layers for anything that can be a render target, under multiview.
+  //
+  // The guest resolves its two-layer scene surface INTO one of these - they are
+  // the HDR intermediates the post chain then samples - and a single-layer
+  // destination collapses the stereo pair at that copy, however correct
+  // everything upstream is. surface_pool already gives two layers to render
+  // targets; this is the same rule for the textures those targets resolve into.
+  //
+  // Only render-target-capable 2D textures: ordinary sampled textures, volumes
+  // and cubes are untouched, and the whole thing is inert unless multiview is
+  // on.
+  const bool rt_capable_2d = !is_cube && !is_volume &&
+                             !bd::gpu::IsDepthFormat(plume_format) &&
+                             bd::gpu::IsRenderTargetCapable(plume_format);
+  const u32 texture_layers =
+      (rt_capable_2d && REXCVAR_GET(bd_stereo_multiview)) ? 2u : 1u;
+  desc.arraySize = is_cube ? 6 : texture_layers;
   desc.format = plume_format;
   // BD binds CreateTexture(usage=0) textures as render targets
   // (R16G16B16A16_UNORM HDR intermediates), so allow RENDER_TARGET on every
@@ -148,6 +166,9 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
       view_desc.format = plume_format;
       view_desc.dimension = view_dimension;
       view_desc.mipLevels = levels;
+      // Expose every layer, or the post chain samples only the left eye.
+      if (!is_cube)
+        view_desc.arraySize = texture_layers;
       texture->textureView = texture->texture->createTextureView(view_desc);
       bd::gpu::Video::BindTextureSRV(texture);
     }
@@ -162,6 +183,7 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   } else {
     BD_ERROR("CreateTexture fired before Video host device exists");
   }
+  texture->layers = texture_layers;
   texture->width = width;
   texture->height = height;
   texture->depth = depth;
