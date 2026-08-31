@@ -15,12 +15,24 @@ SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 // Which array layer this pass reads. The heap is Texture2DArray now; these are
 // mono passes over a single-layer surface, so layer 0. A multiview-aware
 // present would pick the eye here instead.
-#define BD_L0(uv) float3((uv), 0.0)
+// The layer this invocation reads. The guest's EDRAM resolve is a full-screen
+// draw through this shader, and under multiview it runs as a multiview pass -
+// so each view must copy its own eye. Reading layer 0 here is what silently
+// flattened the stereo pair before the post chain ever saw it: the scene array
+// carried correct depth and everything downstream was mono.
+//
+// A pipeline with no view mask reports view 0, and a one-layer source clamps to
+// layer 0 anyway, so the non-multiview path is unaffected.
+static uint g_ViewIndex = 0;
+#define BD_L0(uv) float3((uv), float(g_ViewIndex))
 
 static const uint kMaxBoxTaps = 8u;
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
+    g_ViewIndex = viewId;
+
     Texture2DArray<float4> tex = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
     uint ratio = (uint)(g_PushConstants.Param1 + 0.5);
     float3 rgb;
@@ -36,7 +48,7 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
             [loop] for (uint x = 0u; x < taps; ++x)
             {
                 int ox = (int)((x * ratio + ratio / 2u) / taps);
-                acc += tex.Load(int4(base.x + ox, base.y + oy, 0, 0));
+                acc += tex.Load(int4(base.x + ox, base.y + oy, int(g_ViewIndex), 0));
             }
         }
         rgb = acc.rgb / (float)(taps * taps);

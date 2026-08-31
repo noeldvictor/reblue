@@ -413,8 +413,13 @@ plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
 // D3DDevice_Resolve targets can be any format, and one pipeline cannot cover
 // all of them, so the pipelines are cached per format.
 plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
-                                                  plume::RenderFormat format) {
-  auto it = s.resolve_pipelines_by_format.find(format);
+                                                  plume::RenderFormat format,
+                                                  u32 view_mask) {
+  // Keyed on the mask as well as the format: a multiview variant and a mono one
+  // are different pipelines against different render passes.
+  const auto key = static_cast<plume::RenderFormat>(
+      static_cast<u32>(format) | (view_mask ? 0x8000u : 0u));
+  auto it = s.resolve_pipelines_by_format.find(key);
   if (it != s.resolve_pipelines_by_format.end())
     return it->second.get();
   plume::RenderGraphicsPipelineDesc desc;
@@ -430,11 +435,12 @@ plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
   desc.renderTargetFormat[0] = format;
   desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
   desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
+  desc.viewMask = view_mask;
   auto pipeline = CreateHostGraphicsPipeline(s.device.get(), desc, "resolve");
   if (!pipeline)
     return nullptr;
   auto *raw = pipeline.get();
-  s.resolve_pipelines_by_format.emplace(format, std::move(pipeline));
+  s.resolve_pipelines_by_format.emplace(key, std::move(pipeline));
   return raw;
 }
 

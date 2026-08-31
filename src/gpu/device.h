@@ -648,8 +648,12 @@ void RetireTextureBindingsLocked(VideoState &s, GuestTexture *dead);
 void DrainDescriptorSlotsLocked(VideoState &s, u32 slot);
 plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
                                                     plume::RenderFormat fmt);
+// view_mask is 3 when the destination is a two-layer multiview target, so the
+// copy runs once per eye. It must match the framebuffer's mask or the render
+// passes are incompatible, which Vulkan leaves undefined rather than reporting.
 plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
-                                                  plume::RenderFormat format);
+                                                  plume::RenderFormat format,
+                                                  u32 view_mask = 0);
 plume::RenderPipeline *
 GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat dst_format,
                                plume::RenderSampleCounts src_samples,

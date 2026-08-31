@@ -246,6 +246,10 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
       } else {
         const plume::RenderTexture *attachments[1] = {dst->texture};
         plume::RenderFramebufferDesc desc(attachments, 1);
+        // A layered destination needs a view mask, or the copy writes layer 0
+        // and leaves the second eye untouched. Same rule as the scene
+        // framebuffer in draw_framebuffer.cpp.
+        desc.viewMask = dst->layers > 1 ? 0x3u : 0u;
         fb = s.device->createFramebuffer(desc);
       }
       if (!fb) {
@@ -298,7 +302,8 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     } else if (depth_dst) {
       pipeline = GetOrCreateCopyDepthPipeline(s, dst->format);
     } else {
-      pipeline = GetOrCreateResolvePipeline(s, dst->format);
+      pipeline = GetOrCreateResolvePipeline(s, dst->format,
+                                            dst->layers > 1 ? 0x3u : 0u);
     }
     if (!pipeline) {
       static std::atomic<u32> s_warn{0};

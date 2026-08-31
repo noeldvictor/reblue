@@ -67,4 +67,45 @@ declares it). So the mechanism is present and something narrower is defeating
 it - most likely one pass whose source descriptor is a single-layer view, which
 would make both eyes read the same input and produce identical output legitimately.
 
+## Found: the guest's EDRAM resolve is where the pair is flattened
+
+`resolve.cpp` does not contain the words `layers`, `arraySize` or `slice`. The
+guest's EDRAM resolve is a full-screen draw through `copy_color_ps`, which read
+layer 0 - so it copied the left eye and discarded the right before the post
+chain ever ran.
+
+Fixed properly: `copy_color_ps` takes `SV_ViewID` (and moves to `ps_6_1`), the
+resolve framebuffer takes `viewMask = 3` when its destination is layered, and
+`GetOrCreateResolvePipeline` gained a matching mask keyed into its cache - a
+pipeline and framebuffer that disagree on the mask is a render-pass
+incompatibility, which Vulkan leaves undefined rather than reporting.
+
+**That was necessary and not sufficient, and the reason is architectural.** The
+guest resolves its two-layer scene target into an *ordinary guest texture*, and
+those are single-layer. Present now shows a mono full-screen image rather than a
+side-by-side pair, because the surface it samples has one layer:
+
+```
+scene RT (2 layers, correct stereo)  ->  RESOLVE  ->  guest texture (1 layer)
+                                                          -> post chain -> present
+```
+
+So the last mile is: **a resolve whose source is layered must have a layered
+destination.** Guest textures that receive such a resolve need two layers
+allocated under multiview, the same way `surface_pool` already gives two layers
+to render targets. That is a contained change in guest-texture creation, and it
+is the only thing between here and multiview stereo end to end.
+
+## A note on the instrument, again
+
+After the resolve fix `tools/stereo_check.py --raw` reported
+`far -90, near +90, spread 180px, INVERTED`. That is nonsense, and looking at
+the capture said why immediately: the frame is a **mono full-screen image**, so
+the tool was matching two halves of unrelated scene content. A stereo verdict on
+an image that is not a stereo pair is not a weak signal, it is noise. **Look at
+the capture before believing the number** - the same lesson this file recorded
+about `--raw` on a composited Quest panel.
+
 `bd_stereo` remains the working stereo path and is unaffected by any of this.
+Flat path re-verified after every step above: 95.6% non-black, mean RGB
+60/54/44.
