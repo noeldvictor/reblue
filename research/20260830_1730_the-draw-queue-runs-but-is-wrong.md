@@ -1,4 +1,4 @@
-# Track A1: the draw queue runs, and is slower and wrong
+# Track A1: the draw queue - wrong, then slower, then correct
 
 2026-08-30. Work in progress, `bd_draw_defer` default off.
 
@@ -167,3 +167,66 @@ rather than at wrong geometry. Concretely, in order:
    attachment rather than discarding what earlier batches drew.
 3. `gpu_total_ms` reading as garbage is a clue, not noise - the timestamps bracket pass boundaries,
    and the queue moves where passes begin and end.
+
+
+---
+
+## Correct, verified on a Quest 2
+
+```
+deferred:  15.0 fps | dt 66.84ms | gpu_total 55.95ms | 563 draws | stereo OK, crossed
+baseline:  15.0 fps | dt 66.82ms | gpu_total 56.40ms | 555 draws | stereo OK, crossed
+```
+
+Deferred submission now reproduces immediate submission exactly, including the stereo depth
+verdict. `bd_draw_sort` on top is also correct - same numbers, stereo still crossed.
+
+### What actually fixed it: stop using guards
+
+Every earlier attempt gated the flush on a flag meaning "a framebuffer is bound", and every one of
+them went stale somewhere:
+
+- `SetRenderTarget` clears `draw_framebuffer_bound` *before* the switch happens, so the flush was
+  skipped on the one event that most needed it.
+- A command list reset discards plume's binding.
+- `present` unbinds it.
+
+A stale guard means one of two failures, and this project hit both: flushing into a null
+framebuffer, which faults inside plume's lazy `getRenderPass` - the `ACCESS_VIOLATION` at address
+`0x10` that recurred six times - or skipping the flush entirely, so draws recorded for one target
+were emitted against another and the scene came out black.
+
+**A `QueuedDraw` now carries its own framebuffer and `EmitOne` rebinds it.** The flush depends on no
+ambient state at all. That removes the class rather than the instance, and it is why the seventh
+attempt worked when six guard fixes did not.
+
+### The bug was found by instrumenting, not reasoning
+
+Recording the render target per draw and comparing it at flush printed:
+
+```
+[draw-queue] flushing 17 draws, 17 recorded against a DIFFERENT render target than the live one
+```
+
+That named it in one run, after several confident wrong guesses (the viewport, the multiview
+resolve, degenerate scissors - all real bugs, none of them this one). The same lesson as
+symbolising the backtrace: measure the thing, do not reason about it.
+
+## Sorting is correct but its effect is unmeasured
+
+`bd_draw_sort` groups opaque draws by pipeline and leaves blended ones in submission order behind
+them. Stereo stays correct and the frame does not move: `dt 66.85` against `66.84`.
+
+Two reasons, and neither is "sorting does not work":
+
+1. **`pso_switches` cannot see it.** `NotePSOSwitch()` is called in `FlushRenderState`, at *record*
+   time, so the counter is identical however the draws are later ordered. Same shape as the
+   documented trap where `NoteDraw()` counts once per guest draw and is blind to stereo's doubling.
+   Measuring the sort needs a counter on the actual `setPipeline` calls in `EmitOne`.
+2. **`depth` is still 0 for every draw**, so the sort orders by pipeline only. Front-to-back is the
+   half that buys GPU time, by letting Adreno's LRZ reject hidden fragments before shading, and it
+   cannot do anything until a real view-space distance is attached per draw.
+
+So the honest state is: the mechanism is correct and in place, and the win it exists for has not
+been switched on yet. Getting a depth key is the next piece - the guest computes exactly this in
+`bdSceneNodeCullTraverse`, which is already hooked for `bd_cull_distance`.
