@@ -623,6 +623,7 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
 
       if (!surface->textureView) {
         surface->textureView = surface->texture->createTextureView(view_desc);
+        surface->textureViewOf = surface->texture;
         Video::BindTextureSRV(surface);
       }
     }

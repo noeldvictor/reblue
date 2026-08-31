@@ -96,6 +96,12 @@ struct GuestTexture {
   // Which physical texture layerView was built against, so a pooled surface
   // that gets re-pointed rebuilds them instead of sampling a dead image.
   plume::RenderTexture *layerViewOf = nullptr;
+  // Which physical texture the PRIMARY sampling view was built against. Same
+  // problem layerViewOf solves for the per-eye views, and the main path had no
+  // guard at all: surface_pool is a pool, so a GuestTexture can be handed a
+  // different image later, and the descriptor then samples an image the surface
+  // no longer owns.
+  plume::RenderTexture *textureViewOf = nullptr;
   // Set when a draw lands on this surface, cleared by the resolve. Stops a
   // resolve firing on a target nothing has touched this frame.
   bool multiviewDirty = false;

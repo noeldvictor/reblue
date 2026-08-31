@@ -82,7 +82,14 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
   if (!tex || !tex->texture || !s.texture_descriptor_set) {
     return kInvalidDescriptorIndex;
   }
-  if (tex->descriptorIndex != kInvalidDescriptorIndex) {
+  // A view built against an image this surface no longer owns samples whatever
+  // that old image holds - which for a pooled multiview target means a layer
+  // that nothing has drawn into. multiview_resolve guards its per-eye views
+  // with layerViewOf for exactly this; the primary view had no guard.
+  if (tex->textureView && tex->textureViewOf != tex->texture) {
+    tex->textureView.reset();
+  }
+  if (tex->descriptorIndex != kInvalidDescriptorIndex && tex->textureView) {
     return tex->descriptorIndex;
   }
   if (!tex->textureView && tex->format != plume::RenderFormat::UNKNOWN) {
@@ -121,9 +128,19 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
     view_desc.arraySize = tex->layers ? tex->layers : 1;
     view_desc.arrayIndex = 0;
     tex->textureView = tex->texture->createTextureView(view_desc);
+    tex->textureViewOf = tex->texture;
   }
   if (!tex->textureView) {
     return kInvalidDescriptorIndex;
+  }
+  // Already has a slot and the view was just rebuilt: re-point the descriptor
+  // rather than leaking a new one.
+  if (tex->descriptorIndex != kInvalidDescriptorIndex) {
+    s.texture_descriptor_set->setTexture(TextureDescriptor(tex->descriptorIndex),
+                                         tex->texture,
+                                         plume::RenderTextureLayout::SHADER_READ,
+                                         tex->textureView.get());
+    return tex->descriptorIndex;
   }
   const u32 slot = AllocateSlot(s);
   if (slot == kInvalidDescriptorIndex) {

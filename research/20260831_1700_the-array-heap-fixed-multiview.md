@@ -172,10 +172,22 @@ each is committed, and none made the right eye render:
    fix was right about the view type and wrong about the count.
 2. **`surface->layers` assigned after the views were built**, so `BindTextureSRV`
    read 1 and built a one-layer view regardless. Hoisted.
-3. **`plume::copyTexture` hardcoded `layerCount = 1`** - it loops over mip levels
+3. **No stale-view guard on the primary sampling view.** `multiview_resolve`
+   guards its per-eye views with `layerViewOf` because surface_pool is a *pool*
+   and can hand a GuestTexture a different image later - the main path had no
+   equivalent, so a descriptor could keep sampling an image the surface no
+   longer owns. Added `textureViewOf`, which rebuilds the view and re-points the
+   existing descriptor rather than leaking a new slot.
+4. **`plume::copyTexture` hardcoded `layerCount = 1`** - it loops over mip levels
    but copied only array layer 0, so the guest's 1:1 EDRAM resolve kept the left
    eye and dropped the right. Now copies every layer, and that is a correctness
    fix independent of multiview.
+
+And the decisive observation, which rules out everything upstream: with
+`bd_mv_layered_textures=true` the **scene array holds both layers at 100%
+non-black** (`bd_mv_capture_array`, same surface pointer present later samples),
+while present's blit reads layer 1 as empty. The image is right; something about
+how it is *sampled* at present is not.
 
 Also eliminated by reading rather than by running: `state.cpp` sets
 `pipelineState.multiview = surface->layers > 1`, so a two-layer guest texture
