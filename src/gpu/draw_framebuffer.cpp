@@ -464,7 +464,6 @@ bool Video::BindDrawFramebufferLocked() {
   // GPU time in the census.
   bd::gpu::NotePassTarget(rt);
 
-  }
   // What deferred draws recorded from here on belong to.
   s.pending_framebuffer = fb;
   {
