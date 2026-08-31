@@ -432,12 +432,16 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
     const bool upload_on = upload_caps && Settings::Get().GeometryGPUUpload();
     std::string caps = std::format(
         "GPU caps: {} on {} | MSAA color=0x{:X} depth=0x{:X} usable=0x{:X} | "
-        "geometry GPU_UPLOAD {}",
+        "geometry GPU_UPLOAD {} | fragment density map {}",
         s.backend_info, s.device->getDescription().name, color_counts,
         depth_counts, s.supported_sample_mask,
         upload_on      ? "on"
         : !upload_caps ? "unsupported"
-                       : "off (bd_geometry_gpu_upload)");
+                       : "off (bd_geometry_gpu_upload)",
+        // Foveation. The scene pass is ~81% of the GPU frame on a Quest 2, and
+        // this is what makes its fragments cheaper without the scene having to
+        // render into an XR swapchain first.
+        s.device->getCapabilities().fragmentDensityMap ? "yes" : "no");
 #if defined(REBLUE_D3D12)
     const char *dred_state = !dred_armed        ? "off"
                              : dred_breadcrumbs ? "on"
