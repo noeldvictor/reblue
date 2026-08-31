@@ -1164,9 +1164,9 @@ mistake has been made here.
 
 So the levers are the ones that act on the scene pass: **occlusion culling** (fewer of its ~60
 draws) and **fixed foveated rendering** (cheaper fragments in the periphery of exactly this pass,
-and it is a two-layer target so every fragment is rasterised twice). Finding out *why the scene
-renders twice* is the first question - if the second pass is avoidable in VR it is ~22 ms on its
-own.
+and it is a two-layer target so every fragment is rasterised twice). **There is no free second pass to delete**: a probe on every full-resolution bind reports
+`guest_pass=7` for all of them, so this is one logical guest pass rendered into four alternating
+pool surfaces, not two separable passes.
 
 ## The draw path is rewritten and correct. It is not where the GPU time is. (2026-08-30)
 

@@ -463,6 +463,8 @@ bool Video::BindDrawFramebufferLocked() {
   // Everything recorded from here belongs to this target, for the per-target
   // GPU time in the census.
   bd::gpu::NotePassTarget(rt);
+
+  }
   // What deferred draws recorded from here on belong to.
   s.pending_framebuffer = fb;
   {

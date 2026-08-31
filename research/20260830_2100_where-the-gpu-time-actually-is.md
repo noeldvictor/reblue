@@ -63,3 +63,31 @@ rendering pays, and foveation acts on fragment cost in the periphery of precisel
 instancing and GPU culling will attach to, but reordering 166 opaque draws cannot touch 45 ms of
 full-resolution two-layer fragment work. Occlusion culling can, by removing draws from this pass;
 foveation can, by making its fragments cheaper.
+
+
+## Following it up: what the two scene binds are
+
+A probe on every full-resolution two-layer framebuffer bind, skipping the title and load screens,
+reports the guest's own render pass id. In a field frame **every one of them is `guest_pass=7`** -
+so this is one logical guest pass rendered into alternating pool surfaces, not two different passes
+that might be separately removable. The "renders twice per frame" reading is 2.0 binds/frame across
+four pool alternates.
+
+**A caution, because it nearly became the next wrong conclusion.** That probe also reported
+`ds=no` on all fourteen binds it caught, which would mean the scene renders with no depth
+attachment - no early-Z possible, and a tidy explanation for why front-to-back sorting did nothing.
+It is an artefact: fourteen consecutive binds at one instant are not a sample of the frame, and the
+aggregated census disagrees plainly -
+
+```
+target 0001BBCB0790 1376x720x2L depth: 52.50 draws/frame over 0.50 binds/frame, 11.50 ms/frame GPU
+```
+
+The full-resolution group mixes depth uses (the 3D geometry, ~11.5 ms each) with colour-only ones
+(post and resolve, well under 1 ms). The expensive ones have depth. **A bounded log answers what
+happened first, never what happens** - the same trap this repo recorded once already for a periodic
+sampler.
+
+So the scene pass genuinely is ~45 ms of a 56 ms frame, it is one guest pass, and it does have a
+depth buffer. The levers remain foveation and occlusion culling; there is no free second pass to
+delete.
