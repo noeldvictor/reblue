@@ -342,3 +342,41 @@ it has not been made.
 Everything upstream is eliminated: the scene, the guest resolve (colour and
 depth, both per-eye), every host pipeline's view mask, the layered destinations,
 the stale-view guard, and plume's copy and view paths.
+
+
+## RenderDoc names the shape of it: single-layer views over two-layer images
+
+One headless capture (`bd_renderdoc`), parsed for every `vkCreateImageView` and
+correlated against images with `arrayLayers == 2` and width >= 1280:
+
+```
+views created over full-res two-layer images:
+   VK_IMAGE_VIEW_TYPE_2D_ARRAY  base=0 layers=2 -> 44
+   VK_IMAGE_VIEW_TYPE_2D_ARRAY  base=0 layers=1 -> 24
+   VK_IMAGE_VIEW_TYPE_2D_ARRAY  base=1 layers=1 -> 24
+```
+
+**Twenty-four single-layer views at `base=0` exist over these two-layer images.**
+A descriptor holding one of those samples layer 1 as layer 0 - byte-identical
+results, which is precisely what the probe measured.
+
+The `base=1` twenty-four are the per-eye slice views `surface_pool` builds for
+the multiview resolve; the `base=0 layers=1` twenty-four are their layer-0
+partners. **Those are created unconditionally for every layered surface, even
+with `bd_mv_resolve=false` when nothing will ever use them**, and they are
+registered into the same bindless heap through `AllocateBindlessTextureSlot` /
+`SetBindlessTexture`.
+
+So the concrete hypothesis, backed by the capture rather than by reading:
+**the surface's `descriptorIndex` ends up holding a per-eye layer-0 view instead
+of the full two-layer view.** Two things to check, in order:
+
+1. Whether `surface_pool` can assign `layerDescriptorIndex[0]` and
+   `descriptorIndex` the same slot, or assign them in an order that leaves the
+   primary pointing at a slice view.
+2. Whether those per-eye views should be built at all when `bd_mv_resolve` is
+   off - with the array heap they are dead weight, and not creating them removes
+   the collision surface entirely.
+
+That is a reading task with a named target, not another guess, and the capture
+that produced it takes one run to reproduce.
