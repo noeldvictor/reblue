@@ -242,7 +242,7 @@ Where the work goes:
 | technique | state | the seam |
 | --- | --- | --- |
 | **Multiview** | **Working. Verified crossed stereo depth at the stock default** (desktop, 2026-08-30) | Resolved per surface at the render-target transition. See "multiview stereo works" above; everything from here to the end of this section is the trail that led there and is **superseded** |
-| **Fixed foveated rendering** | not started | `XR_FB_foveation`. Needs the scene rendered *into* the XR swapchain image, which it is not - present composites into it |
+| **Fixed foveated rendering** | not started, and **no longer blocked** | `XR_FB_foveation` needs the scene in an XR swapchain - but a **fragment density map** foveates any render pass, including the guest's own. The Quest logs `Vulkan FFR is supported, with density map size 32x32`. See `research/20260830_2200_foveation-needs-no-present-rewrite.md` |
 | **Occlusion culling** | distance cull only (`bd_cull_distance`) | `bdSceneNodeCullTraverse` (0x82282490), already hooked |
 | **Batching** | none | ~1000 individually placed scene nodes a frame. (The "`bdSceneNodeDrawSingle` is 23x the next consumer" figure is a **call count**, not time - it profiles at ~5%. The batching case rests on the node count, not on that number) |
 
