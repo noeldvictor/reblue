@@ -895,11 +895,17 @@ const void *Video::CurrentRenderTargetForDiag() {
 bool Video::UploadDensityMap(plume::RenderTexture *texture, const void *data,
                              u32 width, u32 height) {
   auto &s = state();
-  if (!texture || !data || !s.device)
+  if (!texture || !data || !s.device || !s.queue)
     return false;
 
-  // Row pitch has to satisfy the copy's alignment, so the staging rows are
-  // padded and the footprint is described in padded texels.
+  // Its own command list, submitted and waited here.
+  //
+  // Three earlier versions recorded into the frame's command list and all three
+  // broke it: from the framebuffer bind it deadlocked on the render mutex,
+  // without the lock it reset the list underneath the frame in progress, and
+  // even at frame start it left present dereferencing a null one. The map is
+  // created once and never changes, so a stall costs nothing and buys complete
+  // independence from the frame.
   constexpr u32 kTexel = 2; // R8G8_UNORM
   constexpr u32 kRowAlign = 256;
   const u32 row_bytes = width * kTexel;
@@ -919,42 +925,34 @@ bool Video::UploadDensityMap(plume::RenderTexture *texture, const void *data,
     std::memcpy(mapped + u64(y) * padded, src + u64(y) * row_bytes, row_bytes);
   staging->unmap();
 
-  // NO lock here. This is reached from FoveationMapFor inside
-  // BindDrawFramebufferLocked, which runs with s.mutex already held by
-  // DispatchDraw - and std::mutex is not recursive, so taking it again
-  // deadlocks the render thread. The app stays alive with no fatal line, no
-  // frames and no artefacts, which reads exactly like a run that failed to
-  // reach a field scene.
-  //
-  // And NO OpenCommandListLocked either. The caller is already recording a
-  // frame - this is reached from a framebuffer bind inside DispatchDraw - so
-  // reopening resets the command list underneath the frame in progress, which
-  // crashed in VulkanCommandList::end() on a null command list.
-  //
-  // Record into the list that is already open. The barrier below ends the
-  // active render pass first, so the copy is not issued inside one.
-  if (!s.command_list || !s.command_list_open)
+  auto cmd = s.queue->createCommandList();
+  auto fence = s.device->createCommandFence();
+  if (!cmd || !fence)
     return false;
 
+  cmd->begin();
   const plume::RenderTextureBarrier pre(texture,
                                         plume::RenderTextureLayout::COPY_DEST);
-  s.command_list->barriers(plume::RenderBarrierStage::COPY, &pre, 1);
-  s.command_list->copyTextureRegion(
+  cmd->barriers(plume::RenderBarrierStage::COPY, &pre, 1);
+  cmd->copyTextureRegion(
       plume::RenderTextureCopyLocation::Subresource(texture, 0, 0),
       plume::RenderTextureCopyLocation::PlacedFootprint(
           staging.get(), plume::RenderFormat::R8G8_UNORM, width, height, 1,
           padded / kTexel, 0));
-  // Straight into the layout a render pass reads it from, and it stays there
-  // for the life of the map - nothing writes it again.
+  // Straight into the layout a render pass reads it from; nothing writes it
+  // again for the life of the map.
   const plume::RenderTextureBarrier post(
       texture, plume::RenderTextureLayout::FRAGMENT_DENSITY_MAP);
-  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, &post, 1);
+  cmd->barriers(plume::RenderBarrierStage::GRAPHICS, &post, 1);
+  cmd->end();
 
-  // The staging buffer has to outlive the copy's execution, so it is retired
-  // with the frame rather than freed here.
-  s.retired_uploads.push_back(std::move(staging));
+  const plume::RenderCommandList *lists[] = {cmd.get()};
+  s.queue->executeCommandLists(lists, 1, nullptr, 0, nullptr, 0, fence.get());
+  s.queue->waitForCommandFence(fence.get());
+  // Waited, so the staging buffer can go now - no retirement list needed.
   return true;
 }
+
 
 bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
                                     u64 vertex_bytes, u64 pixel_bytes,

@@ -180,8 +180,9 @@ public:
   // Upload an R8G8 fragment density map and leave it in the layout a render
   // pass reads it from. One-shot at creation; the map never changes after.
   //
-  // CALLER MUST HOLD s.mutex. It is reached from the framebuffer bind, which
-  // already holds it; taking it again deadlocks the render thread silently.
+  // Self-contained: its own command list and fence, submitted and waited here,
+  // so it never touches the frame's command list. Three earlier versions did
+  // and all three broke the frame.
   static bool UploadDensityMap(plume::RenderTexture *texture, const void *data,
                                u32 width, u32 height);
 
@@ -452,13 +453,6 @@ struct VideoState {
   // from the bound framebuffer, so flushing with none is a null dereference,
   // and guarding on the other flag skipped the flush on exactly the event that
   // needed it most.
-  // Staging buffers whose copies have been recorded but not necessarily
-  // executed. Held for the life of the device: these are one-shot uploads made
-  // once at creation - currently only the foveation density maps - so the list
-  // is a handful of entries, and freeing one while its copy is still in flight
-  // is a use-after-free the validation layers do not always catch.
-  std::vector<std::unique_ptr<plume::RenderBuffer>> retired_uploads;
-
   bool plume_framebuffer_bound = false;
 
   // The framebuffer deferred draws are currently being recorded against.
