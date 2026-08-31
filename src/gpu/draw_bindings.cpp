@@ -19,6 +19,7 @@
 
 #include "gpu/shaders/shader_constants.h"
 
+REXCVAR_DECLARE(bool, bd_debug_no_alpha_test);
 REXCVAR_DECLARE(i32, bd_debug_fill_scale);
 
 namespace bd::gpu {
@@ -167,7 +168,19 @@ void Video::SetAlphaTestMode(bool enable) {
   auto &s = state();
 
   u32 specConstants = s.pipelineState.specConstants & ~kSpecConstantAlphaTest;
-  if (enable)
+  // MEASUREMENT ONLY. Renders wrongly on purpose: cutout foliage and edges
+  // become opaque quads.
+  //
+  // 86 of 141 pixel shaders carry an OpKill, because Xenos alpha test is
+  // emitted as a spec-constant-guarded clip() inside the shader. A discard
+  // disables Adreno's low-resolution Z, which would explain why front-to-back
+  // sorting measured exactly zero on a frame that is provably fragment-bound.
+  //
+  // If turning the spec constant off drops gpu_total, the driver does
+  // specialise the branch away and building real per-variant modules is worth
+  // it. If it changes nothing, the OpKill in the module is enough on its own
+  // and spec constants cannot fix this - the shaders have to be split.
+  if (enable && !REXCVAR_GET(bd_debug_no_alpha_test))
     specConstants |= kSpecConstantAlphaTest;
 
   SetDirtyValue<bool>(s.dirtyStates.pipelineState,

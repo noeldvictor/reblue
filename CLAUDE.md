@@ -1159,10 +1159,23 @@ for its own compositing, so the fast path exists and reblue is simply not on it.
 
 **And it makes the sorting result suspicious.** A fragment-bound pass with overdraw should get
 something from front-to-back through low-resolution Z, and it measured exactly zero with the sort
-provably firing. That means **LRZ is not rejecting**. Adreno disables LRZ under several conditions,
-and a depth attachment *loaded* rather than *cleared* at pass start is one - plume defaults depth to
-`VK_ATTACHMENT_LOAD_OP_LOAD`. Free to check, and worth checking first. See
-`research/20260831_0040_the-frame-is-fragment-bound-so-foveation-should-work.md`.
+provably firing - so **LRZ is not rejecting**.
+
+**Two causes tested and eliminated**, so nobody spends a day on either:
+
+- *Not* the depth load op. LRZ state is explicitly reusable when depth was stored by a previous pass
+  and is loaded unchanged; `VK_ATTACHMENT_LOAD_OP_LOAD` is fine.
+- *Not* the alpha-test discard, despite 86 of 141 pixel shaders carrying an `OpKill` from the
+  spec-constant-guarded `clip()`. `bd_debug_no_alpha_test` forces it off entirely and `gpu_total`
+  moves 56.18 -> 56.12, i.e. not at all. **Do not build per-variant alpha-test shader modules** on
+  that theory - a cheap probe that renders wrongly on purpose settled in one run what the rewrite
+  would have taken a day to disprove.
+
+Still open, in order: blending (only 166 of 562 draws are opaque, and writing depth with blend on
+forces invalidation), a changing depth compare op, and shader depth writes. The right next step is
+not another theory but a RenderDoc capture showing whether LRZ is on -
+`tools/rdc_outline.py` already reads captures. See
+`research/20260831_0100_opkill-is-why-sorting-bought-nothing.md`.
 
 ## The frame rate is QUANTISED. Quote gpu_total_ms, never fps. (2026-08-30)
 

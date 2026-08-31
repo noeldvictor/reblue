@@ -391,6 +391,13 @@ REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
 // Measurement only: force every multiview target to a single layer. The image
 // is wrong by construction - one eye's worth of post chain - and the number it
 // produces is the ceiling on what making the post chain mono could ever save.
+// Measurement only: never set the alpha-test spec constant, so no pixel shader
+// takes its clip() path. Renders wrongly - cutouts become opaque quads - and
+// answers whether the discard is what stops Adreno's low-resolution Z from
+// rejecting on a frame that is provably fragment-bound.
+REXCVAR_DEFINE_BOOL(bd_debug_no_alpha_test, false, kCvarGroup,
+                    "Measurement: never enable alpha test. Renders wrongly.");
+
 REXCVAR_DEFINE_BOOL(bd_mv_force_mono_targets, false, kCvarGroup,
                     "Measurement: force every multiview target to one layer. "
                     "Renders incorrectly on purpose.");

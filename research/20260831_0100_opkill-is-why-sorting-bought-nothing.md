@@ -1,4 +1,6 @@
-# 61% of pixel shaders can discard, which is why sorting bought nothing
+# 61% of pixel shaders can discard - and it is NOT why sorting bought nothing
+
+**Tested and disproved.** Read the correction at the end before acting on any of this.
 
 2026-08-31. Quest 2, Adreno 650.
 
@@ -68,3 +70,45 @@ opaque variants**, followed by a within-run A/B of `bd_draw_sort`, which should 
 - Qualcomm, *Adreno GPU on Mobile: Best Practices* - the list of state that disables LRZ / early-Z.
 - Mesa, *Low Resolution Z Buffer* (freedreno) - LRZ reuse across passes, and what invalidates it.
 - Danylo Piliaiev, *Low-resolution-Z on Adreno GPUs*.
+
+
+---
+
+## Tested. The discard is not the cause.
+
+`bd_debug_no_alpha_test` never sets the alpha-test spec constant, so no pixel shader takes its
+`clip()` path. The image is wrong - cutouts become opaque quads - and the number is what matters:
+
+| | `gpu_total_ms` |
+| --- | --- |
+| baseline | 56.18 |
+| alpha test forced off | **56.12** |
+
+**No change.** So either the `OpKill` present in the module disables LRZ regardless of what the
+specialisation does - in which case spec constants cannot fix it and only split modules could - or
+LRZ is off for an entirely different reason and alpha test was never relevant.
+
+Either way, **do not build per-variant alpha-test modules on the strength of this note.** That was
+going to be the next change; it would have been a substantial recompiler rewrite for nothing. One
+cheap probe that renders wrongly on purpose settled in a single run what building it would have
+taken a day to discover.
+
+## What is still unexplained, and the remaining candidates
+
+The three facts still stand and still only make sense together: the frame is fragment-bound
+(56.18 -> 27.88ms at a quarter of the fragments), front-to-back sorting buys exactly zero, and that
+combination means nothing is being rejected early.
+
+Remaining causes on the vendor list, in the order worth testing:
+
+- **Blending.** Only 166 of 562 draws are opaque; the rest blend. The docs are explicit that writing
+  depth with blend enabled forces LRZ invalidation - so a single blended depth-writing draw early in
+  the pass poisons everything after it. The draw queue already sorts opaque ahead of blended, which
+  should help and did not, so this wants checking rather than assuming.
+- **Changing the depth comparison operator.** LRZ can only be built in one direction; a guest that
+  flips between LESS and GREATER, or toggles the direction mid-pass, invalidates it. Cheap to
+  instrument: log distinct `zFunc` values seen per pass.
+- **Depth writes from the shader, or masked colour writes.**
+
+The measurement to reach for is not another theory - it is whether LRZ is on at all. That is
+visible in a RenderDoc capture, and `tools/rdc_outline.py` already exists for reading captures.
