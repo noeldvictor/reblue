@@ -37,6 +37,18 @@ void MarkResolve(plume::RenderCommandList *cmd);
 // Close the last segment. Call right before cmd->end().
 void FrameEnd(plume::RenderCommandList *cmd);
 
+// Which render target the segments from here on belong to. Called where the
+// framebuffer is bound, so the per-target census can report measured GPU
+// milliseconds instead of "Mpix if each draw covered the target once" - an
+// upper bound that says nothing about real coverage and has been over-read
+// twice.
+void NotePassTarget(const void *target);
+
+// GPU milliseconds accumulated against one target since the last reset, and the
+// reset. Totals are across every collected frame, so divide by the frame count.
+double TakeTargetGpuMs(const void *target);
+void ResetTargetGpuMs();
+
 // Read back + aggregate the slot's results. Call after its fence signalled.
 void CollectGPUTimings(u32 slot);
 

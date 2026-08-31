@@ -8,6 +8,7 @@
 #include "gpu/gpu_timing.h"
 
 #include <memory>
+#include <unordered_map>
 #include <vector>
 
 #include <plume_render_interface.h>
@@ -33,6 +34,11 @@ struct SlotTiming {
   // journal[i] = category of the segment query i CLOSES ([0] = frame start,
   // unused). Queries >= journal.size() are padding.
   std::vector<Cat> journal;
+  // The render target current while each segment ran. Turns the per-target
+  // census from "Mpix if each draw covered the target once" - an upper bound
+  // that says nothing about real coverage, and which has been over-read twice -
+  // into measured GPU milliseconds per target.
+  std::vector<const void *> journal_target;
   u32 used = 0;
   bool pending = false;
   // The last query index is reserved for the frame-end timestamp so the total
@@ -48,6 +54,9 @@ struct SlotTiming {
 SlotTiming g_slots[kNumFrames];
 u32 g_active_slot = 0;
 Cat g_cat = Cat::Inter;
+const void *g_target = nullptr;
+// Aggregated per target, published to the census after each collect.
+std::unordered_map<const void *, double> g_target_ms;
 // MoltenVK reports queryPools support but rejects the timestamp pools, so it
 // never starts supported rather than being switched off on the first frame.
 bool g_supported = !g_mvk;
@@ -60,6 +69,7 @@ void WriteMark(SlotTiming &st, plume::RenderCommandList *cmd, Cat closing) {
   }
   cmd->writeTimestamp(st.pool.get(), st.used++);
   st.journal.push_back(closing);
+  st.journal_target.push_back(g_target);
 }
 
 void SetSegment(plume::RenderCommandList *cmd, Cat cat) {
@@ -91,6 +101,17 @@ bool ReadbackIsMappable(plume::RenderQueryPool *pool) {
 
 } // namespace
 
+void NotePassTarget(const void *target) { g_target = target; }
+
+double TakeTargetGpuMs(const void *target) {
+  auto it = g_target_ms.find(target);
+  if (it == g_target_ms.end())
+    return 0.0;
+  return it->second;
+}
+
+void ResetTargetGpuMs() { g_target_ms.clear(); }
+
 void FrameBegin(plume::RenderDevice *device, plume::RenderCommandList *cmd,
                 u32 slot) {
   if (!g_supported || !device || !cmd)
@@ -112,6 +133,7 @@ void FrameBegin(plume::RenderDevice *device, plume::RenderCommandList *cmd,
   st.end_written = false;
   st.saturated = false;
   st.journal.clear();
+  st.journal_target.clear();
   st.journal.push_back(Cat::Inter); // slot 0 = frame start marker
   cmd->resetQueryPool(st.pool.get(), 0, kQueryCount);
   cmd->writeTimestamp(st.pool.get(), st.used++);
@@ -187,11 +209,16 @@ void CollectGPUTimings(u32 slot) {
   for (size_t i = 1; i < n; ++i) {
     if (r[i] <= r[i - 1])
       continue;
+    const u64 seg = r[i] - r[i - 1];
     if (st.journal[i] == Cat::Draw) {
-      draw_ns += r[i] - r[i - 1];
+      draw_ns += seg;
     } else if (st.journal[i] == Cat::Resolve) {
-      resolve_ns += r[i] - r[i - 1];
+      resolve_ns += seg;
     }
+    // Attribute every segment, not only draw ones: a pass costs what it costs,
+    // including the barriers and resolves that belong to it.
+    if (i < st.journal_target.size() && st.journal_target[i])
+      g_target_ms[st.journal_target[i]] += seg * 1e-6;
   }
   const u64 end_ns = st.end_written ? r[st.end_index] : r[n - 1];
   const f64 total_ms = (end_ns > r[0]) ? (end_ns - r[0]) * 1e-6

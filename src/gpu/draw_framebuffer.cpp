@@ -460,6 +460,9 @@ bool Video::BindDrawFramebufferLocked() {
 
   s.command_list->setFramebuffer(fb);
   s.plume_framebuffer_bound = (fb != nullptr);
+  // Everything recorded from here belongs to this target, for the per-target
+  // GPU time in the census.
+  bd::gpu::NotePassTarget(rt);
   // What deferred draws recorded from here on belong to.
   s.pending_framebuffer = fb;
   {

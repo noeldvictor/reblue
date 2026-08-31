@@ -1141,6 +1141,33 @@ two-layer target that is **~127 MB of render targets for a 4 MB framebuffer**. O
 new EDRAM tile and resolving it out was free; here it is bandwidth, allocation churn and a barrier
 per handout.
 
+## Where the GPU time is, MEASURED: the scene pass, 81% of it (2026-08-30)
+
+The per-target census now reports **measured GPU milliseconds per render target** instead of
+"Mpix/frame if each draw covered it once", which was an upper bound this repo has over-read twice
+into opposite conclusions. 53.91 ms attributed of ~56 ms, 96% coverage.
+
+| target size | count | ms/frame | share |
+| --- | --- | --- | --- |
+| **1376x720x2L** | 12 | **48.22** | **89%** |
+| everything else | 28 | 5.69 | 11% |
+
+Within that group, four scene alternates take **11.2-11.5 ms each at ~60 draws and 0.50 binds per
+frame** - so **the scene pass is 45.2 ms of 56, and it runs twice per frame**. The entire post
+chain is under 8 ms.
+
+**This corrects the conclusion drawn from the draw-queue work earlier the same day** - that the
+frame is dominated by blended full-screen passes and the post chain is the next lever. That reasoned
+from draw counts (only 166 of 562 draws are opaque) instead of measuring time. The post chain has
+many passes and they are cheap. **A count is not a cost**, which is the third time that shape of
+mistake has been made here.
+
+So the levers are the ones that act on the scene pass: **occlusion culling** (fewer of its ~60
+draws) and **fixed foveated rendering** (cheaper fragments in the periphery of exactly this pass,
+and it is a two-layer target so every fragment is rasterised twice). Finding out *why the scene
+renders twice* is the first question - if the second pass is avoidable in VR it is ~22 ms on its
+own.
+
 ## The draw path is rewritten and correct. It is not where the GPU time is. (2026-08-30)
 
 `bd_draw_defer` replaces one-guest-draw-one-Vulkan-draw with a deferred queue: `DispatchDraw` has

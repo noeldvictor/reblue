@@ -6,6 +6,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "engine/guest_census.h"
+#include "gpu/gpu_timing.h"
 #include "gpu/frame_stats.h"
 
 #include <algorithm>
@@ -190,11 +191,18 @@ void UpdateFrameStats() {
           const double dpf = double(t.draws) / double(ticks);
           const double bpf = double(t.binds) / double(std::max(ticks, 1u));
           BD_INFO("[perf]   target {:012X} {}x{}x{}L {}: {:.2f} draws/frame over "
-                  "{:.2f} binds/frame, {:.1f} Mpix/frame if each covered it once",
+                  "{:.2f} binds/frame, {:.2f} ms/frame GPU",
                   u64(uintptr_t(t.id)), t.w, t.h, t.layers,
                   t.has_ds ? "depth" : "colour-only", dpf, bpf,
-                  double(u64(t.w) * t.h) * dpf / 1e6);
+                  bd::gpu::TakeTargetGpuMs(t.id) / double(std::max(ticks, 1u)));
         }
+        // The per-target GPU accumulator covers exactly the window this
+        // census reports, so it resets with the rest of the counters. Without
+        // this it accumulates across every frame since startup while the print
+        // divides by one window's ticks, which reported 489 ms/frame of GPU on
+        // a 56 ms frame.
+        bd::gpu::ResetTargetGpuMs();
+
         // Totals, so a surface the 24-row table could not hold is visible
         // instead of silently missing. If attributed draws fall short of the
         // frame's own draw count, the table overflowed and the Mpix figures
