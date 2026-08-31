@@ -2,6 +2,54 @@
 
 Guidance for Claude Code working in this repository.
 
+## The recomp rewrite has a working seam. `bdSceneNodeDrawSingle` is host code now (2026-08-31)
+
+`src/gpu/hooks/scene_node.cpp` defines a **strong** `bdSceneNodeDrawSingle` with
+`REX_HOOK_RAW`, which overrides the weak alias the recompiler emits, and
+tail-calls `__imp__bdSceneNodeDrawSingle`. Verified on the desktop:
+
+```
+[node] host bdSceneNodeDrawSingle is live - the override links
+[node] host bdSceneNodeDrawSingle has run 200000 times
+image 95.5% non-black, mean RGB 60/55/44   (reference 95.8%, 60/54/44)
+```
+
+It links, it runs, and the frame is unchanged. **The mechanism the whole
+renderer rewrite depends on works on the function that matters most** - 2084
+calls a frame, more than any other named guest function.
+
+**`REX_FUNC` is spelled `REX_HOOK` / `REX_HOOK_RAW` here.** This file said the
+mechanism was "in use" while `grep REX_FUNC src/` returns nothing, which reads
+like it had never been tried. It has: `D3DDevice_SetTexture` is replaced this
+way in `gpu/hooks/state.cpp` and has been all along. `REX_HOOK(sub, fn)` expands
+to `extern "C" REX_FUNC(sub)` - a strong definition - so a host body simply
+wins over the weak alias.
+
+The `duplicate symbol` failure on `Visual__DrawVerticesUP` is therefore a
+property of *that* symbol, not of the mechanism. Do not treat it as a blocker on
+replacing anything else.
+
+**How to build on it.** The seam is deliberately a pass-through. Move work
+host-side one piece at a time and check a capture after each, rather than
+attempting the 1,935 guest instructions and 73 calls to 38 functions in one
+leap. Its call mix, counted from the recompiled body:
+
+| calls | what |
+| --- | --- |
+| 11x | `bdSetSamplerState` - the guest already early-outs on an unchanged value, so mostly no-ops |
+| 5x | `D3DDevice_SetTexture` - **already host code** |
+| 5x | `bdLookupCurrentTableTexture` |
+| 2x | `bdSetRenderState`, `bdLookupAndSetRenderTarget`, `D3DDevice_SetPixelShaderConstantB` |
+| 1x | `bdBuildViewMatrix` |
+
+**But size the prize honestly before spending on it.** A desktop sampling
+profile puts `bdSceneNodeDrawSingle` at **3.7%** of CPU, and the hottest entry
+in the whole profile is our own `bd::gpu::UploadSharedConstants` at 4.8%.
+Nothing dominates. On a Quest the frame is **GPU-bound** - 56.4ms GPU against
+27ms CPU - so per-node CPU work is not what stands between this port and 72Hz.
+The seam is worth having because instancing and indirect draws have to attach
+somewhere, not because the function itself is expensive.
+
 ## Use `bd_stereo`, not multiview. VR is not blocked (2026-08-31)
 
 Verified on the desktop the same day the black screen was fixed, same build,
