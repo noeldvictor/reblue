@@ -27,6 +27,7 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
+#include "engine/guest_census.h"
 #include "gpu/draw_queue.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
@@ -317,10 +318,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // in the framebuffer, so it keeps submission order when the queue sorts.
     q.blended = !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
                   s.pipelineState.destBlend == plume::RenderBlend::ZERO);
-    // Depth is not populated yet, so sorting currently groups by pipeline only.
-    // Front-to-back needs a view-space distance per node, which is the next
-    // piece and comes from the same place bd_cull_distance reads.
-    q.depth = 0.0f;
+    // Front-to-back key: the view-space distance of the scene node the guest's
+    // cull traverse last visited, which is the node these draws belong to. The
+    // guest computes it anyway for its own culling, so this costs a load.
+    q.depth = static_cast<float>(bd::engine::LastNodeViewDistanceSq());
     q.recorded_rt = s.render_target;
     q.framebuffer = s.pending_framebuffer;
     bd::gpu::DrawQueuePush(q);

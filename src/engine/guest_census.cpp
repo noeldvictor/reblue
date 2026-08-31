@@ -25,6 +25,10 @@ REXCVAR_DECLARE(bool, bd_guest_census);
 namespace bd::engine {
 
 namespace {
+// Squared view-space distance of the most recently culled scene node. Read by
+// the draw queue for its depth sort; see bd::engine::LastNodeViewDistanceSq.
+std::atomic<f64> g_last_node_distance_sq{0.0};
+
 
 struct Entry {
   const char *name;
@@ -71,6 +75,10 @@ void CensusReport(u32 frames) {
   }
 }
 
+
+double LastNodeViewDistanceSq() {
+  return g_last_node_distance_sq.load(std::memory_order_relaxed);
+}
 } // namespace bd::engine
 
 void bdCensusAnimBoneEvaluate() { bd::engine::CensusNote(0); }
@@ -199,8 +207,6 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // only place the result can be overridden.
   g_cull_this_node = false;
   const f64 limit = REXCVAR_GET(bd_cull_distance);
-  if (limit <= 0.0)
-    return false;
   const u32 va = r3.u32;
   if (va == 0)
     return false;
@@ -217,6 +223,17 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
     std::memcpy(&c[i], &bits, sizeof(float));
   }
   const f64 len_sq = f64(c[0]) * c[0] + f64(c[1]) * c[1] + f64(c[2]) * c[2];
+
+  // Publish it whether or not distance culling is on. This is the node the
+  // draws immediately after this call belong to, and its view-space distance is
+  // the sort key the draw queue needs for front-to-back order - which is what
+  // lets Adreno's low-resolution Z reject a hidden fragment before shading it.
+  // The guest computes it anyway; the alternative was digging a transform out
+  // of the shader constants per draw.
+  bd::engine::g_last_node_distance_sq.store(len_sq, std::memory_order_relaxed);
+
+  if (limit <= 0.0)
+    return false;
   // Keep anything whose own radius reaches inside the limit, so a large distant
   // object - a cliff, a building - does not pop out while the pebble beside it
   // stays.

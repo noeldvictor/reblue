@@ -20,4 +20,13 @@ void CensusReport(u32 frames);
 // a frame - individually placed props against instanced geometry.
 void CensusReportDistinct();
 
+
+// Squared view-space distance of the scene node most recently visited by the
+// guest's cull traverse, which is the node the draws right after it belong to.
+//
+// The draw queue sorts opaque draws by this so near geometry is submitted
+// first, which is what lets a tiler's low-resolution Z reject hidden fragments
+// before shading them. Squared and unnormalised: only the ordering matters.
+double LastNodeViewDistanceSq();
+
 } // namespace bd::engine

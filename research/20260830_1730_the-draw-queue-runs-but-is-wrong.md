@@ -230,3 +230,52 @@ Two reasons, and neither is "sorting does not work":
 So the honest state is: the mechanism is correct and in place, and the win it exists for has not
 been switched on yet. Getting a depth key is the next piece - the guest computes exactly this in
 `bdSceneNodeCullTraverse`, which is already hooked for `bd_cull_distance`.
+
+
+---
+
+## Sorting works, and buys nothing here. The data says why.
+
+Front-to-back needed a depth key. The guest already computes one: the cull traverse transforms each
+scene node's centre into view space, and `bd_cull_distance` reads its length. That value is now
+published (`bd::engine::LastNodeViewDistanceSq`) whether or not distance culling is on, and every
+deferred draw takes it as its sort key. It costs a load.
+
+Measured on a Quest 2, all with stereo verified crossed and correct:
+
+| | `dt_ms` | `gpu_total_ms` | pipeline binds |
+| --- | --- | --- | --- |
+| immediate | 66.82 | 56.40 | - |
+| deferred, no sort | 66.84 | 55.95 | 14 |
+| deferred, pipeline-major sort | 66.85 | 56.12 | 14 |
+| deferred, **depth-major** sort | 66.87 | 55.98 | 39 |
+
+**The sort fires** - pipeline binds go 14 to 39 when the order changes - and the frame does not
+move.
+
+### Two things this measured that reading could not
+
+**The guest is already pipeline-coherent.** 166 opaque draws take **14 pipeline binds**. There is
+no batching win available: sorting by pipeline produced a byte-identical trace to not sorting at
+all. The "715 PSO switches against 2070 draws" figure this plan was built on counts
+`NotePSOSwitch()` at *record* time in `FlushRenderState` - it counts guest state changes, not
+pipeline binds, and the two are nothing like the same number.
+
+**Most of the frame cannot be reordered.** Of 562 draws, only 166 are opaque. Two of the three
+flushes in a frame contain **zero** opaque draws - they are entirely blended full-screen
+post-processing, where submission order is the image and must be preserved.
+
+So front-to-back has 166 draws to work with, in one pass, and the GPU spends its time elsewhere.
+Pipeline-major sorting is also actively wrong for a tiler and was the first thing implemented here:
+it scatters near and far geometry across pipeline groups, so low-resolution Z never sees a near
+occluder before the far fragments it would reject.
+
+### Where this leaves the draw path
+
+The deferred queue is correct and costs nothing, and it is the seam every later technique needs -
+instancing, indirect draws, GPU culling all attach here. But **reordering opaque geometry is not
+where this frame's GPU time is**, and no amount of sorting will find it. The frame is dominated by
+blended full-screen passes.
+
+That is a redirection, not a dead end: the next lever is the post chain - how many full-screen
+passes there are and what each costs - not the order of the scene draws.

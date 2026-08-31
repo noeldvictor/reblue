@@ -189,9 +189,19 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
                          return !a.blended;
                        if (a.blended)
                          return a.sequence < b.sequence;
-                       if (a.pipeline != b.pipeline)
-                         return a.pipeline < b.pipeline;
-                       return a.depth < b.depth;
+                       // Depth first, pipeline only to break ties.
+                       //
+                       // Pipeline-major was the first attempt and it is worse
+                       // than useless: it scatters near and far geometry across
+                       // pipeline groups, so the tiler's low-resolution Z never
+                       // sees a near occluder before the far fragments it would
+                       // reject. And it buys nothing here - the guest already
+                       // submits pipeline-coherently, 14 binds for 166 opaque
+                       // draws, so sorting on it is a no-op that measured
+                       // byte-identical to not sorting at all.
+                       if (a.depth != b.depth)
+                         return a.depth < b.depth;
+                       return a.pipeline < b.pipeline;
                      });
   }
 
@@ -228,9 +238,34 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     }
   }
 
+  // Did the sort actually change anything? pso_switches cannot answer this - it
+  // is counted in FlushRenderState at record time and is identical however the
+  // draws are later ordered. Count the binds that really happen, and the spread
+  // of the depth keys, because a sort over a constant key is a no-op however
+  // correct the comparator is.
+  static u32 sort_told = 0;
+  const bool report = sort_told < 4 && g_queue.size() > 100;
+
   EmitState st;
-  for (const QueuedDraw &d : g_queue)
+  u32 pipeline_binds = 0;
+  const plume::RenderPipeline *prev = nullptr;
+  float dmin = 1e30f, dmax = -1e30f;
+  u32 opaque = 0;
+  for (const QueuedDraw &d : g_queue) {
+    if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
+    if (!d.blended) {
+      ++opaque;
+      if (d.depth < dmin) dmin = d.depth;
+      if (d.depth > dmax) dmax = d.depth;
+    }
     EmitOne(cmd, d, st);
+  }
+  if (report) {
+    ++sort_told;
+    BD_INFO("[draw-queue] {} draws, {} opaque, {} pipeline binds, depth {:.0f}"
+            "..{:.0f}", g_queue.size(), opaque, pipeline_binds,
+            opaque ? dmin : 0.0f, opaque ? dmax : 0.0f);
+  }
   g_queue.clear();
 }
 
