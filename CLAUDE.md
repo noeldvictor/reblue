@@ -374,7 +374,23 @@ Options worth knowing: `REBLUE_D3D12` (OFF selects Vulkan; forced OFF off Window
 `REBLUE_VULKAN_EXE`, `REBLUE_BUILD_INSTALLER`, `REBLUE_PROFILING` (Tracy zones, never in Release),
 `REBLUE_PCH`, and `REBLUE_OPENXR` (OFF by default, Vulkan-only, builds the VR session).
 
-### The FLAT present path renders black - on the Thor and the desktop. The VR path is fine.
+### The desktop DOES render. Three retractions say the instrument was the problem.
+
+Photographed on 2026-08-31 with `tools/shot_window.ps1`: a field scene, `mean RGB 234/185/138`,
+100% non-black. The camera happens to sit almost on the ground - a camera-placement issue, not a
+renderer one.
+
+This claim has now been made and withdrawn **three times**, and the cause was the same every time:
+a screenshot at an arbitrary moment proves nothing about an app whose camera wanders and whose
+autoplay lands somewhere different on every run. Four black samples at 100/114/128/142s and a
+rendering one at 75s came from the *same build*.
+
+**So: never conclude "it renders black" from timed samples.** Gate on content the way
+`bd_capture_min_draws` gates captures, take several samples, and look at the image rather than the
+mean. The desktop loop works and is ~90 seconds against the device's four minutes - it is the
+fastest correctness loop available and should be the first stop again.
+
+### SUPERSEDED: the flat present path renders black
 
 Not a desktop bug. Measured 2026-08-30 on three targets:
 
