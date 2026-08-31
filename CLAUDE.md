@@ -2,6 +2,74 @@
 
 Guidance for Claude Code working in this repository.
 
+## The black screen was ours, and it was a descriptor binding (2026-08-31)
+
+**Fixed.** The desktop presented black, the Quest was reported "flashing", and
+both were one bug introduced by the guest-constant rewrite.
+
+That rewrite gave bindings 0-2 of descriptor set 0 to the vertex, pixel and
+shared constant blocks as dynamic uniform buffers, and moved the bindless
+texture array to binding 3. `shader_common.h` got explicit
+`[[vk::binding(3, N)]]`. **Six host shaders did not** - `gamma_correction`,
+`copy_color`, `copy_depth`, `cel`, and both MSAA resolves - and still said
+
+```hlsl
+Texture2D<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+```
+
+which DXC maps to **set 0 binding 0**, now the vertex constant UBO. The gamma
+blit sampled a uniform buffer as a texture and produced black. The scene was
+rendering 540 draws a frame the whole time, into a surface that presented as
+nothing.
+
+`bd_2d_blit`, the brightpass pair and imgui already carried explicit bindings,
+which is why parts of the frame survived and it looked intermittent.
+
+**The lesson is the instrument.** Two sessions were spent asserting and
+retracting "the desktop renders black" on the strength of screenshots. What
+settled it in one step was decoding `OpDecorate Binding` out of the compiled
+SPIR-V. **Read the binding out of the module, never out of the HLSL** - and
+`register(tN, spaceM)` does not mean what the surrounding code assumes once any
+explicit `vk::binding` exists in the same set.
+
+Two traps that made the screenshots worse than useless, both worth knowing:
+
+- **`tools/shot_window.ps1` photographs a different window when reblue is not
+  running**, and returned 355x159 at 99.6% non-black, mean 237. A near-white
+  image reads like success. **Check the returned dimensions against the expected
+  client size** - the game window is the only visible one it owns.
+- **A desktop run needs the window foregrounded or autoplay never leaves the
+  title.** Backgrounded, a run sat at 500 frames logging only `[sleep]` lines;
+  foregrounded, the same config reached 9,573 field frames.
+
+**Any Quest number taken between the constant rewrite and this fix was measured
+with a broken final blit.** The scene pass still ran, so `gpu_total` figures are
+probably still meaningful, but nobody was looking at a correct image.
+
+## Why a tiler cannot reject: 64% of the frame blends AND writes depth
+
+**337 of 530 field-scene draws** have `alphaBlendEnable` set and write depth,
+counted in `FlushRenderState`. Qualcomm and Mesa both document that as forcing
+LRZ invalidation **for the rest of the pass**, which is the shape of the three
+measurements that otherwise sit oddly together: the frame is fragment-bound, it
+carries ~2x overdraw (forcing depth ALWAYS doubles desktop GPU time), and
+front-to-back sorting buys exactly zero.
+
+It is an EDRAM-era habit - a Xenon had no LRZ to lose.
+
+**But the blanket fix breaks the image, and this was checked before shipping.**
+`bd_blend_no_depth_write=true` replaces the cliffs with flat grey, lays a pale
+plane across the scene and blurs everything: Blue Dragon's depth-of-field and
+fog *sample the depth buffer*, so a transparent surface that stops writing depth
+leaves the post pass reading what is behind it. Mean RGB 62/57/45 -> 98/103/94.
+
+The count stands, the lever does not. What is needed is a discriminator narrower
+than `alphaBlendEnable`. The cvar stays **off** and is a probe, not a candidate.
+
+Also settled while looking: the draw queue's blended classification (the
+`!(ONE && ZERO)` factor test) agrees with `alphaBlendEnable` on **every** draw,
+so "the sort is inert because it misclassifies" is dead.
+
 ## THE TARGET: 72Hz on a Quest 2. It is reachable, and the numbers say so.
 
 Blue Dragon is not a graphically intense game, and the frame proves it: **~320,000 vertices and
