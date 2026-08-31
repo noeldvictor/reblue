@@ -2,6 +2,36 @@
 
 Guidance for Claude Code working in this repository.
 
+## The multiview resolve chain is the black frame AND a quarter of the bandwidth
+
+Classified from a RenderDoc capture. Of the 19 full-resolution passes in a
+multiview field frame: **3 are scene geometry, 5 are multiview resolves, 11 are
+other post passes.**
+
+Five full-res passes a frame exist only to flatten a two-layer array into a
+side-by-side companion - **79.5 MB/frame on a Quest 2, 26% of the frame's tile
+traffic** - because the bindless heap is `Texture2D` and nothing downstream can
+read an array.
+
+**And it is the same bug as the black frame.** The decisive multiview
+measurement was that nothing can sample the two-layer scene target: copies work,
+every sample is black. That is the resolve chain's own premise - a `Texture2D`
+heap cannot sample a layered image, the resolve exists to work around that, and
+the resolve is itself such a sample. The workaround is blocked by the thing it
+works around.
+
+So the `Texture2DArray` bindless heap - long described here as "the right way"
+and deferred as too invasive - fixes the black frame *and* deletes 26% of the
+bandwidth *and* removes `multiview_resolve.cpp` entirely along with
+`resolvedHolder`, `layerView`, `bd_mv_redirect_srv`, `bd_mv_resolve` and the
+rest of the flatten bookkeeping. Do that before anything else in the multiview
+path.
+
+It also retires "multiview measured slower than side-by-side" without needing
+the forbidden comparison: multiview *as implemented here* adds five
+full-resolution passes. The technique does not. See
+`research/20260831_1500_the-resolve-chain-is-the-multiview-bug-and-the-cost.md`.
+
 ## 19 full-resolution passes a frame is the ceiling, and it is bandwidth (2026-08-31)
 
 Counted from a RenderDoc capture with `tools/rdc_outline.py`:
