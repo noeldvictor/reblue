@@ -322,7 +322,16 @@ REXCVAR_DEFINE_BOOL(bd_mv_debug_clear, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_debug_present_clear, false, kCvarGroup,
                     "Clear the back buffer to magenta before the present blit.");
 
-REXCVAR_DEFINE_BOOL(bd_draw_defer, false, kCvarGroup,
+// ON. Verified on a Quest 2: pixel-correct stereo, crossed disparity, and a
+// frame identical to immediate submission (66.86ms against 66.82, gpu_total
+// 56.24 against 56.40). It is neutral on its own and it is the seam every later
+// technique attaches to - instancing, indirect draws, GPU culling - so it ships
+// rather than rotting behind a flag.
+//
+// Side-by-side stereo and user-pointer draws are excluded inside DispatchDraw
+// and submit immediately; a draw that cannot be deferred flushes the queue
+// first, so guest submission order is exact either way.
+REXCVAR_DEFINE_BOOL(bd_draw_defer, true, kCvarGroup,
                     "Defer draw submission to the end of the render pass.");
 
 // Sort the deferred draws: opaque grouped by pipeline and near-to-far, blended
@@ -339,6 +348,11 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
                     "Flush the draw queue after every draw, to isolate capture "
                     "correctness from batching.");
 
+// OFF, and measured rather than assumed. It is correct - stereo stays crossed -
+// and it buys nothing here: the guest already submits pipeline-coherently, 166
+// opaque draws taking 14 pipeline binds, and only 166 of 562 draws are opaque at
+// all. Reordering for no gain is risk without return, so it stays available and
+// off until something makes it pay.
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
