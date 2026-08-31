@@ -331,6 +331,12 @@ REXCVAR_DEFINE_BOOL(bd_debug_present_clear, false, kCvarGroup,
 // Side-by-side stereo and user-pointer draws are excluded inside DispatchDraw
 // and submit immediately; a draw that cannot be deferred flushes the queue
 // first, so guest submission order is exact either way.
+// Dump one field frame's render passes in order, with the draws each took. The
+// per-target census aggregates and cannot show sequence, so it cannot say
+// whether a pass runs twice - and the scene pass is 45ms of a 56ms frame.
+REXCVAR_DEFINE_BOOL(bd_dump_passes, false, kCvarGroup,
+                    "Log one field frame's render passes in order.");
+
 REXCVAR_DEFINE_BOOL(bd_draw_defer, true, kCvarGroup,
                     "Defer draw submission to the end of the render pass.");
 

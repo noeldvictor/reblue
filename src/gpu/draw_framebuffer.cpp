@@ -23,6 +23,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 
+REXCVAR_DECLARE(bool, bd_dump_passes);
 REXCVAR_DECLARE(bool, bd_barrier_hoist);
 REXCVAR_DECLARE(bool, bd_seed_targets);
 REXCVAR_DECLARE(bool, bd_mv_test_clear);
@@ -463,6 +464,31 @@ bool Video::BindDrawFramebufferLocked() {
   // Everything recorded from here belongs to this target, for the per-target
   // GPU time in the census.
   bd::gpu::NotePassTarget(rt);
+
+  // One frame's pass structure, in order, with the draws each pass took.
+  //
+  // The per-target census aggregates and cannot show sequence, so it cannot
+  // answer "is this pass run twice" - and the scene pass costs 45ms of a 56ms
+  // frame, which only makes sense if something is being done more than once.
+  // Dumped once, deep into a field scene, then never again.
+  if (REXCVAR_GET(bd_dump_passes)) {
+    static u32 binds = 0;
+    static u32 dumped = 0;
+    static u32 last_draws = 0;
+    const u32 now = bd::gpu::DrawsThisFrame();
+    if (++binds > 6000 && dumped < 40) {
+      ++dumped;
+      // With the frame index, because without it a repeating sequence reads as
+      // "the frame renders twice" when it is simply the next frame - fb_binds
+      // is ~22 a frame and a 32-line dump spans one and a half of them. That
+      // misreading was one edit away from being reported as a 2x win.
+      BD_INFO("[pass] f{} #{:02} {}x{}x{}L {} <- {} draws",
+              bd::gpu::state().frame.load(std::memory_order_relaxed), dumped,
+              rt ? rt->width : 0u, rt ? rt->height : 0u, rt ? rt->layers : 0u,
+              ds ? "depth" : "colour", now >= last_draws ? now - last_draws : now);
+    }
+    last_draws = now;
+  }
 
   // What deferred draws recorded from here on belong to.
   s.pending_framebuffer = fb;
