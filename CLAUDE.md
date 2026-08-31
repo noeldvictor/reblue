@@ -32,6 +32,47 @@ the forbidden comparison: multiview *as implemented here* adds five
 full-resolution passes. The technique does not. See
 `research/20260831_1500_the-resolve-chain-is-the-multiview-bug-and-the-cost.md`.
 
+## THE FRAME IS CPU-BOUND. Measured on a Quest 2, 2026-08-31 evening.
+
+`fence_ms` is **0.03ms**. The CPU never waits for the GPU. Both stereo paths,
+3439 and 3616 field frames, 60Hz:
+
+| | `bd_stereo` | `bd_stereo_multiview` |
+| --- | --- | --- |
+| `dt_ms` | 66.19 | 66.79 |
+| **`fence_ms`** | **0.03** | **0.22** |
+| `other_ms` | 65.35 | 65.77 |
+| `gpu_total_ms` | 38.32 | 58.10 |
+| `gpu_draw_ms` | 35.26 | 46.04 |
+
+**A 20ms difference in GPU time produces no difference in frame time.** That is
+the whole result. `other_ms` is ~65ms of a ~66ms frame in both, `pace_ms` and
+`acquire_ms` are zero, `submit` and `drain` are under a millisecond.
+
+**This retires "the frame is GPU-bound", which this file has said since
+2026-08-30.** That was true and is no longer: the note recording it measured
+`fence_ms 131.16`. The constant rewrite and this session's pass work took the
+GPU out of the critical path entirely.
+
+So **the road to 72Hz is the CPU**, and it is 65ms -> 13.9ms. Every GPU lever -
+foveation, LRZ, the resolve chain, tile bandwidth - can now only buy headroom,
+not frame rate. They remain worth having for a headset's thermal budget and for
+image quality; they cannot move fps while the fence reads zero.
+
+**What this makes urgent, and it is what the owner has been asking for all
+along:** the recompiled guest and the per-draw submission around it.
+
+- `bdSceneNodeDrawSingle` is a host function now (`gpu/hooks/scene_node.cpp`)
+  and is still a pass-through. That is the seam.
+- **Instancing**: 2083 calls a frame take only **1270 distinct first arguments**.
+- **Indirect draws** off `bd_draw_defer`, which is shipped, correct and idle.
+- The SDK's **vector-register codegen** (VMX lives in memory; ~15 memory ops per
+  useful arithmetic one), never attempted.
+
+And the one negative result that shapes all of it: replacing `bdSetSamplerState`
+with host code measured **slower**, twice, in within-run A/Bs. Translating guest
+functions one-for-one is not the win. **Submitting less is.**
+
 ## Measure `bd_stereo` on a Quest first - the baseline was taken on the slow path
 
 **The 56.4ms / 14.9fps Quest baseline was measured with
