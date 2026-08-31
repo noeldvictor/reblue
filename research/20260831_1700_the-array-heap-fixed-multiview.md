@@ -163,6 +163,31 @@ flag is not the obvious culprit - `state.cpp` sets
 bound as a render target does get multiview pipelines. That eliminates the first
 guess.
 
+### Three well-founded fixes, none of which was the cause
+
+For the record, so the next attempt does not re-tread them. Each was a real bug,
+each is committed, and none made the right eye render:
+
+1. **`arraySize` pinned to 1 on the sampling view** - the earlier illegal-2D-view
+   fix was right about the view type and wrong about the count.
+2. **`surface->layers` assigned after the views were built**, so `BindTextureSRV`
+   read 1 and built a one-layer view regardless. Hoisted.
+3. **`plume::copyTexture` hardcoded `layerCount = 1`** - it loops over mip levels
+   but copied only array layer 0, so the guest's 1:1 EDRAM resolve kept the left
+   eye and dropped the right. Now copies every layer, and that is a correctness
+   fix independent of multiview.
+
+Also eliminated by reading rather than by running: `state.cpp` sets
+`pipelineState.multiview = surface->layers > 1`, so a two-layer guest texture
+bound as a render target does get multiview pipelines.
+
+What remains unexplained is narrow: with `bd_mv_layered_textures=true`,
+present's rt is `layers=2`, its layer 0 holds the scene, and its layer 1 is
+empty. Something that writes these textures is not producing layer 1. The next
+instrument should be a per-pass layer-1 check - the `bd_mv_debug_layer_diff`
+probe already added to present, applied earlier in the chain - not another
+hypothesis.
+
 ## And a process failure worth recording
 
 Two "multiview" measurements in this session were actually **flat-path runs**.
