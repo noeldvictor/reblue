@@ -2,6 +2,28 @@
 
 Guidance for Claude Code working in this repository.
 
+## Use `bd_stereo`, not multiview. VR is not blocked (2026-08-31)
+
+Verified on the desktop the same day the black screen was fixed, same build,
+same scene:
+
+| path | present | stereo verdict |
+| --- | --- | --- |
+| **`bd_stereo=true`** (side-by-side) | **95.8% non-black** | `far +4, near -7`, crossed, correct - and looked at |
+| `bd_stereo_multiview=true` | **0.0% non-black** | layers are correct (`far -4, near -26`), present is black |
+
+Multiview's *layered targets* are right - the array grab passes `stereo_check
+--stacked` - and it is the flatten-for-display resolve that produces black.
+RenderDoc confirms every pass executes with the correct viewports, and sampling
+even a known-good descriptor inside the resolve pass comes back black. See
+`research/20260831_0700_multiview-present-is-black.md`; two real bugs were fixed
+on the way (the pool silently reverting the companion redirect every frame, and
+`multiviewDirty` being the wrong guard at present) and neither was the cause.
+
+**So multiview is an optimisation that is currently broken, not the blocker for
+VR.** `bd_stereo` is the working stereo route and is off by default only because
+it costs a second submission.
+
 ## The black screen was ours, and it was a descriptor binding (2026-08-31)
 
 **Fixed.** The desktop presented black, the Quest was reported "flashing", and

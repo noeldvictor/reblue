@@ -44,6 +44,42 @@ So the geometry is right and the flatten-for-display step is what fails.
 Neither fixed the black frame, which is why they are recorded here as
 corrections rather than as the answer.
 
+## Side-by-side stereo works end to end. VR is not blocked.
+
+Same build, same scene, `bd_stereo=true` with multiview off:
+
+```
+non-black 95.8%   mean RGB 60/55/44
+far +4, near -7  ->  near - far = -11 px, crossed and correct
+```
+
+Looked at, not just measured: a proper stereo pair, both eyes carrying the full
+scene. **So the VR path has a working stereo route today** - it is multiview
+specifically that presents black, and multiview is off by default. Anyone
+picking this up should use `bd_stereo` and treat multiview as the optimisation
+it is, not as the thing blocking VR.
+
+## RenderDoc confirms the passes execute
+
+`bd_renderdoc` + `tools/rdc_outline.py` on a multiview frame, 50 passes:
+
+```
+[ 8] fb=15158 1920x1080 mask=3 STEREO pipes=8 draws=157   <- scene, stereo
+[12] fb=1605  1920x1080 mask=0 mono   draws=2 vp=960x1080@960   <- its resolve
+...
+[48] fb=1953  1920x1080 mask=0 mono   draws=2 vp=960x1080@960   <- resolve at present
+[49] fb=1568  1920x1080 mask=0 mono   draws=1 vp=1920x1080@0    <- the present blit
+```
+
+The scene renders stereo (`mask=3`, 157 draws over 8 pipelines), every resolve
+runs mono with the two half-width viewports the eye loop asks for, and present
+blits full-screen. **Structurally the whole chain is correct and executing** -
+which rules out "the pass never runs" for good.
+
+Note `pipes=0` on the resolve passes is not evidence of a missing pipeline:
+plume dedups `vkCmdBindPipeline`, so a pipeline reused across passes is only
+counted where it changes.
+
 ## Where it actually is
 
 Every sample taken *inside the resolve pass* comes back black, including one
