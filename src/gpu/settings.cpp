@@ -395,6 +395,13 @@ REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
 // takes its clip() path. Renders wrongly - cutouts become opaque quads - and
 // answers whether the discard is what stops Adreno's low-resolution Z from
 // rejecting on a frame that is provably fragment-bound.
+// Measurement only: force every pipeline's depth compare to ALWAYS, so no
+// fragment is ever rejected by depth. Renders wrongly. If depth rejection is
+// doing any work this must be SLOWER; if the frame does not move, nothing was
+// being rejected and the full overdraw is already being shaded.
+REXCVAR_DEFINE_BOOL(bd_debug_depth_always, false, kCvarGroup,
+                    "Measurement: depth compare ALWAYS. Renders wrongly.");
+
 REXCVAR_DEFINE_BOOL(bd_debug_no_alpha_test, false, kCvarGroup,
                     "Measurement: never enable alpha test. Renders wrongly.");
 

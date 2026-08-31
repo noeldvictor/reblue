@@ -23,6 +23,7 @@
 #include "gpu/occlusion.h"
 #include "gpu/shaders/shader_cache.h"
 
+REXCVAR_DECLARE(bool, bd_debug_depth_always);
 namespace bd::gpu {
 
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
@@ -183,7 +184,17 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
   desc.vertexShader = vs;
   desc.pixelShader = ps;
 
-  desc.depthFunction = state.zFunc;
+  // MEASUREMENT ONLY, renders wrongly on purpose: every fragment passes depth.
+  //
+  // The frame is fragment-bound (a quarter of the fragments halves GPU time)
+  // and front-to-back ordering buys exactly nothing, which together say nothing
+  // is being rejected early. This tests that directly. If depth rejection is
+  // working, forcing ALWAYS shades strictly more fragments and must be SLOWER.
+  // If it changes nothing, nothing was being rejected and the whole overdraw is
+  // already being paid for.
+  desc.depthFunction = REXCVAR_GET(bd_debug_depth_always)
+                           ? plume::RenderComparisonFunction::ALWAYS
+                           : state.zFunc;
   desc.depthEnabled = state.zEnable;
   desc.depthWriteEnabled = state.zWriteEnable;
   desc.depthBias = state.depthBias;
