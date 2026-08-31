@@ -8,6 +8,7 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include "gpu/foveation.h"
 #include "gpu/frame.h"
 
 #include <atomic>
@@ -59,6 +60,7 @@ void BeginCommandList(VideoState &s) {
   // flushing into a null framebuffer - plume starts its render pass lazily from
   // that, so it faulted inside getRenderPass.
   s.plume_framebuffer_bound = false;
+
   if (!s.null_texture_barriers_submitted) {
     plume::RenderTextureBarrier barriers[kNullTextureDescriptorCount];
     for (u32 i = 0; i < kNullTextureDescriptorCount; ++i) {
@@ -82,6 +84,13 @@ void BeginCommandList(VideoState &s) {
   s.command_list->setGraphicsDescriptorSet(s.sampler_descriptor_set.get(), 3);
   FrameBegin(s.device.get(), s.command_list, cur);
   s.command_list_open = true;
+
+  // Freshly opened list, no render pass active, and command_list_open already
+  // set - the one safe point to upload a fragment density map. Placed after the
+  // flag, not before: UploadDensityMap refuses to record into a list it does not
+  // believe is open, so an earlier call silently did nothing and the map stayed
+  // queued for ever. See FoveationBeginFrame.
+  bd::gpu::FoveationBeginFrame(s.command_list);
   // IA + pipeline + root descriptor bindings do not survive begin().
   s.dirtyStates.vertexStreamFirst = 0;
   s.dirtyStates.vertexStreamLast = 15;

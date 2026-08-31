@@ -9,6 +9,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include <atomic>
+#include "gpu/foveation.h"
 #include "gpu/draw_queue.h"
 #include "gpu/frame.h"
 
@@ -74,6 +75,17 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   // "multiview does nothing".
   const u32 fb_layers = rt ? rt->layers : container->layers;
   desc.viewMask = fb_layers > 1 ? 0x3u : 0u;
+
+  // Foveation. Decided from the colour target's size for exactly the same
+  // reason as the view mask above: the pipeline decides from the same thing, and
+  // if the two disagree the render passes are incompatible - which Vulkan
+  // leaves undefined rather than reporting, so it would show up as a plausible
+  // black frame rather than an error.
+  if (rt) {
+    bd::gpu::FoveationEnsure(rt->width, rt->height);
+    if (bd::gpu::FoveationWanted(rt->width, rt->height, rt->layers))
+      desc.fragmentDensityMap = bd::gpu::FoveationMapFor(rt->width, rt->height);
+  }
   {
     static std::atomic<int> n{0};
     // Only the layered ones, and beyond the first few: a multiview colour

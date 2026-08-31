@@ -17,6 +17,7 @@
 #include <plume_render_interface.h>
 
 #include "core/logging.h"
+#include "gpu/foveation.h"
 #include "gpu/draw_queue.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
@@ -132,6 +133,14 @@ void D3DDevice_SetRenderTarget_hook(
   bd::gpu::Video::SetDirtyValue<bool>(
       s.dirtyStates.pipelineState, s.pipelineState.multiview,
       surface != nullptr && surface->layers > 1);
+
+  // Foveation follows the target too, and from the same inputs the framebuffer
+  // uses - the two render passes must agree or they are incompatible.
+  bd::gpu::Video::SetDirtyValue<bool>(
+      s.dirtyStates.pipelineState, s.pipelineState.fragmentDensityMap,
+      surface != nullptr &&
+          bd::gpu::FoveationWanted(surface->width, surface->height,
+                                   surface->layers));
   {
     // Diagnostic: pipelines all come out mono while framebuffers get
     // viewMask=3, which is a render-pass incompatibility and renders black.

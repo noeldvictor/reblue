@@ -184,6 +184,7 @@ constexpr const char *kCSVHeader =
     "depthBias,srcBlendAlpha,destBlendAlpha,blendOpAlpha,colorWriteEnable,"
     "primitiveTopology,vertexStrides,renderTargetFormat,depthStencilFormat,"
     "sampleCount,enableAlphaToCoverage,specConstants,multiview,"
+    "fragmentDensityMap,"
     "occlusionCounting,"
     "enhancedDOF";
 
@@ -249,6 +250,7 @@ std::string CsvRow(const Entry &e) {
   // Hashed PS swap variants: without these columns the occlusion count and
   // enhanced DOF PSOs serialize identically to their normal-draw row.
   bl(s.multiview);
+  bl(s.fragmentDensityMap);
   bl(s.occlusionCounting);
   bl(s.enhancedDOF);
 

@@ -28,7 +28,7 @@ namespace bd::gpu {
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
 // PipelineState field add/remove/reorder. Replace the literal if the struct
 // legitimately changes (and update the CSV schema + regenerate the PSO cache).
-static_assert(sizeof(PipelineState) == 157,
+static_assert(sizeof(PipelineState) == 158,
               "PipelineState size changed: update kCSVHeader/CsvRow + "
               "tools/shader_cache/pso_cache_to_header.py and regenerate "
               "cache/pipeline_state_cache.h.");
@@ -163,6 +163,10 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
   // 0b11: both eyes. Zero leaves the pipeline single-view, which is what every
   // 2D, post and bloom pass gets.
   desc.viewMask = state.multiview ? 0x3u : 0u;
+  // Must match the framebuffer's. See draw_framebuffer.cpp: a pipeline whose
+  // render pass lacks the density attachment is incompatible with a framebuffer
+  // whose pass has it, and that is undefined rather than an error.
+  desc.fragmentDensityMap = state.fragmentDensityMap;
   {
     static std::atomic<int> mv{0};
     static std::atomic<int> mono{0};

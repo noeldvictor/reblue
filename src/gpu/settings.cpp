@@ -334,6 +334,23 @@ REXCVAR_DEFINE_BOOL(bd_debug_present_clear, false, kCvarGroup,
 // Dump one field frame's render passes in order, with the draws each took. The
 // per-target census aggregates and cannot show sequence, so it cannot say
 // whether a pass runs twice - and the scene pass is 45ms of a 56ms frame.
+// Fixed foveated rendering on the scene pass, via a fragment density map.
+//
+// The scene pass is ~45ms of a 56ms frame on a Quest 2 - measured per render
+// target - and it is two-layer, so every fragment it saves is saved twice.
+// Unlike XR_FB_foveation this needs no present rewrite: a density map decorates
+// an ordinary render pass.
+REXCVAR_DEFINE_BOOL(bd_foveation, false, kCvarGroup,
+                    "Fixed foveated rendering on the scene pass.");
+
+// Shading rate at the corners, as a fraction of full. 1.0 is no foveation, 0.25
+// is a quarter rate in the periphery. The centre 35% of the radius always stays
+// at full rate - this trades peripheral detail, never the middle of the image,
+// because the one headset session that failed here failed on readability.
+REXCVAR_DEFINE_DOUBLE(bd_foveation_strength, 0.5, kCvarGroup,
+                      "Peripheral shading rate as a fraction of full.")
+    .range(0.1, 1.0);
+
 REXCVAR_DEFINE_BOOL(bd_dump_passes, false, kCvarGroup,
                     "Log one field frame's render passes in order.");
 

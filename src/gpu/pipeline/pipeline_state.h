@@ -28,6 +28,9 @@ struct PipelineState {
   GuestShader *pixelShader = nullptr;
   GuestVertexDeclaration *vertexDeclaration = nullptr;
   bool instancing = false;
+  // Foveated render pass. Part of the key: a foveated and an unfoveated
+  // pipeline are not interchangeable, because their render passes differ.
+  bool fragmentDensityMap = false;
   bool zEnable = true;
   bool zWriteEnable = true;
   bool stencilEnable = false;
