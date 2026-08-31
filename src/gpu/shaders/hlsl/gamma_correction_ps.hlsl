@@ -36,6 +36,20 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
 
     float4 sampled = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
                        .Sample(g_SamplerDescriptorHeap[0], srcCoord);
+
+    // Probe (ResourceDescriptorIndex2 == 2): show |layer1 - layer0| amplified.
+    // Two fixes for "present emits identical halves" were guesses and both
+    // missed, so this answers the actual question - does the surface present
+    // samples have two different layers at all? Black means it does not, and
+    // the flatten is innocent.
+    if (g_PushConstants.ResourceDescriptorIndex2 == 2)
+    {
+        const float3 l0 = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
+                            .Sample(g_SamplerDescriptorHeap[0], float3(texCoord, 0.0)).rgb;
+        const float3 l1 = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex]
+                            .Sample(g_SamplerDescriptorHeap[0], float3(texCoord, 1.0)).rgb;
+        return float4(saturate(abs(l1 - l0) * 8.0), 1.0);
+    }
     // max() guards pow() against NaN on negative HDR values (source RT may be R16F).
     float3 ramp = pow(max(sampled.rgb, 0.0), g_PushConstants.Param0);
     // X360 scanout: the system reshapes the app ramp for the display before upload

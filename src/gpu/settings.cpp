@@ -484,6 +484,13 @@ REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
                     "Point a multiview surface's sampled view at the resolved "
                     "companion rather than at array layer 0.");
 
+// Diagnostic: present outputs |layer1 - layer0| amplified instead of the frame.
+// Black means the surface present samples has identical layers, so the stereo
+// pair was already flattened upstream and the present-side flatten is innocent.
+REXCVAR_DEFINE_BOOL(bd_mv_debug_layer_diff, false, kCvarGroup,
+                    "Present shows the difference between the two array layers "
+                    "instead of the frame.");
+
 REXCVAR_DEFINE_BOOL(bd_cel_shading, false, kCvarGroup,
                     "Cel shading: posterised colour and ink outlines, applied "
                     "over the finished frame. Costs one full-screen pass.");

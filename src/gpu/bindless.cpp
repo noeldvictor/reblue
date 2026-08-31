@@ -115,7 +115,10 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
     // surface_pool sets this at creation, but that is not enough: ResetPooled
     // re-binds every recycled surface through here, and a pooled surface whose
     // view was dropped rebuilds it on this path - every frame.
-    view_desc.arraySize = 1;
+    // All of the texture's layers. One is the common case; a multiview render
+    // target has two and the post chain must be able to reach both, or the
+    // stereo pair is flattened on the first pass that samples it.
+    view_desc.arraySize = tex->layers ? tex->layers : 1;
     view_desc.arrayIndex = 0;
     tex->textureView = tex->texture->createTextureView(view_desc);
   }

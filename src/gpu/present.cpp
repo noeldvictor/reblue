@@ -52,6 +52,7 @@ REXCVAR_DECLARE(bool, bd_mv_capture_resolved);
 REXCVAR_DECLARE(double, bd_capture_after_s);
 REXCVAR_DECLARE(i32, bd_capture_min_draws);
 REXCVAR_DECLARE(bool, bd_debug_present_clear);
+REXCVAR_DECLARE(bool, bd_mv_debug_layer_diff);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 
 namespace bd::gpu {
@@ -384,7 +385,8 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
     // it emits a side-by-side pair by reading layer 0 into the left half and
     // layer 1 into the right. That is the whole of the multiview flatten now -
     // the five full-resolution resolve passes it replaces are gone.
-  } pc{gamma_src_desc, rt->layers > 1 ? 1u : 0u,
+  } pc{gamma_src_desc,
+       REXCVAR_GET(bd_mv_debug_layer_diff) ? 2u : (rt->layers > 1 ? 1u : 0u),
        s.guest_gamma * kPresentGamma, kPresentDisplayCorrection};
   s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &pc,
                                            kCopyPushConstantByteOffset,

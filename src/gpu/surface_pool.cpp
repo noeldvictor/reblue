@@ -503,6 +503,13 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   const bool measure_mono = REXCVAR_GET(bd_mv_force_mono_targets);
   const u32 layers = (multiview_scene && !small && !measure_mono) ? 2u : 1u;
 
+  // Before the views are built, not after. BindTextureSRV reads this to decide
+  // how many layers the sampling view exposes, and it used to be assigned at
+  // the very end of the function - so every multiview surface got a one-layer
+  // view and the post chain sampled only the left eye. The scene array carried
+  // correct stereo the whole time and present emitted two identical halves.
+  surface->layers = layers;
+
   plume::RenderTextureDesc desc;
   desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
   desc.width = width;
@@ -549,7 +556,14 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
       // VK_IMAGE_VIEW_TYPE_2D, which Vulkan forbids (that view type requires
       // layerCount == 1). Nothing could sample the scene through it, which made
       // the post chain, the resolve and present all black at once.
-      view_desc.arraySize = 1;
+      // Every layer, not just layer 0. The heap is an array heap, so this is
+      // the view the post chain samples per eye - pinning it to one layer
+      // silently flattens the stereo pair, which is exactly what it did: the
+      // scene array carried correct depth while present emitted two identical
+      // halves. arraySize was 1 here from the earlier fix for the illegal
+      // one-layer VK_IMAGE_VIEW_TYPE_2D view; that fix was right about the view
+      // type and wrong about the count.
+      view_desc.arraySize = layers;
       view_desc.arrayIndex = 0;
 
       if (layers > 1) {
@@ -617,7 +631,6 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
   }
   surface->width = width;
   surface->height = height;
-  surface->layers = layers;
   if (layers > 1) {
     static std::atomic<int> n{0};
     if (n.fetch_add(1, std::memory_order_relaxed) < 4)
