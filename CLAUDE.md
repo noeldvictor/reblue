@@ -318,7 +318,7 @@ Stages, each shipping working:
    `bd_host_walk` (default on) replaces `bdSceneNodeCullTraverse` with a host walk over the
    guest's draw nodes - same cull hooks, the guest's own visibility test, identical draw count
    and frame. Culling, LOD and the host-issued draw (2b) attach there now.
-   **Stage 2b built 2026-09-02 evening, off by default**: `bd_host_draw` issues a node's draws
+   **Stage 2b shipped 2026-09-02 evening**: `bd_host_draw` (default on) issues a node's draws
    from a host template instead of running the 1,935-instruction interpreter, for nodes whose
    vertex shader reads neither the foliage collision vector (c57) nor a bone palette. The
    template holds each sub-draw's host state and the registers the interpreter SETS (the
@@ -327,10 +327,11 @@ Stages, each shipping working:
    same frame, and one node per visual per frame is interpreted to keep those fresh. The
    world rows c20-c23 are rebuilt from the palette slot (transposed, translation in .w,
    verified over 3728 draws). Village: 111 of 420 node draws a frame host-issued, 0 volatile
-   templates. `[node] host-issued N of M` is the number. **Off by default** because a
-   replayed node that shares a mesh and material with an interpreted one merges into its
-   instancing group with the wrong record (the big rock vanishes; desktop bisect, night of
-   2026-09-02); it measured flat on the Quest's GPU. The rest is the foliage and skinned
+   templates. `[node] host-issued N of M` is the number. Replayed draws stay off the
+   instance-record path (`bd_host_draw_records`, default off): on it, the village's big rock
+   was hidden in some frames while its own node drew every frame, so a replayed draw covers it
+   - the mechanism is still unnamed (`bd_node_diag_mesh` logs a node's draws from both
+   paths). It measured flat on the Quest's GPU. The rest is the foliage and skinned
    nodes (stage 6, animation on the host) and the per-visual lighting and camera registers
    (VS c0-c4, PS c0-c13, copied from the deferred-state shadow at 0x82DD80D8 - which holds
    the last interpreted node's pass, so it cannot be read live; tried and reverted).

@@ -448,13 +448,13 @@ REXCVAR_DEFINE_BOOL(bd_node_write_diag, false, kCvarGroup,
 // the next bd_host_draw_refresh frames, world rebuilt from the palette slot;
 // then the interpreter runs once and refreshes it. Skinned nodes, foliage
 // (c57) and animated materials keep the interpreter.
-// OFF until the interaction with instancing groups is fixed: with the reorder
-// on, a replayed node that shares a mesh and material with an interpreted
-// one merges into its group with the wrong record, and the village's big
-// rock draws twice in one place and not at all in the other (desktop bisect,
-// 2026-09-02 night: reorder off or instancing off brings it back). The host
-// draw measured flat on the Quest's GPU, so nothing is lost by waiting.
-REXCVAR_DEFINE_BOOL(bd_host_draw, false, kCvarGroup,
+// ON, with replayed draws kept off the instance-record path
+// (bd_host_draw_records): with them on it, the village's big rock was hidden
+// in some frames (desktop, 2026-09-02 night); three captures with them off
+// showed it every time. The mechanism is not yet named - the rock's own node
+// is interpreted and complete in every frame, so a replayed draw is what
+// covers it.
+REXCVAR_DEFINE_BOOL(bd_host_draw, true, kCvarGroup,
                     "Issue scene node draws from host templates, skipping the "
                     "guest's per-node interpreter.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
@@ -462,6 +462,11 @@ REXCVAR_DEFINE_BOOL(bd_host_draw, false, kCvarGroup,
 // two can be diffed.
 REXCVAR_DEFINE_INT32(bd_node_diag_mesh, 0, kCvarGroup,
                      "Log every queued draw of this mesh VA (0 = off).");
+// Whether a host-issued node draw may stage an instance record (and so join
+// an instancing group). Off: the two configurations in which the village's
+// rock vanished both had replayed draws on the record path.
+REXCVAR_DEFINE_BOOL(bd_host_draw_records, false, kCvarGroup,
+                    "Let host-issued node draws use instance records.");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
                      "Frames a host node draw template is used before the "
                      "interpreter refreshes it.");

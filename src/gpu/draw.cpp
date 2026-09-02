@@ -21,6 +21,7 @@
 #include "core/profiling.h"
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
+#include "gpu/scene/host_draw.h"
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
@@ -31,6 +32,7 @@
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
 REXCVAR_DECLARE(bool, bd_depth_prepass);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
+REXCVAR_DECLARE(bool, bd_host_draw_records);
 REXCVAR_DECLARE(bool, bd_blend_off_when_opaque);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
 
@@ -434,9 +436,13 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   // room for the record. Such a draw never reads the uniform window, so the
   // window is left where it is and the guest's dirty flag is kept for the
   // next plain draw (below).
-  const bool constants_in_record = s.deferring_draw &&
-                                   s.current_instanced_pso != nullptr &&
-                                   InstanceRecordsRoom();
+  // A host-issued node draw keeps to the ordinary window unless
+  // bd_host_draw_records says otherwise: both configurations in which the
+  // village's rock went missing routed replayed draws through records.
+  const bool constants_in_record =
+      s.deferring_draw && s.current_instanced_pso != nullptr &&
+      InstanceRecordsRoom() &&
+      (!bd::gpu::scene::HostDrawReplaying() || REXCVAR_GET(bd_host_draw_records));
   u32 record_index = ~0u;
   bool vs_upload_kept = false;
   if (device_guest) {
