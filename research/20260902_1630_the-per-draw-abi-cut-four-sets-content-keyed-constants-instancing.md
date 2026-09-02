@@ -129,3 +129,32 @@ tally. Separately, `bash tools/validate_quest.sh` for VUID 03001.
 - `research/20260902_0930_the-scene-pass-is-the-gpu-and-a-depth-prepass.md` (the draw-bound finding)
 - plume fork `noeldvictor/plume` main 3855087; XenosRecomp fork `noeldvictor/XenosRecomp` reblue 27b4c5b, 0cab968
 - `src/gpu/bindless_allocator.h` (the layout note), `src/gpu/constant_buffers.cpp` (the gates and caches), `src/gpu/draw_queue.cpp` (the grouping and the diag)
+
+## Later the same day: the recorder and the host walk (stages 1 and 2a)
+
+**The recorder** (`gpu/scene/scene_recorder.cpp`, `bd_scene_record_after_s`): the
+`bdSceneNodeDrawSingle` hook sets a per-thread node tag (mesh, matrix index, palette slot,
+traverse context, visual, render view, technique) and the draw hook hands every queued draw to
+the recorder while the window is open. Keys: the mesh by the model block's content hash and
+the view offsets, the material by shader hashes, the pointer-free pipeline state, the pixel
+block over the registers the PS declares and the bound textures' content hashes (new
+`GuestTexture::contentHash`). Village, 8 frames:
+
+| pass | draws / frame | distinct meshes | distinct materials |
+| --- | --- | --- | --- |
+| 0, view 1 (shadow) | 149 | 141 | 35 |
+| 0, view 3 (scene) | 227 | 209 | 83 |
+| 12 (view 1 / 3) | 44 + 44 | 44 | 1 / 4 |
+
+464 tagged node draws a frame, 330 untagged (effects, UI, post), **26 repeated mesh-and-
+material draws a frame** - which is what the queue's instancing already merges (23). The
+village is not a repeat-heavy scene; the field is.
+
+**The host walk** (`gpu/scene/host_walk.cpp`, `bd_host_walk`, default on): a `REX_HOOK_RAW`
+on `bdSceneNodeCullTraverse` walks the guest's draw nodes iteratively (prune, no-draw,
+has-geometry flags; child then sibling), transforms the mesh centre by the palette slot,
+calls the two cull hooks and the guest's own visibility test `sub_82287788` on a frame laid
+out like the guest's, keeps the render-view-1 per-node counter, and hands survivors to the
+host's `bdSceneNodeDrawSingle`. Village run: 847-850 draws a frame against 819-860 with the
+guest walk, the same instancing tally, the same frame. The walk is ours now; the interpreter
+behind each node is still the guest's, which is stage 2b.

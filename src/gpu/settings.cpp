@@ -421,6 +421,12 @@ REXCVAR_DEFINE_DOUBLE(bd_scene_record_after_s, 0.0, kCvarGroup,
 REXCVAR_DEFINE_INT32(bd_scene_record_frames, 8, kCvarGroup,
                      "Frames of scene walk to record once armed.");
 
+// The scene tree walk on the host (gpu/scene/host_walk.cpp): the traversal,
+// the cull and the draw hand-off are host code; the per-node interpreter is
+// still the guest's. Bit-identical to the guest walk by construction.
+REXCVAR_DEFINE_BOOL(bd_host_walk, true, kCvarGroup,
+                    "Walk the scene tree on the host instead of in the guest.");
+
 REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder_blended, true, kCvarGroup,
                     "Let blended depth-writing draws be reordered for "
                     "instancing (approximate where they overlap).");

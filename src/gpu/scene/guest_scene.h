@@ -68,6 +68,9 @@ constexpr u32 kVisualSkinned = 0x780;
 constexpr u32 kVisualWorld = 0x954;
 constexpr u32 kVisualBoneContainer = 0xA40;
 constexpr u32 kVisualTech = 0xBB8;         // the technique id the PSO predictor tracks
+// A byte per matrix index, incremented by the walk for every node drawn in
+// render view 1 (the guest's own per-node draw counter).
+constexpr u32 kVisualNodeDrawCounts = 0xEE8;
 constexpr u32 kVisualMaterialColor = 0xD4C; // copied from +0xBBC..+0xBC8 per draw
 constexpr u32 kVisualRenderView = 0x1A40;
 

@@ -104,7 +104,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Post chain (bloom, depth of field) | **host-owned since 2026-09-02** (`gpu/post_chain.cpp`, `bd_host_post`): the guest's 15 tile-and-resolve quads a frame are replaced by host passes into the guest's own textures; image verified on desktop and Quest captures. The composites moved to the host next (one full-res pass); measure that once. |
 | Cel shading | not started |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
-| Occlusion culling | distance cull only (`bd_cull_distance`), hooked in `bdSceneNodeCullTraverse` |
+| Occlusion culling | distance cull only (`bd_cull_distance`); the walk itself is host code since 2026-09-02 (`gpu/scene/host_walk.cpp`, `bd_host_walk`), so a host cull attaches there |
 | Instancing / indirect draws | **instancing built on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`); desktop-verified, Quest run pending. Indirect draws not started |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
@@ -298,6 +298,12 @@ Stages, each shipping working:
 0. **Cut the per-draw ABI on the queue** - shipped 2026-09-02 (four sets, content-keyed
    constants, instancing on the queue; "What is true now"). The recorder below tags those
    queued draws with identity; it is not a second draw path.
+   **Stage 1 shipped 2026-09-02 too** (`gpu/scene/`): the DrawSingle hook tags every node
+   draw, `bd_scene_record_after_s` writes an N-frame `.bdsw` walk, `tools/scene_walk_dump.py`
+   reads it (village: 464 tagged node draws a frame, 26 repeats). **Stage 2a shipped**:
+   `bd_host_walk` (default on) replaces `bdSceneNodeCullTraverse` with a host walk over the
+   guest's draw nodes - same cull hooks, the guest's own visibility test, identical draw count
+   and frame. Culling, LOD and the host-issued draw (2b) attach there now.
 1. **Record the guest's scene walk.** A recorder on the `bdSceneNodeDrawSingle` seam writes
    what each node draw is (mesh, material pipeline, textures, transform, bone palette) and
    which guest structures it came from. This is how the host learns the scene tree; the host
