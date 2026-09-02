@@ -280,3 +280,14 @@ Twice now a run with a tighter cull distance was not in a field scene at
 draw-count question is being asked a different way instead:
 `bd_pass_split_draws=100` ends and reopens the render pass every 100 draws
 inside the deferred flush, with the same cull and the same scene.
+
+| `bd_pass_split_draws=100` | 20.5-20.6 ms, one surface record | Direct |
+
+The queue already flushes the scene in 60-134 draw chunks, so the pass is
+several render pass instances of ~100 draws each and the profiler reports them
+as one surface execution; splitting finer changed nothing. The draw count of
+a render pass instance is not the trigger. Image usage and tiling are the
+same for the surface that bins (plume gives every render target
+TRANSFER|SAMPLED|COLOR_ATTACHMENT, optimal tiling). The verbose trace
+(`ovrgpuprofiler -t -v`) is the next instrument, for whatever per-surface
+detail it adds before another blind probe.

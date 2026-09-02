@@ -27,10 +27,10 @@ sleep "$AT"
 # often enough that one window is a coin toss: a trace of 120 small surfaces
 # and no scene pass is a loading screen, not a result.
 echo "== render stage trace at ${AT}s ==" | tee "$OUT"
-run_adb shell "ovrgpuprofiler -t $LEN" 2>&1 | tee -a "$OUT" | tail -3
+run_adb shell "ovrgpuprofiler -t $LEN ${VERBOSE:+-v}" 2>&1 | tee -a "$OUT" | tail -3
 sleep 12
 echo "== render stage trace at $((AT + 12))s ==" | tee -a "$OUT"
-run_adb shell "ovrgpuprofiler -t $LEN" 2>&1 | tee -a "$OUT" | tail -3
+run_adb shell "ovrgpuprofiler -t $LEN ${VERBOSE:+-v}" 2>&1 | tee -a "$OUT" | tail -3
 wait $VQ
 run_adb shell "ovrgpuprofiler -d" 2>&1 | tail -1
 echo "== $OUT: $(wc -l < "$OUT") lines =="
