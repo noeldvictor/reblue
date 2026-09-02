@@ -484,6 +484,17 @@ REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
 // fragment is ever rejected by depth. Renders wrongly. If depth rejection is
 // doing any work this must be SLOWER; if the frame does not move, nothing was
 // being rejected and the full overdraw is already being shaded.
+// A Vulkan ICD to load directly, bypassing the platform loader. "turnip"
+// looks for libvulkan_freedreno.so beside libreblue.so (packaged with
+// EXTRA_LIBS in tools/build_apk.sh); anything else is a path. Mesa's Turnip
+// logs why a render pass fell back to system-memory rendering, which the
+// Adreno blob will not say and which is the open question on the Quest.
+REXCVAR_DEFINE_STRING(bd_vulkan_icd, "", kCvarGroup,
+                      "Vulkan ICD to load directly: \"turnip\" or a path. "
+                      "Empty uses the platform loader.");
+REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
+                    "Probe: strip stencil and depth bias from every pipeline "
+                    "(renders wrongly on purpose).");
 REXCVAR_DEFINE_BOOL(bd_debug_depth_always, false, kCvarGroup,
                     "Measurement: depth compare ALWAYS. Renders wrongly.");
 

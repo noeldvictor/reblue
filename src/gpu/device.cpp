@@ -16,6 +16,7 @@
 #include <cmath>
 #include <format>
 #include <memory>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <thread>
@@ -42,6 +43,7 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 #if defined(REBLUE_OPENXR)
 #include "xr/xr_session.h"
 REXCVAR_DECLARE(bool, bd_vr_enabled);
+REXCVAR_DECLARE(std::string, bd_vulkan_icd);
 #endif
 
 #include "core/logging.h"
@@ -357,6 +359,36 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
               xr_options.extraInstanceExtensions.size(),
               xr_options.extraDeviceExtensions.size(),
               session.RecommendedWidth(), session.RecommendedHeight());
+    }
+    // A replacement ICD, loaded directly. "turnip" resolves to
+    // libvulkan_freedreno.so in the directory libreblue.so was loaded from -
+    // the APK's native library directory, which is where EXTRA_LIBS puts it.
+    {
+      const std::string icd = REXCVAR_GET(bd_vulkan_icd);
+      if (!icd.empty()) {
+        std::string path = icd;
+#if defined(__ANDROID__)
+        if (icd == "turnip") {
+          path.clear();
+          if (FILE *maps = std::fopen("/proc/self/maps", "r")) {
+            char line[512];
+            while (std::fgets(line, sizeof(line), maps)) {
+              char *at = std::strstr(line, "/libreblue.so");
+              char *slash = std::strchr(line, '/');
+              if (at && slash) {
+                path.assign(slash, static_cast<size_t>(at - slash));
+                path += "/libvulkan_freedreno.so";
+                break;
+              }
+            }
+            std::fclose(maps);
+          }
+        }
+#endif
+        xr_options.icdLibraryPath = path;
+        BD_INFO("[vk] bd_vulkan_icd='{}' -> loading ICD directly from '{}'",
+                icd, path);
+      }
     }
     s.render_iface = plume::CreateVulkanInterface(&xr_options);
 #else

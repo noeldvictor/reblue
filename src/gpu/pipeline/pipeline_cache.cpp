@@ -24,6 +24,7 @@
 #include "gpu/shaders/shader_cache.h"
 
 REXCVAR_DECLARE(bool, bd_debug_depth_always);
+REXCVAR_DECLARE(bool, bd_debug_no_stencil_bias);
 namespace bd::gpu {
 
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
@@ -35,6 +36,16 @@ static_assert(sizeof(PipelineState) == 158,
               "cache/pipeline_state_cache.h.");
 
 void SanitizePipelineState(PipelineState &state) {
+  // Probe: no stencil and no depth bias in any pipeline. Renders wrongly
+  // where the guest relied on either; exists to ask Adreno's render-stage
+  // trace whether one of them is what keeps the scene pass out of tiled
+  // rendering.
+  if (REXCVAR_GET(bd_debug_no_stencil_bias)) {
+    state.stencilEnable = false;
+    state.stencilTwoSided = false;
+    state.depthBias = 0;
+    state.slopeScaledDepthBias = 0.0f;
+  }
   // No color render target -> the output merger color path is inactive, so
   // renderTargetCount is 0. A PSO that enables blend (or a color write mask)
   // against slot 0 while its RTV format is UNKNOWN is rejected by
