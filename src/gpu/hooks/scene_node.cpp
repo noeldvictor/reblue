@@ -152,7 +152,7 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     // The host issues this node's draw itself when it has a template for it;
     // the interpreter runs otherwise, and what it writes becomes the template.
     if (!HostDrawReplay(tag)) {
-      const bool capture = HostDrawEnabled();
+      const bool capture = HostDrawEnabled() && HostDrawWantsCapture(tag);
       if (capture)
         HostDrawSnapshotBefore();
       __imp__bdSceneNodeDrawSingle(ctx, base);

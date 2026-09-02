@@ -25,6 +25,7 @@ REXCVAR_DECLARE(bool, bd_draw_eye_major);
 REXCVAR_DECLARE(i32, bd_pass_split_draws);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
+REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
 
 namespace bd::gpu {
 
@@ -453,6 +454,28 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
              g_queue[j].group_key == q.group_key)
         ++j;
       const u32 n = static_cast<u32>(j - i);
+      // A group of one goes through the plain pipeline with its record
+      // uploaded as an ordinary window: on Adreno the instanced variant's
+      // storage-buffer constant reads cost more than the window re-base they
+      // save (Quest 2, 2026-09-02: 45 ms GPU against 37.5 with every scene
+      // draw instanced). Only a real group pays for the record path.
+      if (n == 1 && REXCVAR_GET(bd_draw_instancing_singles_plain)) {
+        const u32 off = UploadVertexBlockFromStaged(q.record_index);
+        if (off != ~0u) {
+          QueuedDraw d = q;
+          d.constant_offsets[0] = off;
+          if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
+          if (!d.blended) {
+            ++opaque;
+            if (d.depth < dmin) dmin = d.depth;
+            if (d.depth > dmax) dmax = d.depth;
+          }
+          EmitOne(cmd, d, st);
+          ++emitted;
+          i = j;
+          continue;
+        }
+      }
       records.clear();
       for (size_t k = i; k < j; ++k)
         records.push_back(g_queue[k].record_index);

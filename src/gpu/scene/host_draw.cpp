@@ -55,6 +55,7 @@
 #include "gpu/draw_queue.h"
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/draw_dispatch.h"
+#include "gpu/scene/guest_scene.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
@@ -125,6 +126,7 @@ struct VisualRegs {
 struct Store {
   std::mutex mutex;
   std::unordered_map<u64, NodeTemplate> templates;
+  std::unordered_map<u64, u32> never; // keys that cannot replay: frame noted
   std::unordered_map<u64, VisualRegs> visuals;
   u32 volatile_count = 0;
   u32 replayed = 0;
@@ -168,14 +170,80 @@ u64 VisualKeyOf(const NodeTag &tag) {
          u64(tag.tech);
 }
 
-// The vertex shader reads only registers the template can supply: not the
-// collision vector (c57) and not the bone palette (c60..c151).
+// The foliage vector at c57, as bdSceneNodeDrawSingle computes it for a
+// visual of technique 3 (read off the recompiled body at 0x82280390..0x822804E8
+// on 2026-09-02): a per-node 20-byte entry in the table at visual+3540 scaled
+// by the object at visual+3532, or the global default vector at 0x82DDA9AC
+// when the entry is empty; y from visual+3536 times the object's +36; w from
+// the per-index table at 0x82DBA948; bool 31 says whether the entry was there.
+// Verified against the interpreter's own writes before a replay may use it
+// (g_foliage_checked / g_foliage_wrong below).
+constexpr u32 kFoliageDefaultVa = 0x82DDA9ACu;
+constexpr u32 kFoliagePhaseTableVa = 0x82DBA948u;
+constexpr u32 kFoliageDefaultScalarVa = 0x82055230u;
+constexpr u32 kVisualFoliageTable = 3540;
+constexpr u32 kVisualFoliageObject = 3532;
+constexpr u32 kVisualFoliageScale = 3536;
+constexpr u32 kTechFoliage = 3;
+
+struct Foliage {
+  float v[4];
+  bool flag;
+};
+
+inline float LoadF32At(u32 va) {
+  const u32 bits = bd::mem::try_load<u32>(va);
+  float f;
+  std::memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+
+bool ComputeFoliage(const NodeTag &tag, Foliage &out) {
+  if (bd::mem::try_field<u32>(tag.visual_va, kVisualTech) != kTechFoliage)
+    return false;
+  const float dflt = LoadF32At(kFoliageDefaultScalarVa);
+  float x = dflt, y = dflt, z = dflt;
+  bool flag = false;
+  const u32 table = bd::mem::try_field<u32>(tag.visual_va, kVisualFoliageTable);
+  const u32 obj = bd::mem::try_field<u32>(tag.visual_va, kVisualFoliageObject);
+  const u32 e = table ? table + tag.node_index * 20 : 0;
+  if (e && bd::mem::try_load<u32>(e) != 0) {
+    const float s = LoadF32At(obj + 72);
+    const float k = LoadF32At(e + 12);
+    x = LoadF32At(e + 4) * s * k;
+    z = LoadF32At(e + 8) * s * k;
+    flag = true;
+  } else {
+    x = LoadF32At(kFoliageDefaultVa + 0);
+    z = LoadF32At(kFoliageDefaultVa + 8);
+  }
+  y = obj ? LoadF32At(tag.visual_va + kVisualFoliageScale) * LoadF32At(obj + 36)
+          : LoadF32At(kFoliageDefaultVa + 4);
+  out.v[0] = x;
+  out.v[1] = y;
+  out.v[2] = z;
+  out.v[3] = LoadF32At(kFoliagePhaseTableVa + tag.node_index * 4);
+  out.flag = flag;
+  return true;
+}
+
+u32 g_foliage_checked = 0;
+u32 g_foliage_wrong = 0;
+constexpr u32 kFoliageTrustAfter = 200;
+
+bool FoliageTrusted() {
+  return g_foliage_checked >= kFoliageTrustAfter && g_foliage_wrong == 0;
+}
+
+// The vertex shader reads only registers the template can supply: the
+// collision vector is computed here (once verified), the bone palette
+// (c60..c151) is not yet.
 bool VertexShaderReplayable(const PipelineState &st) {
   const auto *vs = st.vertexShader;
   if (!vs || !vs->shaderCacheEntry)
     return false;
   const u32 *m = vs->shaderCacheEntry->constantRegisterMask;
-  if (m[1] & (1u << 25))   // c57
+  if ((m[1] & (1u << 25)) && !FoliageTrusted())   // c57
     return false;
   if (m[1] & 0xF0000000u)  // c60..c63
     return false;
@@ -198,8 +266,10 @@ void DiffBlock(const u8 *before, const u8 *now, const u32 *set,
                std::vector<RegDelta> &out, bool skip_world) {
   out.clear();
   for (u32 r = 0; r < 256; ++r) {
-    if (skip_world && r >= 20 && r < 24)
+    if (skip_world && (r >= 20 && r < 24))
       continue;
+    if (skip_world && r == 57)
+      continue; // the foliage vector: computed per node at replay
     const bool written = (set[r / 32] >> (r % 32)) & 1u;
     if (written || std::memcmp(before + r * 16, now + r * 16, 16) != 0) {
       RegDelta d;
@@ -354,6 +424,37 @@ void NoteConstantsSet(bool vertex, u32 start, u32 count) {
     set[r / 32] |= 1u << (r % 32);
 }
 
+// One-shot: where the interpreter's constant writes come from, relative to
+// the objects the node tag names. Printed for the first few node runs.
+void NoteConstantsSource(bool vertex, u32 start, u32 count, u32 src_va) {
+  auto &p = t_pending;
+  if (!p.valid)
+    return;
+  static u32 told = 0;
+  if (told >= 40 || (vertex && (start == 0 || start == 20)) || !vertex)
+    return;
+  ++told;
+  const NodeTag &tag = CurrentNodeTag();
+  auto rel = [&](const char *name, u32 base, u32 span) -> std::string {
+    if (base && src_va >= base && src_va < base + span)
+      return fmt::format("{}+0x{:X}", name, src_va - base);
+    return "";
+  };
+  std::string where = rel("visual", tag.visual_va, 0x2000);
+  if (where.empty()) where = rel("mesh", tag.mesh_va, 0x100);
+  if (where.empty()) where = rel("matrix", tag.matrix_va, 0x40);
+  if (where.empty()) where = rel("ctx", tag.ctx_va, 0x100);
+  if (where.empty()) where = rel("palette", tag.palette_va, 0x4000);
+  if (where.empty()) {
+    const u32 sp = bd::mem::try_load<u32>(tag.ctx_va);
+    (void)sp;
+    where = fmt::format("0x{:08X}", src_va);
+  }
+  BD_INFO("[node] {} c{}..c{} <- {} (visual 0x{:08X} mesh 0x{:08X})",
+          vertex ? "VS" : "PS", start, start + count - 1, where,
+          tag.visual_va, tag.mesh_va);
+}
+
 void NoteSamplerSet(u32 slot) {
   auto &p = t_pending;
   if (p.valid && slot < 32)
@@ -391,6 +492,9 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     return;
   if (!VertexShaderReplayable(s.pipelineState)) {
     p.replayable = false;
+    auto &st = store();
+    std::lock_guard lock(st.mutex);
+    st.never[KeyOf(tag)] = FrameStatFrameCount();
     return;
   }
   const auto *dev = bd::mem::try_at<const D3DDevice>(device_guest);
@@ -402,6 +506,33 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   SubDraw d;
   CopyGuestVertexBlock(device_guest, t_vs_block);
   CopyGuestPixelBlock(device_guest, t_ps_block);
+  // The foliage vector the interpreter just wrote against the host's own
+  // computation of it, while the interpreter still runs for these nodes.
+  {
+    Foliage f;
+    if (ComputeFoliage(tag, f) && ((p.vs_set[1] >> 25) & 1u)) {
+      float wrote[4];
+      std::memcpy(wrote, t_vs_block + 57 * 16, sizeof(wrote));
+      const bool bit = (static_cast<u32>(dev->vsBoolConstants[0]) >> 31) & 1u;
+      bool same = bit == f.flag;
+      for (int k = 0; same && k < 4; ++k)
+        same = std::memcmp(&wrote[k], &f.v[k], sizeof(float)) == 0;
+      ++g_foliage_checked;
+      if (!same) {
+        ++g_foliage_wrong;
+        static u32 told = 0;
+        if (told++ < 3)
+          BD_INFO("[node] foliage c57 mismatch: interpreter ({:.4f} {:.4f} "
+                  "{:.4f} {:.4f} b{}) host ({:.4f} {:.4f} {:.4f} {:.4f} b{})",
+                  wrote[0], wrote[1], wrote[2], wrote[3], bit ? 1 : 0, f.v[0],
+                  f.v[1], f.v[2], f.v[3], f.flag ? 1 : 0);
+      } else if (g_foliage_checked == kFoliageTrustAfter) {
+        BD_INFO("[node] foliage c57: host computation agreed with the "
+                "interpreter on {} nodes, replaying foliage",
+                g_foliage_checked);
+      }
+    }
+  }
   DiffBlock(p.vs, t_vs_block, p.vs_set, d.vs_delta, true);
   DiffBlock(p.ps, t_ps_block, p.ps_set, d.ps_delta, false);
   ReadFetch(dev, t_fetch);
@@ -497,6 +628,22 @@ void HostDrawCommit(const NodeTag &tag) {
   p.valid = false;
 }
 
+bool HostDrawWantsCapture(const NodeTag &tag) {
+  auto &st = store();
+  std::lock_guard lock(st.mutex);
+  if (auto it = st.never.find(KeyOf(tag)); it != st.never.end()) {
+    // Ask again now and then: a foliage node becomes replayable once the
+    // host's vector is trusted.
+    if (FrameStatFrameCount() - it->second < 300)
+      return false;
+    st.never.erase(it);
+  }
+  if (auto it = st.templates.find(KeyOf(tag));
+      it != st.templates.end() && it->second.volatile_material)
+    return false;
+  return true;
+}
+
 bool HostDrawReplay(const NodeTag &tag) {
   if (!tag.valid || t_replaying)
     return false;
@@ -545,6 +692,10 @@ bool HostDrawReplay(const NodeTag &tag) {
     Tally(st, true);
     ++it->second.replays;
   }
+
+  // The foliage vector for this node, when its visual is foliage.
+  Foliage foliage;
+  const bool has_foliage = ComputeFoliage(tag, foliage);
 
   // The world rows for every draw of the node, from its palette slot.
   float world_rows[16];
@@ -606,6 +757,15 @@ bool HostDrawReplay(const NodeTag &tag) {
     for (const RegDelta &r : d.ps_delta)
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
     std::memcpy(t_vs_block + 20 * 16, world_rows, sizeof(world_rows));
+    u32 bools[8];
+    std::memcpy(bools, d.bools, sizeof(bools));
+    if (has_foliage) {
+      std::memcpy(t_vs_block + 57 * 16, foliage.v, sizeof(foliage.v));
+      if (foliage.flag)
+        bools[0] |= 1u << 31;
+      else
+        bools[0] &= ~(1u << 31);
+    }
     ReadFetch(dev, t_fetch);
     for (const FetchDelta &f : d.fetch_delta)
       std::memcpy(t_fetch[f.slot], f.stable ? f.dword : v->fetch[f.slot],
@@ -613,7 +773,7 @@ bool HostDrawReplay(const NodeTag &tag) {
     ov.vs = t_vs_block;
     ov.ps = t_ps_block;
     ov.fetch = t_fetch;
-    ov.bools = d.bools;
+    ov.bools = bools;
     {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;

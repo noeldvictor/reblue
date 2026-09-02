@@ -30,6 +30,11 @@ bool HostDrawEnabled();
 // the guest's register files and fetch constants so the capture can see what
 // the interpreter wrote.
 void HostDrawSnapshotBefore();
+// Whether a node's interpreter run is worth snapshotting at all: false for a
+// node known not to replay (its vertex shader reads the bone palette, or its
+// template went volatile). The snapshot and diff cost 8 KB of copies per
+// node, which the Quest's cores felt.
+bool HostDrawWantsCapture(const NodeTag &tag);
 // From Video::SetTexture: slot `index` was bound while a node's interpreter
 // run is being captured. A binding that does not change the pointer is still
 // a binding the replay has to make.
@@ -38,6 +43,11 @@ void NoteTextureSet(u32 index);
 // count) of the vertex (or pixel) file were written while a node's run is
 // being captured - written, whether or not the value moved.
 void NoteConstantsSet(bool vertex, u32 start, u32 count);
+// The same write with its source: the guest address the values were copied
+// from. Where that lands (inside the visual, the mesh, the node's palette
+// slot, the traverse context, or elsewhere) is what lets the host read the
+// value itself instead of replaying the interpreter's copy of it.
+void NoteConstantsSource(bool vertex, u32 start, u32 count, u32 src_va);
 // From the bdSetSamplerState hook: sampler `slot` was set (or asked for the
 // value it already held) while a node's run is being captured.
 void NoteSamplerSet(u32 slot);

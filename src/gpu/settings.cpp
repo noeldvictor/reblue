@@ -403,6 +403,13 @@ REXCVAR_DEFINE_BOOL(bd_draw_instancing, true, kCvarGroup,
 // Bring equal draws together inside each run of order-independent draws
 // (opaque, depth-tested, no stencil) so more of them are consecutive. Never
 // moves a draw across one that has to keep its place.
+// A draw alone in its instancing group takes the plain pipeline, its record
+// uploaded as an ordinary vertex window. Measured on the Quest 2 (2026-09-02):
+// every scene draw through the record path cost 45 ms of GPU against 37.5,
+// the storage-buffer constant reads outweighing the window re-base.
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_singles_plain, true, kCvarGroup,
+                    "Emit single-draw instancing groups through the plain "
+                    "pipeline.");
 REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder, true, kCvarGroup,
                     "Reorder order-independent scene draws so instances "
                     "become consecutive.");

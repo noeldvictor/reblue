@@ -313,18 +313,22 @@ void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
 REX_EXTERN(__imp__D3DDevice_SetVertexShaderConstantFN);
 REX_HOOK_RAW(D3DDevice_SetVertexShaderConstantFN) {
   const u32 start = ctx.r4.u32;
+  const u32 src = ctx.r5.u32;
   const u32 count = ctx.r6.u32;
   __imp__D3DDevice_SetVertexShaderConstantFN(ctx, base);
   bd::gpu::Video::MarkVSConstantsDirty();
   bd::gpu::scene::NoteConstantsSet(true, start, count);
+  bd::gpu::scene::NoteConstantsSource(true, start, count, src);
 }
 REX_EXTERN(__imp__D3DDevice_SetPixelShaderConstantFN);
 REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantFN) {
   const u32 start = ctx.r4.u32;
+  const u32 src = ctx.r5.u32;
   const u32 count = ctx.r6.u32;
   __imp__D3DDevice_SetPixelShaderConstantFN(ctx, base);
   bd::gpu::Video::MarkPSConstantsDirty();
   bd::gpu::scene::NoteConstantsSet(false, start, count);
+  bd::gpu::scene::NoteConstantsSource(false, start, count, src);
 }
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantI,
                            bd::gpu::Video::MarkVSConstantsDirty())

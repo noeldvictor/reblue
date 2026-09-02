@@ -605,6 +605,28 @@ const u8 *ConstantBlockBytes(u32 dynamic_offset) {
   return s.buffer.mapped + dynamic_offset;
 }
 
+u32 UploadVertexBlockFromStaged(u32 index) {
+  auto &s = upload_state();
+  if (index >= s.staged.size() || !s.ready)
+    return ~0u;
+  const u8 *block = reinterpret_cast<const u8 *>(s.staged[index].regs);
+  const RegisterMask mask = VertexMask(nullptr);
+  const u64 h = MaskedHash(block, mask);
+  if (auto it = s.vsOffsets.find(h); it != s.vsOffsets.end())
+    return it->second.offset;
+  auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
+  if (!alloc.memory)
+    return ~0u;
+  std::memcpy(alloc.memory, block, kConstantBlockBytes);
+  s.vsShadow.emplace_back();
+  std::memcpy(s.vsShadow.back().data(), block, kConstantBlockBytes);
+  s.vsOffsets.emplace(h, UploadState::VSAllocation{
+                             alloc.dynamicOffset,
+                             static_cast<u32>(s.vsShadow.size() - 1)});
+  NoteConstantUpload(true, true);
+  return alloc.dynamicOffset;
+}
+
 const InstanceRecord *StagedInstanceRecord(u32 index) {
   auto &s = upload_state();
   return index < s.staged.size() ? &s.staged[index] : nullptr;

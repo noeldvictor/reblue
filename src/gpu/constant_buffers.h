@@ -140,6 +140,11 @@ u32 StageInstanceRecord();
 u32 CommitInstanceRecords(const u32 *staged, u32 n);
 // A staged record's bytes (this frame), or null.
 const InstanceRecord *StagedInstanceRecord(u32 index);
+// Uploads a staged record as an ordinary vertex constant window (content
+// keyed, like every upload) and returns its dynamic offset, ~0u on failure:
+// for a draw that ends up alone in its group and is cheaper through the
+// plain pipeline than through the record path (Quest, 2026-09-02).
+u32 UploadVertexBlockFromStaged(u32 index);
 
 // The guest's vertex / pixel constant file, byte-swapped and NaN-flushed into
 // `out` (4096 bytes) the way the uploads read it; from the guest device, never
