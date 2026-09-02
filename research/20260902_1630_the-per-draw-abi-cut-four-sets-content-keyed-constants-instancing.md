@@ -221,3 +221,19 @@ within-run arms and same-build traces count.
 The CPU side doubled (13 -> 27 ms "elsewhere") on every run today, including with the twin
 built off the render thread; the sampling profile's libreblue share is 1.2%, so the time is
 not in host code as the profiler sees it. Open.
+
+### The probe, and the reading that survives
+
+A build whose vertex shaders carry none of the instancing machinery (`XENOS_RECOMP_NO_INSTANCING`:
+no `SV_InstanceID`, no `BD_VSC`, no spec bit, so no twins and no groups), run with the reorder
+on: **52.3 ms GPU** - the same as every "reorder off" run of the normal build. So:
+
+- the shader-side machinery costs nothing in the plain variant (52.3 vs 52.9, noise);
+- the 8 ms of the reorder A/B (52.9 off, 44.9 on) is the reorder **letting instances merge**:
+  without it nothing repeated is consecutive, which is why the instancing A/B, run with the
+  reorder off, was flat. Instancing plus reorder is the 8 ms; either alone is nothing here;
+- the host-issued draw is flat on the GPU (52.7 vs 53.0) and took the CPU side from 27 to 21 ms
+  once the twin stopped compiling on the render thread;
+- the gap between yesterday's 37.5 ms and today's 45 (instancing on) / 52 (off) is in none of
+  the runtime switches measured so far. Left: the host walk (A/B running as the battery ends)
+  and the descriptor layout, which needs a build to test.
