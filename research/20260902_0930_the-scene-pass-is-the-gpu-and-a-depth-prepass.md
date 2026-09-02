@@ -213,3 +213,29 @@ traces meant to separate those did not land: the multiview trace captured no
 surfaces at all twice (the profiler may not see layered passes), and the
 cull-150 trace caught a transition rather than the field scene. A mono trace
 (no per-eye loop, half the draws) is running.
+
+## Mono on the Quest: 33.7 ms GPU, so stereo is only +5
+
+`bd_stereo=false`, field-scene mean from the CSV: `gpu_total 33.68 | dt 49.79`
+against side-by-side's 38.9. One eye's worth of draws in the pass and no
+per-draw viewport changes buys 5 ms, not the 12 a straight halving would.
+Whatever keeps the scene pass out of tiled rendering is present in mono too.
+The 0.6 s trace windows of that run caught lighter frames (present blits at
+3.4 ms each, 1376x720 colour+depth passes at 2.3 ms in `HwDirect` - a binning
+stage run and then direct chosen anyway), so a 2.5 s window is being taken
+before autoplay starts walking.
+
+## Mono's scene pass is direct too: 20.5 ms
+
+The 2.5 s window landed on field frames: `1376x720 c64 d32 Direct, 1 bin,
+20.46 ms` and `20.74 ms` in two windows, with no Binning stage at all. So
+the doubled draws and the per-draw viewport churn of side-by-side are not
+what forces direct mode; the pass forces it in mono, with ~500 draws. The
+trigger is in the pass's content. Two probes bisect it: `bd_debug_max_draws=64`
+(does a pass of 64 draws bin?) and `bd_blend_off_when_opaque=true` (does a
+pass with no blending on depth writers bin?).
+
+Side result: the deferred queue can emit side-by-side eye-major (all left-eye
+draws, then all right), verified image-identical on the desktop with stereo
+intact. `bd_draw_eye_major` is on by default; it removes ~1000 viewport and
+scissor changes from the scene pass, whatever the tiler makes of them.

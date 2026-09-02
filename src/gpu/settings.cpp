@@ -379,6 +379,14 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
+// Side-by-side stereo: emit every left-eye draw, then every right-eye draw,
+// instead of alternating the viewport on every draw. Image-identical; removes
+// ~1000 viewport/scissor changes from the scene pass, which is one candidate
+// for what keeps that pass in direct (non-tiled) rendering on Adreno.
+REXCVAR_DEFINE_BOOL(bd_draw_eye_major, true, kCvarGroup,
+                    "Emit deferred side-by-side draws eye-major rather than "
+                    "alternating viewports per draw.");
+
 // Per-segment and per-target GPU timestamps, written INSIDE render passes.
 // Off on Android: a timestamp inside a pass takes Adreno out of tiled
 // rendering for that pass, and the on-device render-stage trace showed every

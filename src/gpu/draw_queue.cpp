@@ -18,6 +18,7 @@
 
 REXCVAR_DECLARE(bool, bd_draw_defer);
 REXCVAR_DECLARE(bool, bd_draw_sort);
+REXCVAR_DECLARE(bool, bd_draw_eye_major);
 
 namespace bd::gpu {
 
@@ -202,6 +203,22 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
                        if (a.depth != b.depth)
                          return a.depth < b.depth;
                        return a.pipeline < b.pipeline;
+                     });
+  }
+
+  // Eye-major order for the side-by-side path: every left-eye draw, then every
+  // right-eye draw, instead of alternating viewports on every draw. The queued
+  // draws carry their viewport, so this is a stable sort on viewport.x and
+  // changes nothing in the image - each eye's draws keep their submission
+  // order. It removes ~1000 viewport and scissor changes from the scene pass,
+  // which is one of the things that pass does that the passes the tiler does
+  // bin do not.
+  if (REXCVAR_GET(bd_draw_eye_major)) {
+    std::stable_sort(g_queue.begin(), g_queue.end(),
+                     [](const QueuedDraw &a, const QueuedDraw &b) {
+                       const float ax = a.has_viewport ? a.viewport.x : -1.0f;
+                       const float bx = b.has_viewport ? b.viewport.x : -1.0f;
+                       return ax < bx;
                      });
   }
 
