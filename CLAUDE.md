@@ -194,7 +194,7 @@ and the distance to the next boundary, never fps.
    under the layer never reached a field scene. Next: a probe that issues the resolve's barriers
    without its draws, or a GPU-side view (`ovrgpuprofiler`, RenderDoc's Meta fork). Until then
    `bd_mv_resolve` defaults **on**.
-2. **Finish multiview's flatten bug** with `tools/rdc_layer_diff.py` (see Multiview below). The
+2. **Fix the multiview flatten**: the MSAA resolve has no layer axis (see Multiview below). The
    desktop loop verifies it in 90 seconds.
 3. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
    `LOAD_OP_DONT_CARE` (`discardTexture` is in plume), MSAA is already off, then foveation.
@@ -233,14 +233,22 @@ sampling view. That was a real bug and is fixed (2026-09-01, `gpu/hooks/resource
 was not the cause**: the desktop still presents two byte-identical halves with it in, with the
 obsolete slice views gone, and with `bd_mv_layered_textures=true`.
 
-**Stop reading views and descriptors; read the pixels.** `tools/rdc_layer_diff.py` is written
-to replay a capture under RenderDoc's interpreter and read both array layers of every two-layer
-target back after every pass: the first target whose layers come out identical after a source
-that differed is the pass that flattens the pair, whatever its view, descriptor and pipeline
-say. **It has not yet run**: three launches through `qrenderdoc.exe --python` produced no output
-at all (a GUI app swallows stdout and exceptions, and the first version wrote a relative path
-into Program Files). Getting it to execute - probably via RenderDoc 1.46's reworked scripting
-entry point, or `renderdoccmd` built with python - is the next step on the flatten bug.
+**Found, by reading pixels.** `tools/rdc_layer_diff.py` (run as
+`RDC_CAPTURE=<abs path> qrenderdoc.exe --python tools/rdc_layer_diff.py`; report in
+`~/rdc_layer_diff.log`) reads both array layers of every two-layer target back after every pass.
+The scene passes hold a pair; the very next draw - the host's EDRAM resolve into a two-layer
+guest texture - outputs the scene's **layer 0 into both layers** (96.7% match to layer 0, 27% to
+layer 1), under a multiview pass, through a two-slice view. On the desktop the scene is MSAA 4x
+by default, so that draw is `resolve_msaa_color`, whose heap is `Texture2DMS`: **a type with no
+layer axis**, so both views load layer 0. `copy_color_ps` (the non-MSAA path the Quest takes at
+`bd_msaa=0`) was already per-eye, which is why three sessions of fixing views and descriptors
+changed nothing on the desktop.
+
+**The obvious fix does not work yet.** `Texture2DMSArray` + `SV_ViewID` compiles and creates its
+pipeline, and the frame goes 0% non-black - a probe returning `SV_ViewID` as colour is black too,
+so that draw writes nothing under that shader. Reverted. Next: capture the black draw, or give
+the MSAA resolve per-layer slice views of the multisampled target (the `layerView` mechanism in
+`multiview_resolve.cpp`) and keep `Texture2DMS`. See the 2026-09-01 note.
 
 Two settings are still needed together for a multiview run, and the log says whether they took:
 

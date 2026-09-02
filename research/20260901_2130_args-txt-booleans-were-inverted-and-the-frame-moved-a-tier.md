@@ -339,3 +339,59 @@ altogether. `bd_mv_resolve` defaults back to **true** for now: the five extra
 passes cost less than what their absence costs. Naming the mechanism needs a
 GPU-side view (ovrgpuprofiler or RenderDoc's Meta fork), or a probe that
 issues the resolve's barriers without its draws.
+
+## The flatten, found by reading pixels: the MSAA resolve has no layer axis
+
+`tools/rdc_layer_diff.py` finally ran (under `qrenderdoc --python` the capture
+path has to come from the environment - the embedded interpreter has no
+`sys.argv`, and `GetCaptureFilename()` is empty while the UI is still loading
+the file; every earlier launch died on its first line, silently, for an hour).
+It reads both array layers of every two-layer target back after every pass of
+the 2026-08-31 multiview capture:
+
+```
+eid     draws  size        format              layers verdict
+3368    163    1920x1080   R16G16B16A16_FLOAT  2      differ 72.8%   (scene)
+3533    51     1920x1080   R16G16B16A16_FLOAT  2      differ 72.8%   (scene)
+3551    1      1920x1080   R16G16B16A16_FLOAT  2      IDENTICAL      <- here
+3564    1      960x540     R16G16B16A16_FLOAT  2      IDENTICAL
+... every later pass IDENTICAL, present included
+```
+
+Event 3551 is one `vkCmdDraw` of a full-screen triangle: the host's EDRAM
+resolve copying the scene into a two-layer guest texture. Its render pass has
+views [0, 1], its attachment has two slices, and the descriptor it samples is
+the scene image through a two-slice view - every binding correct - and the
+output's layer 0 matches the scene's layer 0 for 96.7% of bytes and the
+scene's layer 1 for 27%. **Both views read layer 0.**
+
+The scene on the desktop is multisampled (`bd_msaa` defaults to 4), so this
+draw is `resolve_msaa_color`, whose heap is declared `Texture2DMS` - a type
+with no layer dimension. `Load(int2, sample)` reads layer 0 for both views,
+whatever `SV_ViewID` says, and the same shader had no `SV_ViewID` to begin
+with. `copy_color_ps`, the non-MSAA path, was already per-eye - which is why
+the Quest, running at `bd_msaa=0`, never had this bug and why every desktop
+fix to views, descriptors, view masks and copies changed nothing.
+
+Fix: `Texture2DMSArray`, `Load(int3(x, y, viewId), sample)`, `SV_ViewID`,
+`ps_6_1`, for the colour and depth MSAA resolves. Verification is the same
+desktop run that has printed `halves: 0.00` all day.
+
+### The obvious fix renders black, and a probe says the draw does not run
+
+`Texture2DMSArray` + `Load(int3(x, y, viewId), s)` + `SV_ViewID` + `ps_6_1`
+compiles (SPIR-V: image 2D arrayed multisampled, `ViewIndex`, capability
+`ImageMSArray`), creates its pipeline without an error line, and the desktop
+frame comes out **0.0% non-black**. A probe that ignores the texture and
+returns `SV_ViewID` as colour also comes out 0.0% non-black - so under that
+shader the resolve draw writes nothing at all, not the wrong thing. Reverted;
+the desktop is back to the identical-halves frame that at least renders.
+
+What to try next, in order: capture the black draw (`bd_renderdoc` loaded but
+did not fire in 165 s this time; give it a longer run) and read RenderDoc's
+pipeline state for it; or sidestep the arrayed-MS type entirely - keep
+`Texture2DMS`, register a per-layer slice view of the multisampled scene
+target (the `layerView` mechanism `multiview_resolve.cpp` already has), push
+both descriptor indices, and pick by `SV_ViewID` in the shader. That second
+route also tests whether the pixel-stage `ViewIndex` works in these host
+pipelines at all, which nothing has yet shown.
