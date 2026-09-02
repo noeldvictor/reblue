@@ -23,10 +23,14 @@ run_adb shell "ovrgpuprofiler -i" 2>&1 | tail -1
 SETTLE=175 bash tools/verify_quest.sh "$EXTRA" > out/device/gpu_drawtrace_run.txt 2>&1 &
 VQ=$!
 sleep "$AT"
+# Two samples, twelve seconds apart, because autoplay lands in a transition
+# often enough that one window is a coin toss: a trace of 120 small surfaces
+# and no scene pass is a loading screen, not a result.
 echo "== render stage trace at ${AT}s ==" | tee "$OUT"
-run_adb shell "ovrgpuprofiler -t $LEN" 2>&1 | tee -a "$OUT" | tail -5
-echo "== draw call trace ==" | tee -a "$OUT"
-run_adb shell "ovrgpuprofiler -t $LEN -x" 2>&1 | tee -a "$OUT" | tail -5
+run_adb shell "ovrgpuprofiler -t $LEN" 2>&1 | tee -a "$OUT" | tail -3
+sleep 12
+echo "== render stage trace at $((AT + 12))s ==" | tee -a "$OUT"
+run_adb shell "ovrgpuprofiler -t $LEN" 2>&1 | tee -a "$OUT" | tail -3
 wait $VQ
 run_adb shell "ovrgpuprofiler -d" 2>&1 | tail -1
 echo "== $OUT: $(wc -l < "$OUT") lines =="

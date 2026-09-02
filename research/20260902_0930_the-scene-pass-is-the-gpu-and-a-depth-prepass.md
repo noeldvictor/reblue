@@ -195,3 +195,21 @@ on every category or target change - the per-segment split
 investigation has leaned on. The instrument was shaping the measurement.
 `bd_gpu_timing_segments` now gates those marks and defaults off on Android;
 the frame begin/end pair stays, so `gpu_total_ms` survives.
+
+## With the in-pass timestamps off: the scene pass is STILL direct
+
+`bd_gpu_timing_segments=false`, same trace: the 1376x720 scene pass reads
+`Mode: 0 (Direct), 1 bin, 24.66 ms` exactly as before, while a second
+1376x720 colour+depth pass in the same frame now reads `Mode: 1 (HwBinning),
+16 384x224 bins, 3.03 ms` with `Binning / LoadColor / Render / StoreColor /
+LoadDepthStencil / StoreDepthStencil` stages - the shape the scene pass
+needs. So the timestamps were *a* trigger, not *the* trigger, and the driver
+decides per pass: something about the scene pass itself forbids binning.
+
+What that pass has that the binned one does not, under side-by-side: every
+draw twice (~1000 draws, ~640k vertices), a viewport and scissor change on
+every draw (the per-eye loop), and ~300 blended depth-writing draws. Two
+traces meant to separate those did not land: the multiview trace captured no
+surfaces at all twice (the profiler may not see layered passes), and the
+cull-150 trace caught a transition rather than the field scene. A mono trace
+(no per-eye loop, half the draws) is running.

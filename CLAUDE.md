@@ -131,6 +131,18 @@ What moved the CPU from 44 to 13 ms in one day, both found with the per-thread p
 on (its default again), and **277 ms** without it - see "Start here" item 1. Its CPU is now the
 same as side-by-side's, so once its GPU comes down it is the faster path by construction.
 
+**THE GPU IS NOT TILING (2026-09-02).** `tools/gpu_drawtrace_quest.sh` runs the headset's own
+render-stage trace: every surface of a field frame executes in **`Mode: 0 (Direct)` with one bin
+the size of the surface**, the scene pass at **24.5 ms** rendering straight to system memory.
+The realtime metrics (`tools/gpu_metrics_quest.sh`) agree: 99% of GPU time shading fragments,
+~6.6 fragments per scene pixel, ALUs 22% used, texture pipes 66% busy with 25% L1 misses,
+shaders stalled 21%. That is why, measured within one run each, **depth ALWAYS, the depth
+prepass and the fragment density map all changed nothing**: none of them touches a direct-mode
+pass's cost. In-pass timestamps were one trigger (`bd_gpu_timing_segments`, now off on Android;
+a second full-size pass bins with them off) and the scene pass is still direct, so the remaining
+trigger is a property of that pass - under side-by-side it carries every draw twice. **Getting
+the scene pass to bin is the GPU work, ahead of everything else.**
+
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
@@ -186,6 +198,11 @@ and the distance to the next boundary, never fps.
 
 ## Start here. Ordered.
 
+0. **Make the scene pass bin.** Read the render-stage trace after every change
+   (`bash tools/gpu_drawtrace_quest.sh`): the scene surface must stop saying `Mode: 0 (Direct)`
+   and start showing tens of bins. Candidates in order: draws per pass (side-by-side doubles
+   them; multiview halves them - trace it), the blended depth-writing draws, and anything the
+   pass does that a tiler cannot bin. Until it bins, no fragment-side lever can measure.
 1. **Multiview's 277 ms on the Quest without the resolve pass.** Measured three ways on
    2026-09-01: resolve off 277 ms GPU; resolve on 59 ms; resolve on with its companion never
    sampled (`bd_mv_redirect_srv=false`) **59 ms**. So the array heap's sampling is free and
