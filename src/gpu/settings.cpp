@@ -257,6 +257,16 @@ REXCVAR_DEFINE_DOUBLE(bd_renderdoc_after_s, 0.0, kCvarGroup,
 // On the desktop it is the difference between a simulator run you can watch and
 // a black window - the game renders to an offscreen target in VR and never
 // presents, so without this the window shows nothing and looks broken.
+// The size the headset frame is composed at, as a fraction of the window,
+// which on a Quest 2 is the whole panel (3664x1920). Composing a ~1376x720
+// game frame at the window's size was a 2.7 ms gamma pass and a 0.8 ms copy
+// every frame, upsampling what the compositor resamples again anyway
+// (render-stage trace, 2026-09-02).
+// 0.4 of a 3664x1920 window is 1466x768, just above the game's frame.
+REXCVAR_DEFINE_DOUBLE(bd_xr_present_scale, 0.4, kCvarGroup,
+                      "Headset frame size as a fraction of the window, "
+                      "aspect preserved. 1 = the window's size. Requires "
+                      "restart.");
 #if defined(__ANDROID__)
 REXCVAR_DEFINE_BOOL(bd_xr_mirror, false, kCvarGroup,
 #else

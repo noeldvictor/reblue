@@ -102,7 +102,8 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 and 2026-09-01.
 
-**`bd_stereo` is GPU-bound at ~39 ms with ~13 ms of CPU** (2026-09-01 evening,
+**`bd_stereo` is GPU-bound at ~39 ms with ~13 ms of CPU** (2026-09-01 evening; **34.4 ms
+GPU after the 2026-09-02 work below, mono trace configuration**,
 `verify_quest.sh` defaults: reflections and shadows off, cull 350, MSAA off, 60 Hz). The
 field-scene mean is 50.0 ms (3 slots, 20 fps); stretches of the run sit at **33.3 ms, 30 fps**
 whenever the GPU dips under the boundary. Read the `[xr]` log line, not `other_ms` (see the
@@ -156,6 +157,19 @@ resolves out of a depth surface before its clear. Quest: surfaces per frame 34 -
 plume's framebuffer/pass/clear sequence with the host's barrier sites interleaved; it is how the
 order was found, and the way to find the next one.
 
+**The headset frame is composed at 1466x768, not the panel's 3664x1920 (2026-09-02, 12:50):
+`gpu_total_ms` 37.5 -> 34.4, 1.1 ms above the 30 fps boundary.** The XR swapchain and the
+offscreen present target took the window's size, the whole panel, for a 1376x720 game frame:
+a 2.7 ms gamma upsample and a 0.6-0.8 ms copy every frame, resampled again by the compositor.
+`bd_xr_present_scale` (0.4 of the window, aspect preserved) puts that pass at 2.0 ms including
+preemption. The trap that hid it: the XR quad path creates the swapchain on the frame the
+session turns Running, before any offscreen target exists, and the size is locked from then
+on; both paths now size it the same way. Verified on a pulled 1466x768 capture (13:15): the
+whole frame, correctly framed. Two bugs found on the way, both by looking at pixels: the
+composite pass took its viewport from the window (the first capture was the top-left 40% of the
+game, magnified), and the guest-surface capture site consumed the one-shot latch in mono so the
+composite site never recorded.
+
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
@@ -195,6 +209,11 @@ and the distance to the next boundary, never fps.
   'true'`. The activity now joins `--name` and its value line into `--name=value`, which CLI11
   parses correctly. Any older device number whose configuration turned a boolean off through
   `args.txt` is suspect; the ones that used the profile TOML are fine.
+- **A value option given twice in `args.txt` drops the whole file** (CLI11's multi-option
+  policy throws, and the activity's "args.txt added N" line never prints). A run passing
+  `bd_cull_distance=20` over `verify_quest.sh`'s default 350 started with every setting at its
+  default; the `[config]` audit named all 11 at once, which is the tell. The script dedupes
+  keys now (caller wins, 2026-09-02); anything else that writes `args.txt` must too.
 - **The sampling profiler's ring is the last 16 seconds** (65536 samples, four threads, 1 kHz),
   and it used to dump every 600 frames, so the profile on disk described whatever the run was
   doing then - on 2026-09-01 a transition: 78% of samples in libc `syscall`/`nanosleep`, 18% in
@@ -211,7 +230,12 @@ and the distance to the next boundary, never fps.
 
 ## Start here. Ordered.
 
-0. **Make the scene pass bin.** Read the render-stage trace after every change
+0. **PARKED 2026-09-02 12:30, after eighteen probes.** Nothing the app controls has moved the
+   Adreno blob off `Mode: 0 (Direct)` for the scene pass, and the two things left could not be
+   tested (compositor preemption, the driver's own reasons). Fixed foveation still depends on
+   it: a fragment density map on a direct-mode pass is what measured +17 ms for nothing. Do
+   not spend another day here without a new instrument. The original item, for the record:
+   **Make the scene pass bin.** Read the render-stage trace after every change
    (`bash tools/gpu_drawtrace_quest.sh`, `python tools/gpu_trace_summary.py`): the scene
    surface must stop saying `Mode: 0 (Direct)` and start showing tens of bins. **Eliminated by
    one trace each (2026-09-02):** in-pass timestamps, side-by-side's doubled draws and per-draw
@@ -248,8 +272,12 @@ and the distance to the next boundary, never fps.
 2. ~~Fix the multiview flatten~~ **Done 2026-09-02**: per-eye slice views on the MSAA resolve;
    crossed stereo verified on screen and in a capture. Next for multiview is only the Quest's
    GPU time, which is item 0.
-3. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
-   `LOAD_OP_DONT_CARE` (`discardTexture` is in plume), MSAA is already off, then foveation.
+3. **GPU levers, now that the GPU is the wall at 34.4 ms and the 30 fps boundary is 33.3.**
+   Done 2026-09-02: the scene pass clears instead of loading (held clears), the present at
+   1466x768 instead of the panel. Next, in order of size on the render-stage trace: the guest's
+   post chain is ~8 ms of one-draw full-screen passes at 1376x720 and below (bloom, DoF,
+   downsample chain), each `Direct` with 1.3-1.8 ms of compositor preemption attached - merging
+   or skipping links there is the next millisecond; then foveation, which waits on item 0.
 4. **Then the CPU work the owner has been asking for**, attached to the seams that exist:
    instancing (2083 `bdSceneNodeDrawSingle` calls a frame take only 1270 distinct first
    arguments), indirect draws off `bd_draw_defer`, and the SDK's vector-register codegen (VMX

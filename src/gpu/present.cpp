@@ -54,6 +54,7 @@ REXCVAR_DECLARE(i32, bd_capture_min_draws);
 REXCVAR_DECLARE(bool, bd_debug_present_clear);
 REXCVAR_DECLARE(bool, bd_mv_debug_layer_diff);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
+REXCVAR_DECLARE(f64, bd_xr_present_scale);
 
 namespace bd::gpu {
 
@@ -321,8 +322,26 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
                                   plume::RenderTextureLayout::SHADER_READ));
   rt->layout = plume::RenderTextureLayout::SHADER_READ;
 
-  const u32 swap_w = s.swap_chain->getWidth();
-  const u32 swap_h = s.swap_chain->getHeight();
+  // The target's own extent, not the window's: under the headset the target
+  // is the offscreen frame sized by bd_xr_present_scale, and a window-sized
+  // viewport into it showed the top-left 40% of the game, magnified
+  // (capture, 2026-09-02).
+  const auto *back_tex = static_cast<const plume::VulkanTexture *>(back);
+  const u32 swap_w = back_tex->desc.width ? back_tex->desc.width
+                                          : s.swap_chain->getWidth();
+  const u32 swap_h = back_tex->desc.height ? back_tex->desc.height
+                                           : s.swap_chain->getHeight();
+  {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      BD_INFO("[present] composing {}x{} game frame into a {}x{} target "
+              "(texture desc {}x{}, window {}x{})",
+              rt ? rt->width : 0u, rt ? rt->height : 0u, swap_w, swap_h,
+              back_tex->desc.width, back_tex->desc.height,
+              s.swap_chain->getWidth(), s.swap_chain->getHeight());
+    }
+  }
   // Under multiview the surface is a two-layer array, and rt->descriptorIndex
   // may be bound to that array rather than to the flattened side-by-side
   // companion - sampling it through a 2D view yields black. The resolve owns a
@@ -565,6 +584,35 @@ std::unique_ptr<plume::RenderFramebuffer> g_offscreen_fb;
 u32 g_offscreen_w = 0;
 u32 g_offscreen_h = 0;
 
+// The size the headset frame is composed at - see bd_xr_present_scale. Locked
+// to the XR swapchain once that exists: the copy into the runtime's image
+// needs both sides equal, and the swapchain is created once.
+void XrPresentSize(VideoState &s, const GuestTexture *front, u32 &w, u32 &h) {
+  auto &session = bd::xr::Session::Get();
+  if (session.SwapchainWidth() && session.SwapchainHeight()) {
+    w = session.SwapchainWidth();
+    h = session.SwapchainHeight();
+    return;
+  }
+  // A fraction of the window, aspect preserved: the first present comes
+  // before any game frame exists, and the swapchain is created on it.
+  w = s.swap_chain->getWidth();
+  h = s.swap_chain->getHeight();
+  const double scale = std::clamp(REXCVAR_GET(bd_xr_present_scale), 0.0, 1.0);
+  if (scale > 0.0 && scale < 1.0) {
+    w = std::max<u32>(64, static_cast<u32>(w * scale + 0.5));
+    h = std::max<u32>(64, static_cast<u32>(h * scale + 0.5));
+  }
+  static bool logged = false;
+  if (!logged) {
+    logged = true;
+    BD_INFO("[xr] headset frame composed at {}x{} (window {}x{} x {:.3f}, game "
+            "frame {}x{})",
+            w, h, s.swap_chain->getWidth(), s.swap_chain->getHeight(), scale,
+            front ? front->width : 0u, front ? front->height : 0u);
+  }
+}
+
 bool EnsureOffscreen(VideoState &s, u32 width, u32 height,
                      plume::RenderFormat format) {
   if (g_offscreen && g_offscreen_w == width && g_offscreen_h == height)
@@ -665,8 +713,10 @@ bool RecordCapture(VideoState &s, plume::RenderTexture *back, u32 width,
                    u32 height, plume::RenderFormat format, u32 layers = 1,
                    plume::RenderTextureLayout restore_layout =
                        plume::RenderTextureLayout::PRESENT) {
-  if (width == 0 || height == 0)
+  if (width == 0 || height == 0) {
+    BD_WARN("[capture] nothing recorded: target reports {}x{}", width, height);
     return false;
+  }
 
   const u32 slices = layers > 1 ? 2u : 1u;
   const u32 row_texels =
@@ -933,9 +983,14 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
   static bool swapchain_ready = false;
   static std::vector<std::unique_ptr<plume::VulkanTexture>> xr_textures;
   if (!swapchain_ready) {
-    // The swapchain's own dimensions, which is what the present blits into.
-    if (!session.CreateSwapchain(s.swap_chain->getWidth(),
-                                 s.swap_chain->getHeight()))
+    // The size of what the present blits into. The session can turn Running
+    // between the top of Present and here, so on that first frame there is no
+    // offscreen target yet and the size is computed the way it will be.
+    u32 sw = g_offscreen_w;
+    u32 sh = g_offscreen_h;
+    if (!sw || !sh)
+      XrPresentSize(s, nullptr, sw, sh);
+    if (!session.CreateSwapchain(sw, sh))
       return;
     auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
     for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
@@ -970,6 +1025,24 @@ void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
   }
 
   plume::RenderTexture *dst = xr_textures[index].get();
+  {
+    // The copy takes the destination's extent; a source of another size (the
+    // window, on the frame the session turned Running) would copy a corner.
+    const auto *src = static_cast<const plume::VulkanTexture *>(back);
+    if (src->desc.width != session.SwapchainWidth() ||
+        src->desc.height != session.SwapchainHeight()) {
+      static bool logged = false;
+      if (!logged) {
+        logged = true;
+        BD_INFO("[xr] frame {}x{} skipped: swapchain is {}x{}", src->desc.width,
+                src->desc.height, session.SwapchainWidth(),
+                session.SwapchainHeight());
+      }
+      session.ReleaseSwapchainImage();
+      ++g_xr_stats.noImage;
+      return;
+    }
+  }
   const plume::RenderTextureBarrier to_copy[] = {
       plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COPY_DEST),
       plume::RenderTextureBarrier(back, plume::RenderTextureLayout::COPY_SOURCE),
@@ -1074,8 +1147,10 @@ void Video::Present(GuestTexture *frontBuffer) {
 #else
     constexpr auto kBackFormat = plume::RenderFormat::B8G8R8A8_UNORM;
 #endif
-    if (!EnsureOffscreen(s, s.swap_chain->getWidth(), s.swap_chain->getHeight(),
-                         kBackFormat)) {
+    u32 present_w = 0;
+    u32 present_h = 0;
+    XrPresentSize(s, frontBuffer, present_w, present_h);
+    if (!EnsureOffscreen(s, present_w, present_h, kBackFormat)) {
       AbandonFrame(s, lock);
       return;
     }
@@ -1138,6 +1213,20 @@ void Video::Present(GuestTexture *frontBuffer) {
 
   // Mirror into the flat swapchain. After the XR copy, so the window shows
   // exactly what the headset was handed.
+  // The copy needs equal sizes; with bd_xr_present_scale the offscreen frame is
+  // smaller than the window, and the mirror is skipped rather than clipped.
+  if (mirroring && (g_offscreen_w != s.swap_chain->getWidth() ||
+                    g_offscreen_h != s.swap_chain->getHeight())) {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      BD_INFO("[xr] mirror skipped: headset frame {}x{} is not the window's "
+              "{}x{}",
+              g_offscreen_w, g_offscreen_h, s.swap_chain->getWidth(),
+              s.swap_chain->getHeight());
+    }
+    mirroring = false;
+  }
   if (mirroring) {
     plume::RenderTexture *front = s.swap_chain->getTexture(texture_index);
     if (front) {
@@ -1218,8 +1307,13 @@ void Video::Present(GuestTexture *frontBuffer) {
   const bool resolved_rt =
       rt && rt->resolvedTexture && rt->layers > 1 && !force_array;
   const bool multiview_rt = rt && rt->texture && rt->layers > 1 && !resolved_rt;
+  // CaptureDue() latches, so it is asked only when this site can record;
+  // asked first, a mono frame consumed the one shot with nothing written and
+  // the composite site never fired (2026-09-02).
+  const bool can_capture_here =
+      resolved_rt || multiview_rt || (force_array && rt && rt->texture);
   const bool capturing =
-      CaptureDue() &&
+      can_capture_here && CaptureDue() &&
       (resolved_rt
            ? RecordCapture(s, rt->resolvedTexture, rt->width, rt->height,
                            rt->format, 1,

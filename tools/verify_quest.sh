@@ -80,6 +80,11 @@ CVARS="$CVARS,bd_render_scale=100,bd_reflections=false,bd_shadows=false"
 CVARS="$CVARS,bd_cull_distance=350,bd_stereo=true,bd_perf_csv=true"
 CVARS="$CVARS,bd_sample_profiler=true,bd_capture_after_s=150"
 [ -n "$EXTRA" ] && CVARS="$CVARS,$EXTRA"
+# One entry per key, the caller's value winning. CLI11 refuses a value option
+# given twice and then drops the whole file silently: a run passing
+# bd_cull_distance=20 over the default 350 above started with every setting at
+# its default and no "args.txt added" line (2026-09-02, two runs lost).
+CVARS="$(echo "$CVARS" | tr ',' '\n' | awk -F= 'NF { v[$1] = $0; if (!($1 in seen)) { seen[$1] = ++n; key[n] = $1 } } END { for (i = 1; i <= n; i++) print v[key[i]] }' | paste -sd, -)"
 
 ARGS_LOCAL="$(cygpath -w "$(mktemp -d)")/args.txt"
 : > "$ARGS_LOCAL"

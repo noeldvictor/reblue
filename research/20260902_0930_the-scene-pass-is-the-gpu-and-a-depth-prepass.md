@@ -583,3 +583,61 @@ noted, not chased. `bd_vr_enabled=false` on the headset: the app ran (503
 draws, 50.8 ms GPU) but `ovrgpuprofiler -t` listed only the compositor - the
 render-stage trace sees the VR foreground context only. Preemption stays
 untested. Probe running: `bd_cull_distance=20`, the amount of geometry.
+
+## Instrument trap: a duplicated value option voids args.txt (12:15)
+
+Two `bd_cull_distance=20` runs came back with every setting at its default
+(`[config]` audit: 11 of 15 did not take effect, no `args.txt added` line).
+The cause is CLI11: a value option given twice (`--bd_cull_distance 350`
+from the script defaults, then `20` from the caller) throws, and the whole
+file is dropped. Boolean flags given twice were tolerated, which is why the
+`bd_stereo=false` runs worked. `tools/verify_quest.sh` now dedupes keys with
+the caller winning.
+
+## Geometry amount eliminated; the render-mode hunt is parked (12:30)
+
+`bd_cull_distance=20` (audit: all 13 took effect): 332 draws, scene pass
+`Direct`, Render 12.3-14.4 ms, `gpu_total_ms` 16.5 - and a frame at the 30 fps
+boundary, with most of the world culled away. Eighteen properties of the
+pass, the pipelines, the device and the process have now each been changed
+with the render-stage trace watching, and none moved the Adreno blob off
+`Mode: 0 (Direct)` for the scene pass; the effects instance of the same
+target bins. What could not be tested: the compositor's preemption (the
+profiler sees only the VR foreground) and the driver's own reasons (Turnip
+cannot reach the XR session). Parked, not closed: the fixed-foveation lever
+depends on it (a fragment density map on a direct-mode pass measured +17 ms
+for nothing on 2026-09-01, which is what a direct-mode FDM would do).
+
+What the same traces show that IS ours to change: the present pass into the
+XR swapchain runs at 3664x1920 - the panel's maximum, both eyes - for a
+1376x720 scene, at 2.5-2.7 ms Render plus 1.4-1.8 ms Preempt every frame,
+and the guest's post chain is ~8 ms of one-draw full-screen passes.
+
+## The headset frame composed at 1466x768: GPU 37.5 -> 34.4 ms (12:50)
+
+The XR swapchain and the offscreen present target were the window's size -
+the whole panel, 3664x1920 - for a 1376x720 game frame, and the XR quad path
+created the swapchain on the frame the session turned Running, before any
+offscreen target existed, so the size was locked to the window forever.
+`bd_xr_present_scale` (default 0.4 of the window, aspect preserved; the quad
+path sizes the swapchain the same way and skips a mismatched frame) puts the
+present at 1466x768: that pass went from 4.5-5.0 ms (Render 2.7, Blit 0.6-0.8,
+Preempt 1.4) to 2.0 ms (Render 0.57, Blit 0.10), and `gpu_total_ms` from 37.5
+to **34.4**, 1.1 ms above the 33.3 ms boundary; the lighter stretch of the
+run reads 33.4 ms, 30 fps. Audit: all 13 settings took effect.
+
+## Two bugs behind the resized present, both found by looking at pixels (13:10)
+
+The first headset capture after the resize was the top-left 40% of the game
+magnified: `RecordPresentPass` took its viewport, fit and capture extent from
+the window, not from the target it renders into. It now reads the target's
+own extent. The next runs then wrote no capture at all: the guest-surface
+capture site evaluates `CaptureDue()` before checking whether it can record,
+and in mono it consumed the one-shot latch with nothing written, so the
+composite site never fired. The latch is now asked only when that site can
+record. Verified on the desktop under the headless runtime: the frame composed
+at 768x432 is the whole scene, correctly framed (`frame_1788365213.png`).
+
+Headset verification (13:15): the pulled 1466x768 capture is the whole field
+frame, correctly framed, normal brightness; `gpu_total_ms` 34.8, audit all 13
+settings took effect.
