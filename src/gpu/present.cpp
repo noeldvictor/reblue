@@ -311,6 +311,9 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   }
 
   s.clear_pending = false;
+  // Plume flushes any clear still held when the list ends; the marker is per
+  // frame.
+  s.held_clear_rt = nullptr;
 
   s.command_list->barriers(
       plume::RenderBarrierStage::GRAPHICS,
@@ -479,6 +482,17 @@ void Video::RequestClear(u32 flags, u32 color_argb, float depth, u32 stencil) {
   // would float to an unrelated RT, so between passes with a real color target
   // clear now. The deferred path still covers depth, stencil and mid-pass.
   GuestTexture *rt = s.render_target;
+  // The depth clear is deferred to the target's next pass (plume holds it as
+  // that pass's load op). A resolve still pending out of the depth surface
+  // has to read the surface before the clear, not after: left to the next
+  // bind, MaterializeOutbound's read barrier made plume run the held clear
+  // first, as a zero-draw pass, and the shadow map then LOADed (2026-09-02).
+  if (s.command_list_open && (flags & 0x30u) != 0 && !s.draw_framebuffer_bound) {
+    if (GuestTexture *ds = s.depth_stencil; ds && ds->texture) {
+      MaterializeOutboundLocked(s, ds);
+      DetachSourceSurfaceLocked(s, ds);
+    }
+  }
   if (s.command_list_open && (flags & 0x1u) != 0 && rt && rt->texture &&
       !s.draw_framebuffer_bound) {
     // The clear wipes rt, so deferred resolves out of it must copy first. A
@@ -495,9 +509,14 @@ void Video::RequestClear(u32 flags, u32 color_argb, float depth, u32 stencil) {
     if (fresh)
       s.command_list->discardTexture(rt->texture);
     if (plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr)) {
+      // Plume defers this clear and, since 2026-09-02, holds it across the
+      // unbind for the pass that next draws into rt (the scene, after the
+      // shadow and reflection passes), where it becomes the load op. Marked
+      // so nothing flips rt to a read layout in between.
       s.command_list->setFramebuffer(fb);
       s.command_list->clearColor(0, ArgbToRenderColor(color_argb));
       s.command_list->setFramebuffer(nullptr);
+      s.held_clear_rt = rt;
   s.plume_framebuffer_bound = false;
       s.clear_flags &= ~0x1u;
       if ((s.clear_flags & 0x30u) == 0)

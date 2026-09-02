@@ -143,6 +143,19 @@ a second full-size pass bins with them off) and the scene pass is still direct, 
 trigger is a property of that pass - under side-by-side it carries every draw twice. **Getting
 the scene pass to bin is the GPU work, ahead of everything else.**
 
+**The scene pass now begins with CLEAR on colour and depth (2026-09-02, 11:00).** A desktop
+capture read with `tools/rdc_outline.py` (it prints each pass's load/store ops now) showed the
+guest's clear landing as a zero-draw pass on a colour-only framebuffer and the scene pass
+LOADing the target it had just cleared: the guest clears the scene colour, renders the shadow
+and reflection passes, then binds colour+depth. Plume now holds a deferred clear per texture
+across framebuffer switches (`HeldClear` in `plume_vulkan.cpp`) and flushes it only when a
+barrier or copy touches the texture; the host keeps that target out of the speculative
+SHADER_READ flip (`held_clear_rt`), flushes the draw queue before that flip, and materialises
+resolves out of a depth surface before its clear. Quest: surfaces per frame 34 -> 30,
+`gpu_total_ms` 38.5 -> 37.5, image verified on the desktop. `PLUME_FB_TRACE=<path>` writes
+plume's framebuffer/pass/clear sequence with the host's barrier sites interleaved; it is how the
+order was found, and the way to find the next one.
+
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
@@ -205,11 +218,25 @@ and the distance to the next boundary, never fps.
    viewports (mono is direct too), blending on depth writers, the seed copy, the vertex-stage
    `SV_ViewID`, the draw count per pass instance, alpha-test discard, and (10:05) update-after-bind
    on the bindless sets (`bd_debug_no_uab`, invalid on purpose, trace only). The vendor profiler
-   gives no reason. The same trace bins a 1920x3664 pass 25 ways, so the choice is per pass. **Next: `XR_KHR_vulkan_enable2`**, so the runtime creates the instance and device
-   through a `vkGetInstanceProcAddr` we choose - which lets Mesa's Turnip (`bd_vulkan_icd=turnip`,
-   packaged with `EXTRA_LIBS=out/turnip/libvulkan_freedreno.so`, loaded through its HAL `HMI`)
-   run the headset path and say in its own log why a pass is not binned. The flat path cannot
-   host it: Android's surface extensions live in the platform loader, not the driver.
+   gives no reason. **The binned 1920x3664 and 1024x1024 surfaces in every trace are the
+   compositor's** (an idle-system trace lists the same two, 10:30). Eliminated by one trace
+   each on 2026-09-02, all with the audit confirming the setting took: robustness features
+   (`bd_vulkan_no_robust`), every optional device extension (`bd_vulkan_no_ext`), the load ops
+   (the scene pass now begins with CLEAR on colour and depth, see below), the vertex shaders'
+   size (`XENOS_RECOMP_POS_ONLY_VS`: position-only shaders, same 19.4 ms), stencil and depth
+   bias (`bd_debug_no_stencil_bias`), depth writes (`bd_debug_no_depth_write`). **The one
+   full-size pass of ours that bins** (16 bins, seen twice) is the scene target's last instance,
+   the ~60 effect draws after the mid-frame resolve: same attachments, formats and layouts as
+   the main instance. The remaining suspects are the amount of geometry per pass (the
+   visibility stream has a size limit; `bd_cull_distance=20` is the probe) and the compositor's
+   preemption (Preempt 4-6 ms in every scene pass; the flat path could not be traced, the
+   profiler sees only the VR foreground). Do not re-run any of the eliminated probes.
+   **Turnip is closed (10:20):** the Meta runtime validates and dispatches every handle-only
+   call through Android's platform loader, so a directly loaded ICD gets as far as the VkInstance
+   and `xrCreateVulkanDeviceKHR` answers `XR_ERROR_HANDLE_INVALID`; the trace and the
+   extension filter in `xr_session.cpp` stay, and `XR_KHR_vulkan_enable2` is the default binding
+   on the headset (`bd_xr_vulkan2`), which is what `XR_FB_foveation` and runtime-owned swapchains
+   build on.
 1. **Multiview's 277 ms on the Quest without the resolve pass.** Measured three ways on
    2026-09-01: resolve off 277 ms GPU; resolve on 59 ms; resolve on with its companion never
    sampled (`bd_mv_redirect_srv=false`) **59 ms**. So the array heap's sampling is free and
@@ -336,6 +363,11 @@ Each was measured or proven; the note that closed it is in `research/`.
   `bd_capture_after_s`.
 - **`simpleperf`**: Horizon OS refuses it regardless of `profileable`. Use `bd_sample_profiler`.
 - **`gpu_busy_percentage`** reads 99% with the app force-stopped.
+- **Mesa Turnip on the headset path** (`bd_vulkan_icd=turnip`): the Meta runtime dispatches and
+  validates every handle-only OpenXR call through Android's platform loader, so an ICD we load
+  ourselves reaches the VkInstance and no further (`XR_ERROR_HANDLE_INVALID` from
+  `xrCreateVulkanDeviceKHR`, 2026-09-02). Only a forwarding layer under the platform loader could
+  carry it, and the flat path cannot host it either.
 - **The AYN Thor** as a test device. It is a different GPU with a stricter driver; a Thor result
   says nothing about the Quest, and the owner has said Quest only.
 

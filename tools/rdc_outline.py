@@ -72,6 +72,51 @@ def renderpass_viewmasks(text):
     return out
 
 
+def renderpass_attachments(text):
+    """Map render pass id -> list of (format, samples, loadOp, storeOp, stencilLoad, stencilStore).
+
+    Added 2026-09-02 for the tiling question: on Adreno a pass whose every
+    attachment is LOAD+STORE has to pull each tile in and push it out again,
+    which is what a driver's cost model weighs against direct rendering. The
+    capture is the only record of which load op each pass was actually given.
+    """
+    out = {}
+    for _, name, body in chunks(text):
+        if name != "vkCreateRenderPass":
+            continue
+        ids = re.findall(r'<ResourceId name="RenderPass"[^>]*>(\d+)<', body)
+        if not ids:
+            continue
+        atts = []
+        a = re.search(r'<array name="pAttachments"[^>]*>(.*?)</array>', body, re.S)
+        if a:
+            for s in re.findall(r'<struct typename="VkAttachmentDescription"[^>]*>(.*?)</struct>',
+                                a.group(1), re.S):
+                def en(field):
+                    m = re.search(r'<enum name="%s"[^>]*string="([^"]+)"' % field, s)
+                    return m.group(1) if m else "?"
+                atts.append((en("format").replace("VK_FORMAT_", ""),
+                             en("samples").replace("VK_SAMPLE_COUNT_", "").replace("_BIT", ""),
+                             en("loadOp").replace("VK_ATTACHMENT_LOAD_OP_", ""),
+                             en("storeOp").replace("VK_ATTACHMENT_STORE_OP_", ""),
+                             en("stencilLoadOp").replace("VK_ATTACHMENT_LOAD_OP_", ""),
+                             en("stencilStoreOp").replace("VK_ATTACHMENT_STORE_OP_", "")))
+        out[int(ids[-1])] = atts
+    return out
+
+
+def att_summary(atts):
+    def op(x):
+        return {"LOAD": "L", "CLEAR": "C", "DONT_CARE": "-", "STORE": "S", "NONE": "N"}.get(x, x)
+    parts = []
+    for fmt, samples, lo, so, slo, sso in atts:
+        p = "%s x%s %s/%s" % (fmt, samples, op(lo), op(so))
+        if "D" in fmt and "S" in fmt:
+            p += " s%s/%s" % (op(slo), op(sso))
+        parts.append(p)
+    return "[" + "; ".join(parts) + "]"
+
+
 def framebuffers(text):
     """Map framebuffer id -> (w, h, layers, attachment view ids)."""
     out = {}
@@ -107,11 +152,14 @@ def main():
     ap.add_argument("xml")
     ap.add_argument("--mask", type=int, default=None,
                     help="only show passes whose render pass has this view mask")
+    ap.add_argument("--min-draws", type=int, default=0,
+                    help="only show passes with at least this many draws")
     args = ap.parse_args()
 
     text = io.open(args.xml, encoding="utf-8", errors="replace").read()
     fbs = framebuffers(text)
     masks = renderpass_viewmasks(text)
+    atts = renderpass_attachments(text)
     # VkFramebufferCreateInfo::layers must be 1 when the render pass has a view
     # mask - the layer count comes from the mask - so a layered framebuffer
     # reads as layers=1 and only the mask says whether it is stereo.
@@ -145,14 +193,17 @@ def main():
     for i, p in enumerate(passes):
         if args.mask is not None and p["mask"] != args.mask:
             continue
+        if p["draws"] < args.min_draws:
+            continue
         vp = ""
         if p["vps"]:
             uniq = sorted(set(p["vps"]))
             vp = " vp=" + ",".join("%gx%g@%g" % (v[2], v[3], v[0]) for v in uniq[:4])
-        print("  [%3d] fb=%-6s %sx%s mask=%d %s pipes=%d draws=%3d%s"
+        print("  [%3d] fb=%-6s %sx%s mask=%d %s pipes=%d draws=%3d %s%s"
               % (i, p["fb"], p["w"], p["h"], p["mask"],
                  "STEREO" if p["mask"] else "mono  ",
-                 len(set(p["pipes"])), p["draws"], vp))
+                 len(set(p["pipes"])), p["draws"],
+                 att_summary(atts.get(p["rp"], [])), vp))
 
 
 if __name__ == "__main__":

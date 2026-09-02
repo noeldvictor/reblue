@@ -446,3 +446,140 @@ only route to an authoritative reason, and it stalls at
 `xrCreateVulkanInstanceKHR` = `XR_ERROR_VALIDATION_FAILURE`; the next step there
 is a logging `vkGetInstanceProcAddr` trampoline that prints what the runtime
 asks of the ICD.
+
+## Turnip through enable2 reaches the instance and no further (10:20)
+
+A logging `vkGetInstanceProcAddr` handed to `xrCreateVulkanInstanceKHR`
+(`bd_xr_vulkan2_trace`) named the validation failure: the runtime appends
+`VK_KHR_surface` and `VK_KHR_android_surface` to every instance it creates,
+Turnip returns `VK_ERROR_EXTENSION_NOT_PRESENT` (-7), and the runtime reports
+`XR_ERROR_VALIDATION_FAILURE`. The wrapper now drops extensions the ICD does
+not expose; the runtime then creates the VkInstance through Turnip (VkResult
+0). The next call, `xrGetVulkanGraphicsDevice2KHR`, takes only the instance
+handle and the runtime resolves it through `/system/lib64/libvulkan.so`,
+which faults in `GetInstanceProcAddr` on a handle the platform loader never
+created. With the session enumerating the physical device itself,
+`xrCreateVulkanDeviceKHR` answers `XR_ERROR_HANDLE_INVALID` (-12) before
+calling the ICD: the runtime validates handles against the platform loader.
+The session binding and swapchain import would go the same way. **A directly
+loaded ICD cannot reach the XR session on this runtime; the Turnip route is
+closed** short of a forwarding layer under the platform loader. The wrapper and
+the extension filter stay (they cost nothing under the blob).
+
+## No pass of ours bins. The binned surfaces are the compositor's (10:30)
+
+The full surface list of the `bd_debug_no_uab` trace: every surface at the
+guest resolutions (1376x720, 688x360, 344x180, 172x90, 128x72) is `Direct`,
+including one-draw passes; the `HwBinning` surfaces are 1920x3664 c32 (25
+bins) and 1024x1024 c32 d24s8 MSAA 4 (66 bins). `ovrgpuprofiler -t 1` with
+`com.reblue` force-stopped lists exactly those two, so they are the
+compositor's. The CLAUDE.md line "the choice is per pass" was wrong and is
+replaced: **the trigger is a property of the whole process**, which narrows
+it to what every pass shares - device features and extensions, the pipeline
+layout, image creation, or the pass structure. Plume enables every queried
+core feature wholesale (`pEnabledFeatures = &deviceFeatures.features`),
+robustBufferAccess included, plus robustness2, buffer device address, scalar
+block layout, sample locations, load/store-op-none and fragment density map.
+Attachment layouts are the OPTIMAL ones (not GENERAL, which Turnip would
+treat as a feedback loop). SPIR-V capabilities in the host dump: Shader,
+RuntimeDescriptorArray, MultiView, SampledBuffer - nothing exotic. Probes
+added: `bd_vulkan_no_robust` (robustness off), `bd_vulkan_no_ext` (optional
+extensions treated as unsupported).
+
+## Robustness and every optional extension eliminated; the capture shows the pass structure (10:45)
+
+`bd_vulkan_no_robust=true` (robustBufferAccess, robustBufferAccess2,
+robustImageAccess2 off; log confirmed): scene pass `Direct`, 25.45 ms,
+`gpu_total_ms` 38.8 - robustness is not a lever on this frame either.
+`bd_vulkan_no_ext` with fragment density map, sample locations,
+load/store-op-none, buffer device address, scalar block layout, mirror clamp,
+present id and present wait all treated as unsupported: `Direct`, 25.1 ms,
+38.3 ms total. Device features and extensions are eliminated.
+
+`tools/rdc_outline.py` now prints each pass's attachment load/store ops (from
+the `vkCreateRenderPass` chunks). The 2026-08-31 desktop side-by-side capture:
+
+```
+[ 0] 4096x4096 draws=221 [D32_SFLOAT_S8_UINT x1 C/S]            shadow map
+[ 2]  480x270  draws= 90 [RGBA16F x1 L/S; D32S8 x1 C/S]         reflection
+[ 3] 1920x1080 draws=  0 [RGBA16F x4 C/S]                       clear-only pass, colour-only fb
+[ 4] 1920x1080 draws=314 [RGBA16F x4 L/S; D32S8 x4 C/S]         the scene, colour LOADED
+[ 5] 1920x1080 draws= 14 [RGBA16F x4 L/S; D32S8 x4 L/S]         restart
+[ 6] 1920x1080 draws=  4 [RGBA16F x4 L/S; D32S8 x4 L/S]         restart
+... 22 one-draw post passes, all L/S
+```
+
+The guest binds the colour target, clears it, then binds the depth target.
+Plume's deferred clear is per framebuffer, so the switch flushed it as a
+zero-draw pass (3) and the scene pass (4) loads the colour it just cleared.
+`VulkanCommandList::setFramebuffer` now carries a pending clear over to the
+new framebuffer when it holds the same attachments. Verification: a desktop
+capture must show pass 3 gone and pass 4 as `C/S` on colour; then the Quest
+trace says whether that was the direct-mode trigger.
+
+## Held clears: the scene pass now begins with CLEAR, and it is still Direct (11:05)
+
+The framebuffer trace (`PLUME_FB_TRACE=<path>`, plume) showed the real order:
+the host's `RequestClear` clears the scene colour through a colour-only
+framebuffer and unbinds; the shadow and reflection passes run; the scene binds
+colour+depth; and the draw queue's rebind of the same framebuffer flushed the
+deferred depth clear too. Plume now holds a deferred clear per texture across
+framebuffer switches (`HeldClear`), folds it into the load op of the next pass
+that binds the texture, and flushes it as a pass of its own only when a
+barrier or copy touches that texture. The host keeps the cleared target out
+of the speculative SHADER_READ flip (`held_clear_rt`). Desktop capture
+(`held.zip.xml`): the scene pass is `[RGBA16F x4 C/S; D32S8 x4 C/S]` with 639
+draws and the zero-draw passes on it are gone; the frame is a correct stereo
+pair with shadows. Quest: surfaces 34 -> 30, `gpu_total_ms` 38.5 -> 37.5,
+and the scene pass is **still `Direct`** (Render 19.5 ms). Load ops are not
+the trigger. One leftover: the shadow map's depth clear still flushes as a
+zero-draw pass because a barrier touches it first (being traced).
+
+The positive control from the 10:40 run: the surface right before the post
+chain - the scene target's last pass instance, the ~60 effect draws after the
+mid-frame resolve - ran `HwBinning` with 16 bins. Same attachments, same
+formats, same layouts as the main instance. What differs is the content:
+the main instance carries the opaque geometry through the recompiled vertex
+shaders. Next probe: `XENOS_RECOMP_POS_ONLY_VS` zeroes every vertex output
+but position so DXC strips the rest; if the pass bins with small vertex
+shaders, the driver's choice is a cost model over vertex work.
+
+## Position-only vertex shaders: still Direct (11:20)
+
+`XENOS_RECOMP_POS_ONLY_VS` (55 guest vertex shaders with every output but
+position zeroed, DXC stripping the rest): scene pass `Direct`, Render 19.4 ms,
+`gpu_total_ms` 37.5 - identical to the full shaders. So the vertex work is
+neither what keeps the pass direct nor a measurable share of its time.
+Eliminated. Next: the depth format (ours D32S8, the compositor's binned
+surface D24S8), stencil/depth bias in the scene pipelines (valid run pending).
+
+## Stencil and depth bias eliminated (11:35)
+
+`bd_debug_no_stencil_bias=true` (valid run this time, audit live=true): scene
+pass `Direct`, Render 19.6 ms, `gpu_total_ms` 37.6. Eliminated. The
+queue-flush reorder in `BindDrawFramebufferLocked` (queued draws now leave
+before the speculative SHADER_READ flip; they used to be emitted into a
+target already flipped) is in this build; frame unchanged.
+
+## Depth writes eliminated (11:50)
+
+`bd_debug_no_depth_write=true`: scene pass `Direct`, Render 23.3 ms (more
+overdraw, as expected), `gpu_total_ms` 39.9; the effects instance binned
+again (16 bins, 2.3 ms). Sixteen properties of the pass eliminated. The
+remaining explanation is the environment: every trace shows the compositor
+preempting the scene pass (Preempt 4-6 ms), and a driver that must preempt
+at draw granularity for a higher-priority context has a reason to keep a
+long pass out of GMEM. Test: the flat path on the headset, no VR session.
+
+## The shadow-map flush is a desktop artefact; flat path untraceable (12:00)
+
+With every host barrier site named in the trace (`NoteBarrierCall` appends
+the site), the barrier that flushes the held shadow-map clear reports no
+site: it comes from a caller outside the counted ones, and the only such
+caller that reads depth before the shadow draws is the sun-occlusion pass,
+which runs on the desktop and is dropped on Adreno. The Quest measurement
+configuration renders no shadow map (`bd_shadows=false`), so this stays
+noted, not chased. `bd_vr_enabled=false` on the headset: the app ran (503
+draws, 50.8 ms GPU) but `ovrgpuprofiler -t` listed only the compositor - the
+render-stage trace sees the VR foreground context only. Preemption stays
+untested. Probe running: `bd_cull_distance=20`, the amount of geometry.

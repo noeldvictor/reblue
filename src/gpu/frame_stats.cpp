@@ -356,6 +356,20 @@ void NoteBarrierCall(u32 barrier_count, BarrierSite site) {
   g_barrier_call_count.fetch_add(1, std::memory_order_relaxed);
   g_barrier_count.fetch_add(barrier_count, std::memory_order_relaxed);
   g_barrier_site_count[u8(site)].fetch_add(1, std::memory_order_relaxed);
+  // PLUME_FB_TRACE=<path>: name the site after plume's own barrier line, so a
+  // "barrier on held texture" in that trace can be attributed. Reopened per
+  // call because plume truncates the file when it first opens it (2026-09-02
+  // probe; costs nothing unset).
+  static const char *trace_path = std::getenv("PLUME_FB_TRACE");
+  if (trace_path) {
+    static const char *const kSites[] = {"DrawFb", "TexUpload", "Resolve",
+                                         "Occlusion"};
+    if (FILE *f = std::fopen(trace_path, "a")) {
+      std::fprintf(f, "  host barrier site %s (%u)\n", kSites[u8(site) & 3],
+                   barrier_count);
+      std::fclose(f);
+    }
+  }
 }
 
 void NoteFbBind() { g_fb_bind_count.fetch_add(1, std::memory_order_relaxed); }

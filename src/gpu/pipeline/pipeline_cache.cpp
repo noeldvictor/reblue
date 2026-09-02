@@ -25,6 +25,7 @@
 
 REXCVAR_DECLARE(bool, bd_debug_depth_always);
 REXCVAR_DECLARE(bool, bd_debug_no_stencil_bias);
+REXCVAR_DECLARE(bool, bd_debug_no_depth_write);
 namespace bd::gpu {
 
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
@@ -46,6 +47,9 @@ void SanitizePipelineState(PipelineState &state) {
     state.depthBias = 0;
     state.slopeScaledDepthBias = 0.0f;
   }
+  // Probe: no depth writes anywhere. See bd_debug_no_depth_write.
+  if (REXCVAR_GET(bd_debug_no_depth_write))
+    state.zWriteEnable = false;
   // No color render target -> the output merger color path is inactive, so
   // renderTargetCount is 0. A PSO that enables blend (or a color write mask)
   // against slot 0 while its RTV format is UNKNOWN is rejected by

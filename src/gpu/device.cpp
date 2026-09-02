@@ -45,6 +45,8 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_vr_enabled);
 REXCVAR_DECLARE(std::string, bd_vulkan_icd);
 REXCVAR_DECLARE(bool, bd_debug_no_uab);
+REXCVAR_DECLARE(bool, bd_vulkan_no_robust);
+REXCVAR_DECLARE(std::string, bd_vulkan_no_ext);
 #endif
 
 #include "core/logging.h"
@@ -414,6 +416,31 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
         xr_options.icdLibraryPath = path;
         BD_INFO("[vk] bd_vulkan_icd='{}' -> loading ICD directly from '{}'",
                 icd, path);
+      }
+    }
+    bd::xr::Session::Get().SetDirectIcd(!xr_options.icdLibraryPath.empty());
+    xr_options.noRobustness = REXCVAR_GET(bd_vulkan_no_robust);
+    if (xr_options.noRobustness)
+      BD_INFO("[vk] bd_vulkan_no_robust: robustness features left off");
+    {
+      const std::string no_ext = REXCVAR_GET(bd_vulkan_no_ext);
+      size_t start = 0;
+      while (start <= no_ext.size()) {
+        // ',' or ';': the device tools pass settings as "k=v,k=v", so a list
+        // value has to use ';' there.
+        size_t end = no_ext.find_first_of(",;", start);
+        if (end == std::string::npos)
+          end = no_ext.size();
+        std::string name = no_ext.substr(start, end - start);
+        while (!name.empty() && name.front() == ' ')
+          name.erase(name.begin());
+        while (!name.empty() && name.back() == ' ')
+          name.pop_back();
+        if (!name.empty()) {
+          BD_INFO("[vk] bd_vulkan_no_ext: {} treated as unsupported", name);
+          xr_options.disabledDeviceExtensions.push_back(name);
+        }
+        start = end + 1;
       }
     }
     xr_options.noUpdateAfterBind = REXCVAR_GET(bd_debug_no_uab);

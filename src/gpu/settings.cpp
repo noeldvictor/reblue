@@ -496,9 +496,24 @@ REXCVAR_DEFINE_STRING(bd_vulkan_icd, "", kCvarGroup,
 // renderer writes descriptors while command buffers using them are pending),
 // so a render-stage trace only - it asks whether update-after-bind is what
 // keeps Adreno from binning the guest draws.
+// Probes for the driver's global render-mode choice (2026-09-02: no pass of
+// ours bins on the Quest while the compositor's do). Robustness is a real
+// lever on Adreno regardless: robustBufferAccess bounds-checks every load.
+REXCVAR_DEFINE_BOOL(bd_vulkan_no_robust, false, kCvarGroup,
+                    "Leave robustBufferAccess and robustness2 access checks "
+                    "off at device creation. Requires restart.");
+REXCVAR_DEFINE_STRING(bd_vulkan_no_ext, "", kCvarGroup,
+                      "Comma-separated optional device extensions to treat "
+                      "as unsupported (probe). Requires restart.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_uab, false, kCvarGroup,
                     "Probe: create the bindless sets without "
                     "update-after-bind (invalid on purpose).");
+// Probe: no depth writes in any pipeline. Destroys the image (everything
+// overdraws); exists to ask the render-stage trace whether depth-writing
+// draws are what keeps the scene pass direct - the one full-size pass that
+// binned (2026-09-02) was the effects instance, which does not write depth.
+REXCVAR_DEFINE_BOOL(bd_debug_no_depth_write, false, kCvarGroup,
+                    "Probe: disable depth writes in every pipeline.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
                     "Probe: strip stencil and depth bias from every pipeline "
                     "(renders wrongly on purpose).");

@@ -496,6 +496,12 @@ struct VideoState {
   plume::RenderPipeline *current_prepass_pso = nullptr;
   plume::RenderPipeline *current_color_pso = nullptr;
 
+  // The colour target whose guest clear plume is holding for its next pass
+  // (RequestClear clears through a colour-only framebuffer and unbinds; plume
+  // keeps that clear keyed to the texture). Kept here so the speculative flip
+  // to SHADER_READ at a target change leaves it alone - that barrier would
+  // make plume flush the clear as a zero-draw pass and the scene would LOAD.
+  GuestTexture *held_clear_rt = nullptr;
   bool clear_pending = false;
   u32 clear_flags = 0;
   u32 clear_color_argb = 0xFF000000;

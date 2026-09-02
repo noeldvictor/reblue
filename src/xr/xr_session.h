@@ -83,6 +83,11 @@ public:
   // vkGetInstanceProcAddr handed in - the system loader's, or a directly
   // loaded ICD's. True once the instance came up with that extension.
   bool VulkanEnable2() const { return vulkanEnable2_; }
+  // The VkInstance came from a directly loaded ICD, not Android's loader:
+  // runtime entry points that take only the instance (no proc address) would
+  // resolve it through the loader and fault, so the session answers those
+  // itself. Set by the renderer before it creates the interface.
+  void SetDirectIcd(bool direct) { directIcd_ = direct; }
   // Return the VkResult the runtime reports for the Vulkan call, or
   // VK_ERROR_INITIALIZATION_FAILED (-3) if the XR call itself failed. The
   // create-info pointers are VkInstanceCreateInfo / VkDeviceCreateInfo, kept
@@ -191,6 +196,7 @@ private:
   std::vector<std::string> vulkanDeviceExtensions_;
   u32 vulkanMinApiVersion_ = 0;
   bool vulkanEnable2_ = false;
+  bool directIcd_ = false;
 
   u32 recommendedWidth_ = 0;
   u32 recommendedHeight_ = 0;

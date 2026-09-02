@@ -85,6 +85,10 @@ REXCVAR_DEFINE_BOOL(bd_xr_vulkan2, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_xr_vulkan2, false, kCvarGroup,
                     "Bind Vulkan to OpenXR through XR_KHR_vulkan_enable2.");
 #endif
+REXCVAR_DEFINE_BOOL(bd_xr_vulkan2_trace, false, kCvarGroup,
+                    "Log every Vulkan entry point the OpenXR runtime resolves "
+                    "and the extensions it asks vkCreateInstance/Device for "
+                    "(enable2 only; for a direct ICD that fails validation).");
 REXCVAR_DEFINE_DOUBLE(bd_xr_refresh_rate, 0.0, kCvarGroup,
                       "Display refresh rate to request, in Hz. 0 leaves it to "
                       "the runtime. The nearest supported rate at or below the "

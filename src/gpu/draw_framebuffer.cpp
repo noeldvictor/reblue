@@ -24,6 +24,9 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 REXCVAR_DECLARE(bool, bd_dump_passes);
 REXCVAR_DECLARE(bool, bd_barrier_hoist);
 REXCVAR_DECLARE(bool, bd_seed_targets);
@@ -144,6 +147,27 @@ namespace {
 // textures they sit in their last attachment layout rather than SHADER_READ.
 // Bound rt/ds links were just materialized, so a live source is never the
 // current target, but it is skipped defensively anyway.
+// PLUME_FB_TRACE=<path>: the host's side of plume's framebuffer trace, in the
+// same file, so a barrier plume reports on a held-clear texture can be traced
+// to the site that issued it (2026-09-02). Desktop probe; costs nothing unset.
+void TraceHost(const char *site, const GuestTexture *t,
+               plume::RenderTextureLayout layout) {
+  static FILE *f = nullptr;
+  static bool tried = false;
+  if (!tried) {
+    tried = true;
+    if (const char *path = std::getenv("PLUME_FB_TRACE"))
+      f = std::fopen(path, "a");
+  }
+  if (!f)
+    return;
+  std::fprintf(f, "  host %s: guest %p plume %p -> layout %d\n", site,
+               static_cast<const void *>(t),
+               static_cast<const void *>(t ? t->texture : nullptr),
+               static_cast<int>(layout));
+  std::fflush(f);
+}
+
 void NoteWriteLayout(VideoState &s, GuestTexture *t) {
   for (GuestTexture *e : s.write_layout_surfaces)
     if (e == t)
@@ -172,7 +196,10 @@ void FlushWriteLayoutToRead(VideoState &s, const GuestTexture *rt,
   u32 count = 0;
   size_t keep = 0;
   for (GuestTexture *t : s.write_layout_surfaces) {
-    if (t == rt || t == ds) {
+    // A target with a held guest clear stays in its write layout: the flip
+    // is speculative, and the barrier would make plume flush the clear as a
+    // zero-draw pass before the scene pass LOADs it (2026-09-02).
+    if (t == rt || t == ds || t == s.held_clear_rt) {
       s.write_layout_surfaces[keep++] = t;
       continue;
     }
@@ -182,6 +209,7 @@ void FlushWriteLayoutToRead(VideoState &s, const GuestTexture *rt,
       s.write_layout_surfaces[keep++] = t;
       continue;
     }
+    TraceHost("FlushWriteLayoutToRead", t, plume::RenderTextureLayout::SHADER_READ);
     batch[count++] = plume::RenderTextureBarrier(
         t->texture, plume::RenderTextureLayout::SHADER_READ);
     t->layout = plume::RenderTextureLayout::SHADER_READ;
@@ -206,6 +234,7 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
       continue;
     if (src->layout == plume::RenderTextureLayout::SHADER_READ)
       continue;
+    TraceHost("TransitionResolveSources", src, plume::RenderTextureLayout::SHADER_READ);
     sampled[sampled_count++] = plume::RenderTextureBarrier(
         src->texture, plume::RenderTextureLayout::SHADER_READ);
     src->layout = plume::RenderTextureLayout::SHADER_READ;
@@ -248,6 +277,10 @@ void TransitionTargetsToWrite(VideoState &s, GuestTexture *rt, GuestTexture *ds,
   }
   if (!barrier_count)
     return;
+  if (rt && barrier_count)
+    TraceHost("TransitionTargetsToWrite", rt, rt->layout);
+  if (ds && barrier_count)
+    TraceHost("TransitionTargetsToWrite", ds, ds->layout);
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, barriers,
                            barrier_count);
   NoteBarrierCall(barrier_count, BarrierSite::DrawFb);
@@ -389,6 +422,13 @@ bool Video::BindDrawFramebufferLocked() {
   if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds) {
     return true;
   }
+  // Queued draws were recorded against the outgoing framebuffer, so they go
+  // out before anything flips that target to a read layout. Flushing them
+  // after the flip below emitted the shadow map's draws into a depth image
+  // already in SHADER_READ, and the flip's barrier made plume run the held
+  // shadow clear as a zero-draw pass ahead of them (traced 2026-09-02).
+  if (s.plume_framebuffer_bound)
+    bd::gpu::DrawQueueFlush(s.command_list);
   // The pass is about to end regardless, so any barrier issued here is free.
   if (REXCVAR_GET(bd_barrier_hoist))
     FlushWriteLayoutToRead(s, rt, ds);
@@ -418,7 +458,10 @@ bool Video::BindDrawFramebufferLocked() {
     // single-sample dst) and does not need to be: the MSAA pass reaching here
     // is the scene, the chain source, which writes the whole tile fresh.
     s.command_list->discardTexture(rt->texture);
-  } else if (discard_rt && REXCVAR_GET(bd_seed_targets)) {
+  } else if (discard_rt && REXCVAR_GET(bd_seed_targets) &&
+             rt != s.held_clear_rt) {
+    // (A target with a held guest clear is about to be cleared by its pass's
+    // load op; seeding it would copy a surface the clear then discards.)
     // Seeding copies a previous surface into a freshly acquired one so a pass
     // reading untouched pixels sees what a Xenon's EDRAM tile would have held.
     // It is 14 full-surface copies a frame and the bulk of the resolve
@@ -532,7 +575,11 @@ bool Video::BindDrawFramebufferLocked() {
   // sample of a freshly discarded MSAA target has to be defined before the /N
   // resolve averages them. A guest color clear draining below already does it.
   const bool guest_color_clear =
-      s.clear_pending && (s.clear_flags & 0x1u) != 0 && rt != nullptr;
+      rt != nullptr && ((s.clear_pending && (s.clear_flags & 0x1u) != 0) ||
+                        rt == s.held_clear_rt);
+  // The held clear lands as this pass's load op; the marker has done its job.
+  if (rt != nullptr && rt == s.held_clear_rt)
+    s.held_clear_rt = nullptr;
   if (discard_rt && rt != nullptr &&
       rt->sampleCount != plume::RenderSampleCount::COUNT_1 &&
       !guest_color_clear) {

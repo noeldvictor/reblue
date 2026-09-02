@@ -33,6 +33,7 @@
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(f64, bd_xr_refresh_rate);
 REXCVAR_DECLARE(bool, bd_xr_vulkan2);
+REXCVAR_DECLARE(bool, bd_xr_vulkan2_trace);
 
 #if defined(__ANDROID__)
 #include <unistd.h>
@@ -43,6 +44,172 @@ namespace bd::xr {
 namespace {
 
 XrInstance AsInstance(void *p) { return static_cast<XrInstance>(p); }
+
+// A vkGetInstanceProcAddr the runtime resolves through under enable2. It
+// intercepts vkCreateInstance / vkCreateDevice to drop extensions the ICD
+// does not expose (see KeepExposed), and under bd_xr_vulkan2_trace logs
+// every name the runtime asks for. Written 2026-09-02 because a directly
+// loaded ICD (Turnip, bd_vulkan_icd) made xrCreateVulkanInstanceKHR return
+// XR_ERROR_VALIDATION_FAILURE with no logged reason; the trace named it.
+PFN_vkGetInstanceProcAddr g_traced_gipa = nullptr;
+PFN_vkCreateInstance g_traced_create_instance = nullptr;
+PFN_vkCreateDevice g_traced_create_device = nullptr;
+PFN_vkEnumerateInstanceExtensionProperties g_traced_enum_instance_ext = nullptr;
+PFN_vkEnumerateDeviceExtensionProperties g_traced_enum_device_ext = nullptr;
+
+VkInstance g_traced_instance = VK_NULL_HANDLE;
+
+// Keep only the requested extensions the ICD exposes. Measured 2026-09-02:
+// the Quest runtime appends VK_KHR_surface and VK_KHR_android_surface to
+// every instance it creates; those live in Android's platform loader, not in
+// the driver, so a directly loaded ICD answers VK_ERROR_EXTENSION_NOT_PRESENT
+// (-7) and the runtime reports it as XR_ERROR_VALIDATION_FAILURE. The runtime
+// shares swapchain images through external memory, not a surface.
+std::vector<const char *> KeepExposed(
+    const char *const *names, u32 count,
+    const std::vector<VkExtensionProperties> &exposed, const char *what) {
+  std::vector<const char *> kept;
+  for (u32 i = 0; i < count; ++i) {
+    const bool has = std::any_of(
+        exposed.begin(), exposed.end(), [&](const VkExtensionProperties &p) {
+          return std::strcmp(p.extensionName, names[i]) == 0;
+        });
+    if (has)
+      kept.push_back(names[i]);
+    else
+      BD_WARN("[xr] dropping {} extension {}: the ICD does not expose it",
+              what, names[i]);
+  }
+  return kept;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL TracedCreateInstance(
+    const VkInstanceCreateInfo *ci, const VkAllocationCallbacks *alloc,
+    VkInstance *out) {
+  const u32 api = ci->pApplicationInfo ? ci->pApplicationInfo->apiVersion : 0;
+  BD_INFO("[xr] runtime vkCreateInstance: apiVersion {}.{}, {} layers, {} exts",
+          VK_API_VERSION_MAJOR(api), VK_API_VERSION_MINOR(api),
+          ci->enabledLayerCount, ci->enabledExtensionCount);
+  for (u32 i = 0; i < ci->enabledLayerCount; ++i)
+    BD_INFO("[xr]   layer {}", ci->ppEnabledLayerNames[i]);
+  for (u32 i = 0; i < ci->enabledExtensionCount; ++i)
+    BD_INFO("[xr]   ext {}", ci->ppEnabledExtensionNames[i]);
+
+  std::vector<VkExtensionProperties> exposed;
+  auto enumerate = reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(
+      g_traced_gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties"));
+  if (enumerate) {
+    u32 n = 0;
+    enumerate(nullptr, &n, nullptr);
+    exposed.resize(n);
+    enumerate(nullptr, &n, exposed.data());
+    exposed.resize(n);
+  }
+  VkInstanceCreateInfo local = *ci;
+  std::vector<const char *> kept;
+  if (!exposed.empty()) {
+    kept = KeepExposed(ci->ppEnabledExtensionNames, ci->enabledExtensionCount,
+                       exposed, "instance");
+    local.enabledExtensionCount = static_cast<u32>(kept.size());
+    local.ppEnabledExtensionNames = kept.data();
+  }
+  const VkResult r = g_traced_create_instance(&local, alloc, out);
+  if (r == VK_SUCCESS)
+    g_traced_instance = *out;
+  BD_INFO("[xr] ICD vkCreateInstance -> {}", static_cast<int>(r));
+  return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL TracedCreateDevice(
+    VkPhysicalDevice pd, const VkDeviceCreateInfo *ci,
+    const VkAllocationCallbacks *alloc, VkDevice *out) {
+  BD_INFO("[xr] runtime vkCreateDevice: {} queues, {} exts, pNext {}",
+          ci->queueCreateInfoCount, ci->enabledExtensionCount,
+          ci->pNext ? "set" : "null");
+  for (u32 i = 0; i < ci->enabledExtensionCount; ++i)
+    BD_INFO("[xr]   ext {}", ci->ppEnabledExtensionNames[i]);
+
+  std::vector<VkExtensionProperties> exposed;
+  auto enumerate = reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(
+      g_traced_gipa(g_traced_instance, "vkEnumerateDeviceExtensionProperties"));
+  if (enumerate) {
+    u32 n = 0;
+    enumerate(pd, nullptr, &n, nullptr);
+    exposed.resize(n);
+    enumerate(pd, nullptr, &n, exposed.data());
+    exposed.resize(n);
+  }
+  VkDeviceCreateInfo local = *ci;
+  std::vector<const char *> kept;
+  if (!exposed.empty()) {
+    kept = KeepExposed(ci->ppEnabledExtensionNames, ci->enabledExtensionCount,
+                       exposed, "device");
+    local.enabledExtensionCount = static_cast<u32>(kept.size());
+    local.ppEnabledExtensionNames = kept.data();
+  }
+  const VkResult r = g_traced_create_device(pd, &local, alloc, out);
+  BD_INFO("[xr] ICD vkCreateDevice -> {}", static_cast<int>(r));
+  return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL TracedEnumInstanceExt(
+    const char *layer, u32 *count, VkExtensionProperties *props) {
+  const VkResult r = g_traced_enum_instance_ext(layer, count, props);
+  BD_INFO("[xr] runtime vkEnumerateInstanceExtensionProperties(layer={}, "
+          "{}) -> {}, {} entries",
+          layer ? layer : "null", props ? "fill" : "count",
+          static_cast<int>(r), *count);
+  return r;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL TracedEnumDeviceExt(
+    VkPhysicalDevice pd, const char *layer, u32 *count,
+    VkExtensionProperties *props) {
+  const VkResult r = g_traced_enum_device_ext(pd, layer, count, props);
+  BD_INFO("[xr] runtime vkEnumerateDeviceExtensionProperties(layer={}, {}) "
+          "-> {}, {} entries",
+          layer ? layer : "null", props ? "fill" : "count",
+          static_cast<int>(r), *count);
+  return r;
+}
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL TracedGipa(VkInstance instance,
+                                                   const char *name) {
+  const PFN_vkVoidFunction fn = g_traced_gipa(instance, name);
+  if (REXCVAR_GET(bd_xr_vulkan2_trace))
+    BD_INFO("[xr] runtime gipa({}, {}) -> {}",
+            static_cast<const void *>(instance), name ? name : "null",
+            fn ? "ok" : "NULL");
+  if (!fn || !name)
+    return fn;
+  if (std::strcmp(name, "vkCreateInstance") == 0) {
+    g_traced_create_instance = reinterpret_cast<PFN_vkCreateInstance>(fn);
+    return reinterpret_cast<PFN_vkVoidFunction>(TracedCreateInstance);
+  }
+  if (std::strcmp(name, "vkCreateDevice") == 0) {
+    g_traced_create_device = reinterpret_cast<PFN_vkCreateDevice>(fn);
+    return reinterpret_cast<PFN_vkVoidFunction>(TracedCreateDevice);
+  }
+  if (std::strcmp(name, "vkEnumerateInstanceExtensionProperties") == 0) {
+    g_traced_enum_instance_ext =
+        reinterpret_cast<PFN_vkEnumerateInstanceExtensionProperties>(fn);
+    return reinterpret_cast<PFN_vkVoidFunction>(TracedEnumInstanceExt);
+  }
+  if (std::strcmp(name, "vkEnumerateDeviceExtensionProperties") == 0) {
+    g_traced_enum_device_ext =
+        reinterpret_cast<PFN_vkEnumerateDeviceExtensionProperties>(fn);
+    return reinterpret_cast<PFN_vkVoidFunction>(TracedEnumDeviceExt);
+  }
+  return fn;
+}
+
+// The gipa to hand the runtime: always the wrapper, so the create calls get
+// the extension filter above; the per-name log is bd_xr_vulkan2_trace only.
+PFN_vkGetInstanceProcAddr RuntimeGipa(void *vkGetInstanceProcAddr) {
+  g_traced_gipa =
+      reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+  return TracedGipa;
+}
 XrSession AsSession(void *p) { return static_cast<XrSession>(p); }
 XrSpace AsSpace(void *p) { return static_cast<XrSpace>(p); }
 
@@ -351,6 +518,27 @@ VkPhysicalDevice_T *Session::VulkanPhysicalDevice(VkInstance_T *instance) const 
   if (!instance_ || !instance)
     return nullptr;
   VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+  if (vulkanEnable2_ && directIcd_ && g_traced_gipa) {
+    // xrGetVulkanGraphicsDevice2KHR takes the instance and no proc address;
+    // the Quest runtime resolves it through /system/lib64/libvulkan.so, which
+    // never saw an instance from a directly loaded ICD, and faults in
+    // GetInstanceProcAddr (2026-09-02, Turnip). One GPU: take the first.
+    auto enumerate = reinterpret_cast<PFN_vkEnumeratePhysicalDevices>(
+        g_traced_gipa(reinterpret_cast<VkInstance>(instance),
+                      "vkEnumeratePhysicalDevices"));
+    u32 count = 0;
+    if (!enumerate ||
+        enumerate(reinterpret_cast<VkInstance>(instance), &count, nullptr) !=
+            VK_SUCCESS ||
+        count == 0)
+      return nullptr;
+    std::vector<VkPhysicalDevice> devices(count);
+    enumerate(reinterpret_cast<VkInstance>(instance), &count, devices.data());
+    BD_INFO("[xr] direct ICD: {} physical device(s), taking the first "
+            "instead of asking the runtime",
+            count);
+    return reinterpret_cast<VkPhysicalDevice_T *>(devices[0]);
+  }
   if (vulkanEnable2_) {
     PFN_xrGetVulkanGraphicsDevice2KHR getDevice2 = nullptr;
     xrGetInstanceProcAddr(AsInstance(instance_), "xrGetVulkanGraphicsDevice2KHR",
@@ -390,8 +578,7 @@ int Session::CreateVulkanInstance(const void *vkInstanceCreateInfo,
   XrVulkanInstanceCreateInfoKHR info{XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};
   info.systemId = systemId_;
   info.createFlags = 0;
-  info.pfnGetInstanceProcAddr =
-      reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+  info.pfnGetInstanceProcAddr = RuntimeGipa(vkGetInstanceProcAddr);
   info.vulkanCreateInfo =
       static_cast<const VkInstanceCreateInfo *>(vkInstanceCreateInfo);
   info.vulkanAllocator = nullptr;
@@ -422,8 +609,7 @@ int Session::CreateVulkanDevice(VkPhysicalDevice_T *physicalDevice,
   XrVulkanDeviceCreateInfoKHR info{XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR};
   info.systemId = systemId_;
   info.createFlags = 0;
-  info.pfnGetInstanceProcAddr =
-      reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+  info.pfnGetInstanceProcAddr = RuntimeGipa(vkGetInstanceProcAddr);
   info.vulkanPhysicalDevice = reinterpret_cast<VkPhysicalDevice>(physicalDevice);
   info.vulkanCreateInfo =
       static_cast<const VkDeviceCreateInfo *>(vkDeviceCreateInfo);
