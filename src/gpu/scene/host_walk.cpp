@@ -123,12 +123,23 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
         if (mesh) {
           const u32 index = bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, matrixIndex));
           const u32 matrix = palette + (index << 6);
+          // One translation per object, not one per float: the walk visits
+          // every node of every visual, and the per-read validation showed
+          // up in the Quest profile.
           float m[16];
-          for (u32 i = 0; i < 16; ++i)
-            m[i] = LoadF32(matrix + i * 4);
           float c[3];
-          for (u32 i = 0; i < 3; ++i)
-            c[i] = LoadF32(mesh + offsetof(GuestMesh, centre) + i * 4);
+          const auto *mp = bd::mem::try_at<const be_u32>(matrix);
+          const auto *cp = bd::mem::try_at<const be_u32>(mesh + offsetof(GuestMesh, centre));
+          if (!mp || !cp)
+            goto children; // nothing to draw; the subtree still walks
+          for (u32 i = 0; i < 16; ++i) {
+            const u32 bits = static_cast<u32>(mp[i]);
+            std::memcpy(&m[i], &bits, sizeof(float));
+          }
+          for (u32 i = 0; i < 3; ++i) {
+            const u32 bits = static_cast<u32>(cp[i]);
+            std::memcpy(&c[i], &bits, sizeof(float));
+          }
           float out[3];
           for (u32 k = 0; k < 3; ++k)
             out[k] = m[12 + k] + c[0] * m[k] + c[1] * m[4 + k] + c[2] * m[8 + k];
@@ -161,6 +172,7 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
           }
         }
       }
+    children:
       if (child) {
         if (next)
           stack.push_back(next);

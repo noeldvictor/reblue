@@ -183,3 +183,41 @@ values, 0 volatile templates, 0 dropped draws, frame identical (`frame_178838461
 remaining 290 are foliage (c57) and skinned nodes, which stage 6 takes, and the 14 pixel and
 5 vertex per-visual registers, which are the lighting and camera terms the host should compute
 from the visual itself - the owner has cleared deep rewrites of the camera and lighting.
+
+## Night: the Quest numbers, and what they retired
+
+Verify defaults (side-by-side, shadows and reflections off, cull 350, 60 Hz), the same
+configuration as yesterday's 37.5 ms:
+
+| build | frame | GPU total | scene pass (trace) | CPU "elsewhere" |
+| --- | --- | --- | --- | --- |
+| yesterday (before today's steps) | 50.0 ms | 37.5 | 19.5 (mono) | 12-14 |
+| A+B+C+recorder+walk+host draw, every scene draw instanced | 50.1 | 45.0 | 28.0 | 27.5 |
+| singles through the plain pipeline | 61.5 | 49.6 | 25.2 / 24.0 | 29 |
+| A/B reorder on vs off (one run) | 66.7 / 50.2 | **52.9 / 44.9** | - | 29 |
+| A/B instancing on vs off (reorder off) | 66.7 / 66.7 | 53.0 / 52.7 | - | 27 |
+
+Retired by the within-run A/Bs:
+
+- **The instancing reorder costs 8 ms of GPU.** Sorting a run of order-independent draws by
+  pipeline and key scatters near and far geometry, and on this direct-mode pass the shaded
+  fragments follow the draw order: the guest's tree order is nearer to front-to-back than
+  anything keyed by pipeline. Off by default. Instances have to be brought together with a
+  depth-aware grouping, not a pipeline sort.
+- **Instancing itself, with singles on the plain pipeline, is flat** (52.7 vs 53.0 ms): the
+  field scene autoplay lands in has few consecutive repeats, so the record path neither helps
+  nor hurts there. The first measurement, with every scene draw through the instanced variant,
+  put the scene pass at 28.0 ms - the storage-buffer constant reads on Adreno, the path the
+  2026-08-29 note measured slow. The record path is for real groups only now.
+
+Not yet explained: the systematic gap between yesterday's 37.5 ms and today's 45-53 ms with
+instancing and reorder off. The remaining suspects are the host-issued draw (A/B running) and
+the instancing machinery every vertex shader now carries even in its plain variant (the
+`SV_InstanceID` input, the `BD_VSC` spec-constant branch and the storage-buffer binding); a
+probe APK built with `XENOS_RECOMP_NO_INSTANCING` removes the latter. Cross-run drift is
+30-70% here (the instancing A/B's own baseline sat 8 ms above the reorder A/B's), so only
+within-run arms and same-build traces count.
+
+The CPU side doubled (13 -> 27 ms "elsewhere") on every run today, including with the twin
+built off the render thread; the sampling profile's libreblue share is 1.2%, so the time is
+not in host code as the profiler sees it. Open.
