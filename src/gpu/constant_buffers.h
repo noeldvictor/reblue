@@ -142,6 +142,10 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n);
 // Diagnostic: the host-visible bytes of a constant block by its dynamic
 // offset (the ring is mapped for the life of the device). Null when unmapped.
 const u8 *ConstantBlockBytes(u32 dynamic_offset);
+// The content hash of a 4 KB constant block at a dynamic offset over the
+// registers in `register_mask` (all when null) - the recorder's material
+// identity for the pixel block. 0 when the ring is unmapped.
+u64 HashConstantBlock(u32 dynamic_offset, const u32 *register_mask);
 // A host-filled block in the same ring, for host passes that read parameters
 // through the pixel constant binding (the host post chain's composite).
 ConstantAllocation UploadHostConstants(const void *data, u32 size);

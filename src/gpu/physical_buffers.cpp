@@ -26,6 +26,7 @@
 #include <rex/ppc.h>
 #include <rex/runtime.h>
 #include <rex/types.h>
+#include <xxhash.h>
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
@@ -66,6 +67,9 @@ struct PhysicalBlock {
   std::unique_ptr<plume::RenderBuffer>
       buffer; // lazy, VERTEX|INDEX, GeometryHeapType
   std::unordered_map<u32, std::unique_ptr<bd::gpu::GuestBuffer>> meshes;
+  // XXH3 of the pristine guest bytes, once asked for (PhysicalBlockOfBuffer).
+  u64 contentHash = 0;
+  bool hashed = false;
 };
 std::map<u32 /*block base*/, PhysicalBlock> g_physicalBlocks;
 
@@ -419,6 +423,27 @@ void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
 } // namespace
 
 namespace bd::gpu {
+
+bool PhysicalBlockOfBuffer(const plume::RenderBuffer *buffer,
+                           PhysicalBlockInfo &out) {
+  if (!buffer)
+    return false;
+  std::lock_guard lock(g_physicalBuffersMutex);
+  for (auto &[base, a] : g_physicalBlocks) {
+    if (a.buffer.get() != buffer)
+      continue;
+    if (!a.hashed) {
+      const auto *src = bd::mem::at<const u8>(a.base);
+      a.contentHash = src ? XXH3_64bits(src, a.size) : 0;
+      a.hashed = true;
+    }
+    out.base = a.base;
+    out.size = a.size;
+    out.content_hash = a.contentHash;
+    return true;
+  }
+  return false;
+}
 
 // SetIndices / SetStreamSource pass the struct VA, never a HostResourceHeap-
 // allocated one, so FromGuest misses.

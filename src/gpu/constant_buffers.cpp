@@ -591,6 +591,13 @@ u32 StageInstanceRecord() {
   return static_cast<u32>(s.staged.size() - 1);
 }
 
+u64 HashConstantBlock(u32 dynamic_offset, const u32 *register_mask) {
+  auto &s = upload_state();
+  if (!s.buffer.mapped)
+    return 0;
+  return MaskedHash(s.buffer.mapped + dynamic_offset, VertexMask(register_mask));
+}
+
 const u8 *ConstantBlockBytes(u32 dynamic_offset) {
   auto &s = upload_state();
   if (!s.buffer.mapped)

@@ -10,6 +10,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+
+#include <xxhash.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -531,6 +533,23 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va, u32 name_va) {
   }
   if (!tex)
     return nullptr;
+
+  // Content identity: the fetch constant and the tiled level-0 footprint
+  // (capped, the largest textures are a few MB). See GuestTexture::contentHash.
+  {
+    const u64 level0 = u64(layout.aligned_w) * layout.aligned_h *
+                       layout.bytes_per_block;
+    const size_t bytes = static_cast<size_t>(std::min<u64>(level0, 4u << 20));
+    tex->contentHash =
+        XXH3_64bits(&fetch, sizeof(fetch)) ^
+        (bytes ? XXH3_64bits(src, bytes) * 0x9E3779B97F4A7C15ull : 0);
+    if (!tex->contentHash)
+      tex->contentHash = 1;
+    if (name_va) {
+      const char *name = bd::mem::str(name_va);
+      std::strncpy(tex->nameTag, name ? name : "", sizeof(tex->nameTag) - 1);
+    }
+  }
 
   auto stored = std::unique_ptr<GuestTexture>(tex);
   GuestTexture *raw = stored.get();

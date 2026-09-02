@@ -13,6 +13,10 @@
 
 #include <rex/types.h>
 
+namespace plume {
+struct RenderBuffer;
+} // namespace plume
+
 namespace bd::gpu {
 
 struct GuestBuffer;
@@ -24,6 +28,18 @@ enum class ResourceType : u32;
 // creation-time registration ever saw (asset-loaded meshes patched by an
 // unhooked loader).
 GuestBuffer *FindPhysicalBufferByStruct(u32 struct_va);
+
+// The model block a host geometry buffer mirrors, for the scene recorder:
+// the block is the cook unit and its pristine guest bytes hash stably
+// (guest addresses do not). The hash is computed on first request and
+// cached with the block.
+struct PhysicalBlockInfo {
+  u32 base = 0;
+  u32 size = 0;
+  u64 content_hash = 0;
+};
+bool PhysicalBlockOfBuffer(const plume::RenderBuffer *buffer,
+                           PhysicalBlockInfo &out);
 GuestBuffer *AdoptPhysicalBuffer(u32 struct_va,
                                                ResourceType rtype);
 

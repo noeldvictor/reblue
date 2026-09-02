@@ -118,6 +118,14 @@ struct GuestTexture {
   u32 mipLevels = 1;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
   u32 guestFormat = 0;
+  // Content identity for a native mirror (the fetch constant plus the tiled
+  // level-0 payload), set by GetOrCreateNativeMirror; 0 for surfaces and
+  // host textures. The scene recorder's texture key: a guest VA is recycled
+  // within a session and asset names collide, this does neither.
+  u64 contentHash = 0;
+  // The asset name the mirror was registered under, for the recorder's
+  // listing; empty for surfaces.
+  char nameTag[32] = {};
   // ~0u when not registered in the bindless texture heap. Set lazily by
   // BindTextureSRV at draw time.
   u32 descriptorIndex = ~u32{0};

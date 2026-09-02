@@ -20,6 +20,7 @@
 
 #include "core/perf.h"
 #include "engine/engine.h"
+#include "gpu/scene/scene_recorder.h"
 #include "gpu/host_heap.h"
 #include "gpu/surface_pool.h"
 
@@ -154,6 +155,7 @@ void UpdateFrameStats() {
   }
   last = now;
   g_stat_frame_count.fetch_add(1, std::memory_order_relaxed);
+  bd::gpu::scene::OnFrameEnd();
   const u32 draws = g_draw_count.exchange(0, std::memory_order_relaxed);
   const u64 verts = g_vert_count.exchange(0, std::memory_order_relaxed);
   g_stat_draws.store(draws, std::memory_order_relaxed);

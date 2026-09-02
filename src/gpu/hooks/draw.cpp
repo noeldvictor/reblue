@@ -38,6 +38,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
 #include "gpu/post_chain.h"
+#include "gpu/scene/scene_recorder.h"
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/shaders/shader_constants.h"
 
@@ -494,6 +495,11 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
           q.instanced_pipeline = nullptr;
       }
     }
+    // The scene recorder sees the draw whole - pipeline, streams, offsets,
+    // textures - plus the node tag the DrawSingle hook set. Only while its
+    // window is open.
+    if (bd::gpu::scene::RecordingArmed())
+      bd::gpu::scene::OnQueuedDraw(s, q, device_guest);
     bd::gpu::DrawQueuePush(q);
   };
   const auto finish_deferred = [&]() {

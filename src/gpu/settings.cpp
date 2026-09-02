@@ -411,6 +411,16 @@ REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder, true, kCvarGroup,
 // (64% of scene draws blend and write depth), so without this almost nothing
 // in a field scene may move. A real transparency does not write depth and
 // keeps its place either way.
+// The scene recorder (gpu/scene/scene_recorder.cpp): after this many seconds,
+// record bd_scene_record_frames frames of node draws - mesh, material,
+// textures, transform, pass - and write <cache>/scene_walk/walk_<stamp>.bdsw.
+// Off at 0. tools/scene_walk_dump.py reads the file.
+REXCVAR_DEFINE_DOUBLE(bd_scene_record_after_s, 0.0, kCvarGroup,
+                      "Seconds after launch to start recording the scene "
+                      "walk; 0 = off.");
+REXCVAR_DEFINE_INT32(bd_scene_record_frames, 8, kCvarGroup,
+                     "Frames of scene walk to record once armed.");
+
 REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder_blended, true, kCvarGroup,
                     "Let blended depth-writing draws be reordered for "
                     "instancing (approximate where they overlap).");

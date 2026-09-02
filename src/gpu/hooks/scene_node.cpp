@@ -41,6 +41,9 @@
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "gpu/scene/guest_scene.h"
+#include "gpu/scene/node_tag.h"
+#include "gpu/scene/scene_recorder.h"
 
 extern "C" void __imp__bdSceneNodeDrawSingle(PPCContext &__restrict ctx,
                                              uint8_t *base);
@@ -58,6 +61,32 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     BD_INFO("[node] host bdSceneNodeDrawSingle is live - the override links");
   if (n == 200000)
     BD_INFO("[node] host bdSceneNodeDrawSingle has run {} times", n);
+
+  // Identity for the draws this call is about to issue (gpu/scene/node_tag.h):
+  // the four arguments - mesh, node index, the node's palette slot, the
+  // traverse context - and what the context points at. Only while the
+  // recorder's window is open; the tag is the seam the host walk will later
+  // stand on, and every draw of this node reaches the queue with it set.
+  if (bd::gpu::scene::RecordingArmed()) {
+    using namespace bd::gpu::scene;
+    NodeTag tag;
+    tag.mesh_va = ctx.r3.u32;
+    tag.node_index = ctx.r4.u32;
+    tag.matrix_va = ctx.r5.u32;
+    tag.ctx_va = ctx.r6.u32;
+    tag.visual_va = bd::mem::try_field<u32>(tag.ctx_va,
+                                            offsetof(GuestTraverseCtx, visual));
+    tag.palette_va = bd::mem::try_field<u32>(
+        tag.ctx_va, offsetof(GuestTraverseCtx, palette));
+    tag.render_view = bd::mem::try_load<u32>(kRenderViewIdVa);
+    tag.tech = bd::mem::try_field<u32>(tag.visual_va, kVisualTech);
+    tag.seq = static_cast<u32>(n);
+    tag.valid = true;
+    SetCurrentNodeTag(tag);
+    __imp__bdSceneNodeDrawSingle(ctx, base);
+    ClearCurrentNodeTag();
+    return;
+  }
 
   __imp__bdSceneNodeDrawSingle(ctx, base);
 }
