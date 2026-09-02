@@ -520,10 +520,21 @@ REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
 // resolve pass does to the frame - its barriers, or its breaking of the render
 // pass - that Adreno needs. Until that is named, the chain stays on for the
 // headset. The desktop does not care either way.
+//
+// Android only. On the desktop the chain is what turns the multiview frame
+// black - with the array heap, present samples the array, and the chain's
+// barriers and companion redirect fight it - and it hid the working per-eye
+// MSAA resolve behind a black screen for a day (2026-09-02).
+#if defined(__ANDROID__)
 REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
                     "Run the multiview resolve pass that flattens the two "
                     "layers into one side-by-side image (off is 4.5x slower "
                     "on Adreno, unexplained).");
+#else
+REXCVAR_DEFINE_BOOL(bd_mv_resolve, false, kCvarGroup,
+                    "Run the obsolete multiview resolve pass (blacks the "
+                    "frame with the array heap).");
+#endif
 
 // Capture the layered array itself, both slices, rather than the resolved
 // companion. Diagnostic: it answers whether the array has content at all.

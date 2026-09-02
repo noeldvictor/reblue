@@ -339,3 +339,23 @@ at all) multiview with layered textures is black too, so the blackout was the
 chain, never the shaders. The per-eye slice-view resolve is being re-tested
 with `bd_mv_resolve=false` set explicitly; the flat path with the same
 shaders already renders correctly.
+
+## The multiview pair survives the resolve now - read from the capture
+
+The "black" capture, replayed with `tools/rdc_layer_diff.py`, is the proof
+the screen could not give while the resolve chain was on:
+
+```
+1649  157 draws  1920x1080 RGBA16F  differ 72.7%   (scene)
+1675    1 draw   1920x1080 RGBA16F  differ 72.7%   (MSAA resolve: reads ::1598 through
+                                                   slices 0+1 and slices 1+1)
+1737 ..2017      post chain          differ 50-97%
+2223, 2255       1920x1080 RGBA8     differ 61.2%   (present-side targets)
+```
+
+Before this change the same draw (3551 in the 2026-08-31 capture) came out
+IDENTICAL and every pass after it too. The per-eye slice views on the
+multisampled scene, selected by `SV_ViewID` in `resolve_msaa_color/depth`
+(`ps_6_1`), keep both eyes; the post chain and present carry them through.
+The black screen in those runs was `bd_mv_resolve` defaulting on, which is
+now Android-only.
