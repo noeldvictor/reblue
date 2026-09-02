@@ -105,8 +105,8 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Cel shading | not started |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull only (`bd_cull_distance`), hooked in `bdSceneNodeCullTraverse` |
-| Instancing / indirect draws | seams exist (`bd_draw_defer` queue, host `bdSceneNodeDrawSingle` in `gpu/hooks/scene_node.cpp`); stage 1 of "The direction" (the scene-walk recorder and host submission) is being built on them |
-| Sun occlusion descriptor set on Adreno | dropped, not fixed (Adreno has 4 sets, the renderer wants 5) |
+| Instancing / indirect draws | **instancing built on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`); desktop-verified, Quest run pending. Indirect draws not started |
+| Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-02.
@@ -119,6 +119,24 @@ ALWAYS, the depth prepass, the density map, position-only vertex shaders, opaque
 shading fragments, 6.6 per pixel" described where the GPU sat, not what it waited on. The cost
 is the per-draw translation of the Xbox 360 draw ABI; see "The direction" below. **Shipping
 side-by-side stereo: 37.5 ms GPU** (39.2 on 2026-09-01), 20 fps tier.
+
+**THE PER-DRAW ABI IS CUT, ON THE DESKTOP (2026-09-02, 16:30; Quest run pending - the
+headset was not attached).** Three steps on the existing draw queue, each verified on a
+village capture, `research/20260902_1630_the-per-draw-abi-cut-...md`:
+
+- **Four real descriptor sets** (`bindless_allocator.h` note): the three texture heaps as three
+  bindings of set 0, samplers set 1, the three dynamic constant ranges alone in set 2 (the
+  per-draw bind copies three descriptors, not a heap), the occlusion counter set 3 and back on
+  Android. VUID 03001 is gone by construction.
+- **Every constant upload is keyed by content** within the frame slot, and the vertex compare
+  covers only the registers the shader declares (`ShaderCacheEntry::constantRegisterMask`).
+  `[perf] constants per frame` reads it: VS uploads 640 -> 3, PS 520 -> ~40 a frame.
+- **Instancing on the queue.** The instance record is the **whole** vertex block, because the
+  guest writes per-node registers beyond the world matrix and palette (c57, a foliage
+  collision vector) and any of them would keep two nodes apart. Blended depth-writers are
+  reorderable (`bd_draw_instancing_reorder_blended`), or nothing in a field scene may move.
+  `[draw-queue] instancing: N draws in -> M issued` is the number; the village issues 239
+  for 262 (few repeated meshes), a transition flush has 316 keys for 666 draws.
 
 **`bd_stereo` is GPU-bound at ~39 ms with ~13 ms of CPU** (2026-09-01 evening; **34.4 ms
 GPU after the 2026-09-02 work below, mono trace configuration**,
@@ -277,6 +295,9 @@ node's draw. The owner's answer is to stop translating and own the frame:
 Approximate visuals are fine. Desktop first; one Quest run with a capture per finished stage.
 Stages, each shipping working:
 
+0. **Cut the per-draw ABI on the queue** - shipped 2026-09-02 (four sets, content-keyed
+   constants, instancing on the queue; "What is true now"). The recorder below tags those
+   queued draws with identity; it is not a second draw path.
 1. **Record the guest's scene walk.** A recorder on the `bdSceneNodeDrawSingle` seam writes
    what each node draw is (mesh, material pipeline, textures, transform, bone palette) and
    which guest structures it came from. This is how the host learns the scene tree; the host
@@ -365,12 +386,11 @@ Two settings are still needed together for a multiview run, and the log says whe
 
 `layers=1` or `0` two-layer targets means the run is not testing multiview.
 
-**One known spec violation in the descriptor layout**, reported by the validation layer as
-`VUID-VkDescriptorSetLayoutCreateInfo-descriptorType-03001`: a set with an update-after-bind
-binding may not also hold dynamic uniform buffers, and the sampler set does (the texture set did
-before, identically). Adreno's four-set limit forces the sharing; the driver accepts it. The
-honest fix is collapsing HLSL spaces 0/1/2 into one physical set with three bindings, which
-frees a slot for a constants-only set and for the dropped sun-occlusion set at once.
+**The descriptor layout's spec violation is fixed (2026-09-02)**: the layer used to report
+`VUID-VkDescriptorSetLayoutCreateInfo-descriptorType-03001` (a dynamic uniform buffer in a set
+with an update-after-bind binding). The three HLSL texture spaces are three bindings of one
+set now, the constants have a set of their own, and the sun-occlusion set is back on Android.
+Confirm on the next `validate_quest.sh` run; the desktop has no validation layer installed.
 
 `bd_mv_layered_textures` (two-layer guest render-target textures, so the EDRAM resolve has a
 layered destination) is architecturally required and defaults off only until the fix above is
@@ -441,6 +461,11 @@ files as that day's result. **Never run two device measurements at once.**
   the only way to catch a field scene rather than a menu: autoplay lands somewhere different
   every run. `bd_mv_capture_array` photographs the largest colour+depth target's two layers
   stacked; `tools/stereo_check.py --stacked` reads that, `--raw` reads a side-by-side capture.
+- **`[perf] constants per frame`** counts vertex and pixel block uploads against skips, and
+  **`[draw-queue] instancing: N draws in -> M issued per flush`** is the instancing factor;
+  the one-shot `[draw-queue] instancing diag` lines (three per run, scene-sized flushes)
+  count distinct key components and name the registers that keep same-mesh draws apart.
+  Read those before theorising about why draws do not merge.
 - **`bd_sample_profiler`** samples the guest main, worker and render threads at 1 kHz with
   `SIGPROF` (or `SuspendThread` on Windows), dumps at the capture moment, and
   `tools/symbolize_profile.py` names the `libreblue.so` PCs from the unstripped build.
