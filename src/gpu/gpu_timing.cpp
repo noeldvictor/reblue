@@ -21,6 +21,10 @@
 #include "gpu/device.h"
 #include "gpu/frame_stats.h"
 
+#include <rex/cvar.h>
+
+REXCVAR_DECLARE(bool, bd_gpu_timing_segments);
+
 namespace bd::gpu {
 
 namespace {
@@ -74,6 +78,15 @@ void WriteMark(SlotTiming &st, plume::RenderCommandList *cmd, Cat closing) {
 
 void SetSegment(plume::RenderCommandList *cmd, Cat cat) {
   if (!g_supported || !g_open || cat == g_cat)
+    return;
+  // A timestamp inside a render pass takes Adreno out of tiled rendering for
+  // that pass. The on-device render-stage trace on 2026-09-02 showed EVERY
+  // surface of a field frame in "Mode: 0 (Direct)" with one bin the size of
+  // the surface - the scene pass at 24.5 ms rendering straight to system
+  // memory - and these per-segment, per-target marks are the timestamps
+  // inside those passes. Off on the headset: gpu_total_ms keeps the frame
+  // begin/end pair, and the per-target census goes quiet there.
+  if (!REXCVAR_GET(bd_gpu_timing_segments))
     return;
   WriteMark(g_slots[g_active_slot], cmd, g_cat);
   g_cat = cat;

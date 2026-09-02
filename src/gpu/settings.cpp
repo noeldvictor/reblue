@@ -379,6 +379,21 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
+// Per-segment and per-target GPU timestamps, written INSIDE render passes.
+// Off on Android: a timestamp inside a pass takes Adreno out of tiled
+// rendering for that pass, and the on-device render-stage trace showed every
+// surface of a field frame in direct mode with these on. gpu_total_ms keeps
+// its frame begin/end pair either way; the per-target census and the
+// gpu_draw/resolve/inter split need this on, and cost the tiler to read.
+#if defined(__ANDROID__)
+REXCVAR_DEFINE_BOOL(bd_gpu_timing_segments, false, kCvarGroup,
+                    "Write per-segment GPU timestamps inside render passes "
+                    "(forces Adreno out of tiled rendering).");
+#else
+REXCVAR_DEFINE_BOOL(bd_gpu_timing_segments, true, kCvarGroup,
+                    "Write per-segment GPU timestamps inside render passes.");
+#endif
+
 // Depth prepass on the deferred queue: every depth-writing draw of a pass is
 // emitted first with colour writes off, then the pass is emitted again with
 // depth writes off and a LEQUAL test, so only the nearest fragment at each

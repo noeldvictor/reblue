@@ -151,3 +151,47 @@ textures are simply magnified at this resolution (terrain tiles at texel:pixel
 of one or less legitimately sit at mip 0), or that the profiler's metric means
 something narrower. Either way the fragment count is the lever that does not
 depend on the answer: fixed foveated rendering is being A/B'd next.
+
+## Fragment density map foveation: negative again, in a fragment-bound frame
+
+`bd_ab_flag=bd_foveation, bd_foveation_strength=0.3`, within one run:
+`gpu_draw_ms 33.78 -> 34.80 (+3.0%)`, `gpu_total 39.74 -> 41.64`. The device
+reports `fragment density map yes` and the arms flipped on schedule. In a
+frame that is 99% fragment shading, a density map that shaded the periphery
+at 30% would have to show; it shows a cost and no reduction, so the
+attachment is not reducing shading in this pass on this driver - the same
+verdict as 2026-08-30, now in the configuration where it could not hide.
+`XR_FB_foveation` through the runtime's own swapchain remains the route.
+
+## The render-stage trace: NOTHING is tiled. Every pass runs in direct mode.
+
+`tools/gpu_drawtrace_quest.sh` (`ovrgpuprofiler -e com.reblue`, then `-t`
+during the field scene) lists every surface the GPU executed in a 0.1 s
+window, with its rendering mode and bin count:
+
+```
+Surface 7  | 1376x720 | color 64bit, depth 32bit | Mode: 0 (Direct) | 1 1376x720 bins | 24.49 ms | Render 22.879ms ... Preempt
+Surface 4  | 1376x720 | color 64bit             | Mode: 0 (Direct) | 1 1376x720 bins |  0.09 ms
+Surface 28 | 3664x1920| color 32bit             | Mode: 0 (Direct) | 1 3664x1920 bins|  3.19 ms
+... 26 more, all Mode: 0 (Direct), one bin each
+Surface 5  | 128x72   |                          | Mode: 2 (SwBinning)
+Surface 8  | 1376x720 |                          | Mode: 3 (HwDirect) | 0.25 ms
+```
+
+**The Adreno is not tiling.** One bin the size of the surface is system-memory
+rendering: every blended fragment of the scene pass does its read-modify-write
+against a 64-bit colour buffer in DRAM instead of on-chip tile memory, there
+is no low-resolution Z (it lives in the binning pass that never runs), and
+the shading is exposed to memory latency - which is the 21% shader stall, the
+66% busy texture pipes, and the ~6.6 fragments per pixel each costing full
+price. It also explains the day's null results at once: depth ALWAYS, the
+prepass, foveation - none of them touch a direct-mode pass's cost structure.
+
+Adreno drops a render pass to direct mode when something in it forbids
+binning, and one documented trigger is a timestamp query inside the pass.
+`gpu_timing.cpp` writes `vkCmdWriteTimestamp` inside the active render pass
+on every category or target change - the per-segment split
+(`gpu_draw/resolve/inter`) and the per-target census that this whole
+investigation has leaned on. The instrument was shaping the measurement.
+`bd_gpu_timing_segments` now gates those marks and defaults off on Android;
+the frame begin/end pair stays, so `gpu_total_ms` survives.
