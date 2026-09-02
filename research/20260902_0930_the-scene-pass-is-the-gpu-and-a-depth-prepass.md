@@ -291,3 +291,27 @@ same for the surface that bins (plume gives every render target
 TRANSFER|SAMPLED|COLOR_ATTACHMENT, optimal tiling). The verbose trace
 (`ovrgpuprofiler -t -v`) is the next instrument, for whatever per-surface
 detail it adds before another blind probe.
+
+## Where this stands, and the headset dropped off adb
+
+Eliminated as the direct-mode trigger, each by a render-stage trace of a
+mono field scene: in-pass timestamps, side-by-side's doubled draws and
+per-draw viewport churn, blending on depth writers, the EDRAM seed copy,
+the vertex-stage `SV_ViewID`, and the draw count per render pass instance
+(the scene already flushes in 60-134 draw chunks; splitting at 100 changed
+nothing). Image usage and tiling match the pass that bins.
+
+Not yet run, built and ready in the APK: `bd_debug_no_alpha_test=true`
+(discard in 86 pixel shaders) and `bd_debug_no_stencil_bias=true` (stencil
+and depth bias stripped from every pipeline), plus the verbose trace
+(`VERBOSE=1 bash tools/gpu_drawtrace_quest.sh ...`). The Quest disappeared
+from adb during the verbose run and did not come back after a server
+restart; those three are the next commands once it is attached again.
+
+If all three come back direct, the remaining differences between the scene
+draws and the binned pass's draws are in the guest pipelines themselves:
+16-stream vertex input with SNORM/UINT formats, per-draw dynamic uniform
+offsets on an update-after-bind set, and the recompiled shaders' size. A
+Turnip build in the app's lib directory (`EXTRA_LIBS`) would name the reason
+outright - Mesa's driver logs why it falls back to sysmem - and is the
+instrument to reach for before more blind probes.
