@@ -239,3 +239,25 @@ Side result: the deferred queue can emit side-by-side eye-major (all left-eye
 draws, then all right), verified image-identical on the desktop with stereo
 intact. `bd_draw_eye_major` is on by default; it removes ~1000 viewport and
 scissor changes from the scene pass, whatever the tiler makes of them.
+
+## Bisecting the direct-mode trigger, one probe per run
+
+Each row is the scene pass in the 2.5 s render-stage trace of a mono field
+scene, plus the field-scene GPU mean where a CSV was taken:
+
+| probe | scene pass | mode |
+| --- | --- | --- |
+| baseline mono | 20.5 ms | Direct, 1 bin |
+| in-pass timestamps off | 20.7 ms | Direct (a second full-size pass bins) |
+| `bd_blend_off_when_opaque=true` (no blend on depth writers) | 20.3-21.1 ms | Direct |
+| `bd_seed_targets=false` (no pre-pass copy) | 20.3-21.6 ms | Direct |
+| `bd_debug_max_draws=64` | removed the scene pass itself | - |
+| side-by-side (draws x2, viewport per draw) | 24.7 ms | Direct |
+
+RenderDoc on the desktop says the scene passes contain only draws - no
+in-pass clears or copies - and the binned full-size pass in the same frame
+has the same attachment formats. What the scene draws have that the binned
+pass's draws may not is their shaders: every guest vertex shader declares
+`SV_ViewID` and reads it (`g_ViewIndex = iViewID`) whether or not the pass is
+multiview. A probe shader cache without it in vertex shaders
+(`XENOS_RECOMP_NO_VS_VIEWID=1` at cache generation) is being traced.

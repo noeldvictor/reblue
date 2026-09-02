@@ -78,6 +78,20 @@ def analyse(controller):
             groups.append((target, [a]))
 
     say("%d actions, %d passes" % (len(draws), len(groups)))
+    # What each pass contains besides draws: in-pass clears and copies are the
+    # kind of thing a tiler cannot bin around, and Adreno ran the scene pass
+    # in direct mode on 2026-09-02 for a reason no probe has yet named.
+    for target, actions in groups:
+        t = textures.get(target)
+        if t is None or t.width < 1280 or len(actions) < 20:
+            continue
+        kinds = {}
+        for a in actions:
+            for name, flag in (("draw", rd.ActionFlags.Drawcall), ("clear", rd.ActionFlags.Clear),
+                               ("copy", rd.ActionFlags.Copy), ("resolve", rd.ActionFlags.Resolve)):
+                if a.flags & flag:
+                    kinds[name] = kinds.get(name, 0) + 1
+        say("pass ending eid %d on %dx%d: %s" % (actions[-1].eventId, t.width, t.height, kinds))
     say("%-7s %-6s %-11s %-22s %-6s %s" % ("eid", "draws", "size", "format", "layers", "verdict"))
     for target, actions in groups:
         t = textures.get(target)
