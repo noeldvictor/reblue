@@ -39,7 +39,8 @@ foreach(shader IN ITEMS bd_pe_ps_brightpass_clamp bd_pe_ps_ms_bright_clamp)
 endforeach()
 # The host-owned post chain (gpu/post_chain.cpp): downsample, separable blur
 # and bright mask, producing the guest's pyramid textures without the tile.
-foreach(shader IN ITEMS post_down_ps post_blur_ps post_bright_ps)
+foreach(shader IN ITEMS post_down_ps post_blur_ps post_bright_ps
+                        post_dual_down_ps post_composite_ps)
     reblue_host_shader(${shader} ps_6_0)
 endforeach()
 

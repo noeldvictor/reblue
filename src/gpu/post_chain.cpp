@@ -14,12 +14,19 @@
  *   ms_weight x2   13-tap blur of the mask, twice
  *   ms_tex         full-res composite: scene (slot 0) + mask (slot 1)
  *
- * The two composites stay the guest's draws. The thirteen producers are
- * replaced: at the dof draw the host downsamples and blurs the scene into
- * the very texture objects slots 2-6 name, and at the ms_tex draw it builds
- * the mask into the slot-1 texture, reading threshold and intensity from the
- * guest's c27. Nothing goes through the tile, nothing is resolved, and the
- * guest samples what it expects.
+ * The host does all of it in nine passes, none through the tile and none
+ * resolved: at the dof draw one dual-filter downsample per level into the
+ * very texture objects slots 2-6 name, and at the ms_tex draw the bright
+ * mask, two blur directions, and one composite that is bd_pe_ps_dof and
+ * bd_pe_ps_ms_tex folded together, written straight into the frame. Every
+ * guest post draw is dropped. The guest's parameters are read from its live
+ * constant block at the draw it would have made (c27 at dof, c13/c14 at
+ * ms_tex).
+ *
+ * The first host chain (same day, earlier) kept the guest's two composites
+ * and only produced their inputs: the Quest measured 38.0 ms against 37.5,
+ * because the small passes cost what the guest's small passes cost. Fewer
+ * passes is the lever, not moving them.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.
@@ -28,6 +35,7 @@
  */
 #include "gpu/post_chain.h"
 
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 #include <vector>
@@ -37,8 +45,10 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/backend.h"
+#include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/draw_queue.h"
 #include "gpu/frame.h"
 #include "gpu/frame_stats.h"
 #include "gpu/resources.h"
@@ -46,14 +56,21 @@
 #if defined(REBLUE_D3D12)
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_composite_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_composite_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
+REXCVAR_DECLARE(bool, bd_host_post_composite);
+REXCVAR_DECLARE(i32, bd_host_post_debug);
+REXCVAR_DECLARE(f64, bd_host_post_blur);
 
 namespace bd::gpu {
 namespace {
@@ -66,7 +83,14 @@ constexpr u64 kBrightPass = 0xFFDBD782126EB6E8ull;
 constexpr u64 kDof = 0xF6FF1BED057E0FC4ull;
 constexpr u64 kMsTex = 0x620B403BCBBF1B98ull;
 
-enum class Shader : u32 { Down = 0, Blur = 1, Bright = 2 };
+enum class Shader : u32 {
+  Down = 0,
+  Blur = 1,
+  Bright = 2,
+  DualDown = 3,
+  Composite = 4,
+  Count
+};
 
 // Same layout as the copy passes' push block (copy_common.hlsli).
 struct PostPush {
@@ -74,6 +98,15 @@ struct PostPush {
   u32 src2;
   float param0;
   float param1;
+};
+
+// The composite's parameter block; layout documented in post_composite_ps.
+struct CompositeConstants {
+  float dof[4];
+  float w0[4];
+  float w1[4];
+  u32 indices0[4];
+  u32 indices1[4];
 };
 
 struct Scratch {
@@ -88,13 +121,23 @@ struct Scratch {
   u32 role = 0;
 };
 
+// What the dof draw bound, kept for the composite at the ms_tex draw.
+struct DofInputs {
+  GuestTexture *depth = nullptr;
+  GuestTexture *levels[5] = {};
+  float params[4] = {0, 0, 0, 0}; // c27.x, .y, .z, .w
+  bool valid = false;
+};
+
 struct Chain {
-  std::unique_ptr<plume::RenderShader> shaders[3];
+  std::unique_ptr<plume::RenderShader> shaders[u32(Shader::Count)];
   std::unordered_map<u64, std::unique_ptr<plume::RenderPipeline>> pipelines;
   std::vector<std::unique_ptr<Scratch>> scratch;
+  DofInputs dof;
   bool failed = false;
   u32 dof_frames = 0;
   u32 bloom_frames = 0;
+  u32 composite_frames = 0;
   u32 skipped = 0;
 };
 
@@ -108,16 +151,22 @@ bool EnsureShaders(VideoState &s, Chain &c) {
     return true;
   if (!s.device)
     return false;
-  c.shaders[0] = s.device->createShader(REBLUE_SHADER_BLOB(post_down_ps),
-                                        "main", kHostShaderFormat);
-  c.shaders[1] = s.device->createShader(REBLUE_SHADER_BLOB(post_blur_ps),
-                                        "main", kHostShaderFormat);
-  c.shaders[2] = s.device->createShader(REBLUE_SHADER_BLOB(post_bright_ps),
-                                        "main", kHostShaderFormat);
-  if (!c.shaders[0] || !c.shaders[1] || !c.shaders[2]) {
-    BD_ERROR("[post] host post shaders failed to create; chain disabled");
-    c.failed = true;
-    return false;
+  c.shaders[u32(Shader::Down)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_down_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Blur)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_blur_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Bright)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_bright_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::DualDown)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_dual_down_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Composite)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_composite_ps), "main", kHostShaderFormat);
+  for (auto &sh : c.shaders) {
+    if (!sh) {
+      BD_ERROR("[post] host post shaders failed to create; chain disabled");
+      c.failed = true;
+      return false;
+    }
   }
   return true;
 }
@@ -236,6 +285,15 @@ bool Readable(GuestTexture *t) {
          t->layers == 1;
 }
 
+// Content, transitioned for sampling; null when it cannot be sampled.
+GuestTexture *Source(VideoState &s, GuestTexture *t) {
+  GuestTexture *src = Content(t);
+  if (!Readable(src))
+    return nullptr;
+  Transition(s, src->texture, src->layout, plume::RenderTextureLayout::SHADER_READ);
+  return src;
+}
+
 // A guest texture about to be written by the host: drop any resolve link
 // pointing into it (the host content replaces what the copy would bring) and
 // make it a colour attachment.
@@ -254,38 +312,6 @@ void EndGuestTarget(VideoState &s, GuestTexture *dst) {
   Transition(s, dst->texture, dst->layout, plume::RenderTextureLayout::SHADER_READ);
 }
 
-// blur(src) -> dst through the two scratch textures of dst's size: the box
-// downsample first when ratio > 1, then the two gaussian directions.
-bool DownAndBlur(VideoState &s, Chain &c, u32 src_slot, u32 ratio,
-                 GuestTexture *dst, u32 *unblurred_slot) {
-  const u32 w = dst->width;
-  const u32 h = dst->height;
-  const plume::RenderFormat fmt = dst->format;
-  auto *down = Pipeline(s, c, Shader::Down, fmt);
-  auto *blur = Pipeline(s, c, Shader::Blur, fmt);
-  Scratch *a = GetScratch(s, c, w, h, fmt, 0);
-  Scratch *b = GetScratch(s, c, w, h, fmt, 1);
-  if (!down || !blur || !a || !b)
-    return false;
-  // a = downsample(src)
-  Transition(s, a->texture.get(), a->layout, plume::RenderTextureLayout::COLOR_WRITE);
-  Pass(s, down, a->framebuffer.get(), w, h, PostPush{src_slot, 0, float(ratio), 0.0f});
-  Transition(s, a->texture.get(), a->layout, plume::RenderTextureLayout::SHADER_READ);
-  if (unblurred_slot)
-    *unblurred_slot = a->slot;
-  // b = blur_x(a)
-  Transition(s, b->texture.get(), b->layout, plume::RenderTextureLayout::COLOR_WRITE);
-  Pass(s, blur, b->framebuffer.get(), w, h, PostPush{a->slot, 0, 1.0f, 0.0f});
-  Transition(s, b->texture.get(), b->layout, plume::RenderTextureLayout::SHADER_READ);
-  // dst = blur_y(b)
-  plume::RenderFramebuffer *fb = BeginGuestTarget(s, dst);
-  if (!fb)
-    return false;
-  Pass(s, blur, fb, w, h, PostPush{b->slot, 0, 0.0f, 1.0f});
-  EndGuestTarget(s, dst);
-  return true;
-}
-
 // After host passes the guest draw's framebuffer, viewport and pipeline have
 // to come back; the draw path flushes them again when the flags say so.
 void RestoreGuestDraw(VideoState &s) {
@@ -299,48 +325,76 @@ void RestoreGuestDraw(VideoState &s) {
   Video::FlushViewport();
 }
 
-// The dof composite samples depth in slot 0, the scene in slot 1 and five
-// blurred levels in slots 2-6 (1/2, 1/4, 1/8, 1/16, 1/16). Fill 2-6.
-void BuildDofPyramid(VideoState &s, Chain &c) {
-  GuestTexture *scene = Content(s.textures[1]);
-  if (!Readable(scene))
-    return;
-  Transition(s, scene->texture, scene->layout, plume::RenderTextureLayout::SHADER_READ);
+float GuestPixelConstant(u32 device_guest, u32 reg, u32 lane) {
+  const auto *device = bd::mem::at<const D3DDevice>(device_guest);
+  if (!device || reg >= 256 || lane >= 4)
+    return 0.0f;
+  return float(device->psFloatConstants[reg][lane]);
+}
+
+// The dof draw samples depth in slot 0, the scene in slot 1 and five blurred
+// levels in slots 2-6 (1/2, 1/4, 1/8, 1/16, 1/16). One dual-filter pass per
+// level, each from the previous.
+bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
+  c.dof = DofInputs{};
+  GuestTexture *scene = Source(s, s.textures[1]);
+  if (!scene)
+    return false;
+  auto *dual = Pipeline(s, c, Shader::DualDown, scene->format);
+  if (!dual)
+    return false;
   u32 prev_slot = scene->descriptorIndex;
-  u32 prev_w = scene->width;
-  bool any = false;
+  u32 filled = 0;
   for (u32 slot = 2; slot <= 6; ++slot) {
     GuestTexture *dst = s.textures[slot];
     if (!dst || !dst->texture || dst->layers != 1 || dst->width == 0)
-      continue;
-    // Downsample from the previous *unblurred* level, as the guest's quoter
-    // chain did; the last level repeats its predecessor's size.
-    const u32 ratio = prev_w >= dst->width * 2 ? prev_w / dst->width : 1;
-    u32 unblurred = prev_slot;
-    if (!DownAndBlur(s, c, prev_slot, ratio, dst, &unblurred))
       break;
-    prev_slot = unblurred;
-    prev_w = dst->width;
-    any = true;
+    plume::RenderFramebuffer *fb = BeginGuestTarget(s, dst);
+    if (!fb)
+      break;
+    auto *pipe = dst->format == scene->format
+                     ? dual
+                     : Pipeline(s, c, Shader::DualDown, dst->format);
+    if (!pipe)
+      break;
+    // A level the size of its predecessor (the guest's 80x45 pair) just
+    // blurs it again. The kernel is twice its nominal width: the guest's
+    // first level is what its depth-of-field lerps toward below level one,
+    // and at the nominal width the distance stayed sharp (desktop captures,
+    // 2026-09-02).
+    Pass(s, pipe, fb, dst->width, dst->height,
+         PostPush{prev_slot, 0, float(REXCVAR_GET(bd_host_post_blur)), 0.0f});
+    EndGuestTarget(s, dst);
+    c.dof.levels[filled++] = dst;
+    prev_slot = dst->descriptorIndex;
   }
-  if (any && c.dof_frames++ < 3)
-    BD_INFO("[post] dof pyramid from {}x{} scene: slots 2-6 filled by the host",
-            scene->width, scene->height);
+  if (filled == 0)
+    return false;
+  // A missing tail repeats the last level, so the composite always has five.
+  for (u32 i = filled; i < 5; ++i)
+    c.dof.levels[i] = c.dof.levels[filled - 1];
+  c.dof.depth = s.textures[0];
+  for (u32 i = 0; i < 4; ++i)
+    c.dof.params[i] = GuestPixelConstant(device_guest, 27, i);
+  c.dof.valid = Readable(Content(c.dof.depth));
+  if (c.dof_frames++ < 3)
+    BD_INFO("[post] dof pyramid: {} levels from the {}x{} scene, depth {}, "
+            "params ({:.3g}, {:.3g}, {:.3g}, {:.3g})",
+            filled, scene->width, scene->height, c.dof.valid ? "yes" : "no",
+            c.dof.params[0], c.dof.params[1], c.dof.params[2], c.dof.params[3]);
+  return true;
 }
 
-// The bloom composite samples the scene in slot 0 and the mask in slot 1.
-void BuildBloomMask(VideoState &s, Chain &c, u32 device_guest) {
-  GuestTexture *scene = Content(s.textures[0]);
+// The bloom mask into the slot-1 texture the guest's ms_tex samples (and the
+// host composite reads): bright pass at the mask's size, two blur passes.
+GuestTexture *BuildBloomMask(VideoState &s, Chain &c, GuestTexture *scene,
+                             u32 device_guest) {
   GuestTexture *dst = s.textures[1];
-  if (!Readable(scene) || !dst || !dst->texture || dst->layers != 1 ||
-      dst->width == 0 || dst->width > scene->width)
-    return;
-  float threshold = 0.25f;
-  float intensity = 1.0f;
-  if (const auto *device = bd::mem::at<const D3DDevice>(device_guest)) {
-    threshold = float(device->psFloatConstants[27][0]);
-    intensity = float(device->psFloatConstants[27][1]);
-  }
+  if (!scene || !dst || !dst->texture || dst->layers != 1 || dst->width == 0 ||
+      dst->width > scene->width)
+    return nullptr;
+  const float threshold = GuestPixelConstant(device_guest, 27, 0);
+  const float intensity = GuestPixelConstant(device_guest, 27, 1);
   const u32 w = dst->width;
   const u32 h = dst->height;
   const plume::RenderFormat fmt = dst->format;
@@ -349,8 +403,7 @@ void BuildBloomMask(VideoState &s, Chain &c, u32 device_guest) {
   Scratch *a = GetScratch(s, c, w, h, fmt, 0);
   Scratch *b = GetScratch(s, c, w, h, fmt, 1);
   if (!bright || !blur || !a || !b)
-    return;
-  Transition(s, scene->texture, scene->layout, plume::RenderTextureLayout::SHADER_READ);
+    return nullptr;
   const u32 ratio = scene->width >= w * 2 ? scene->width / w : 1;
   Transition(s, a->texture.get(), a->layout, plume::RenderTextureLayout::COLOR_WRITE);
   Pass(s, bright, a->framebuffer.get(), w, h,
@@ -361,13 +414,76 @@ void BuildBloomMask(VideoState &s, Chain &c, u32 device_guest) {
   Transition(s, b->texture.get(), b->layout, plume::RenderTextureLayout::SHADER_READ);
   plume::RenderFramebuffer *fb = BeginGuestTarget(s, dst);
   if (!fb)
-    return;
+    return nullptr;
   Pass(s, blur, fb, w, h, PostPush{b->slot, 0, 0.0f, 1.0f});
   EndGuestTarget(s, dst);
   if (c.bloom_frames++ < 3)
     BD_INFO("[post] bloom mask {}x{} from {}x{} scene, threshold {:.3g} "
             "intensity {:.3g}",
             w, h, scene->width, scene->height, threshold, intensity);
+  return dst;
+}
+
+// One pass for both guest composites, into the frame the ms_tex draw would
+// have written. Needs the dof draw's inputs from earlier this frame.
+bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
+                   GuestTexture *bloom, u32 device_guest) {
+#if defined(REBLUE_D3D12)
+  (void)s; (void)c; (void)scene; (void)bloom; (void)device_guest;
+  return false; // the parameter block rides the Vulkan dynamic UBO binding
+#else
+  if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene || !bloom)
+    return false;
+  GuestTexture *rt = s.render_target;
+  if (!rt || !rt->texture || rt->layers != 1)
+    return false;
+  GuestTexture *depth = Source(s, c.dof.depth);
+  if (!depth)
+    return false;
+  CompositeConstants k{};
+  k.dof[0] = c.dof.params[0];
+  k.dof[1] = c.dof.params[1];
+  k.dof[2] = c.dof.params[3];
+  for (u32 i = 0; i < 4; ++i) {
+    k.w0[i] = GuestPixelConstant(device_guest, 13, i);
+    k.w1[i] = GuestPixelConstant(device_guest, 14, i);
+  }
+  k.indices0[0] = depth->descriptorIndex;
+  for (u32 i = 0; i < 5; ++i) {
+    GuestTexture *level = Content(c.dof.levels[i]);
+    if (!Readable(level))
+      return false;
+    Transition(s, level->texture, level->layout, plume::RenderTextureLayout::SHADER_READ);
+    const u32 idx = level->descriptorIndex;
+    if (i < 3)
+      k.indices0[1 + i] = idx;
+    else
+      k.indices1[i - 3] = idx;
+  }
+  auto alloc = UploadHostConstants(&k, sizeof(k));
+  if (!alloc.memory)
+    return false;
+  auto *pipe = Pipeline(s, c, Shader::Composite, rt->format);
+  if (!pipe)
+    return false;
+  Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);
+  plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr);
+  if (!fb)
+    return false;
+  const u32 offsets[3] = {s.constant_dyn_offsets[0], alloc.dynamicOffset,
+                          s.constant_dyn_offsets[2]};
+  s.command_list->setGraphicsDescriptorSetDynamic(
+      s.sampler_descriptor_set.get(), 3, offsets, 3);
+  Pass(s, pipe, fb, rt->width, rt->height,
+       PostPush{scene->descriptorIndex, bloom->descriptorIndex,
+                float(REXCVAR_GET(bd_host_post_debug)), 0.0f});
+  if (c.composite_frames++ < 3)
+    BD_INFO("[post] composite into {}x{}: dof ({:.3g}, {:.3g}, focus {:.3g}) "
+            "w0 {:.3g} w1 {:.3g}",
+            rt->width, rt->height, k.dof[0], k.dof[1], k.dof[2], k.w0[0],
+            k.w1[0]);
+  return true;
+#endif
 }
 
 } // namespace
@@ -389,18 +505,25 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
       return false;
     ++c.skipped;
     return true;
-  case kDof:
+  case kDof: {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
-    BuildDofPyramid(s, c);
+    const bool built = BuildDofPyramid(s, c, device_guest);
     RestoreGuestDraw(s);
-    return false;
-  case kMsTex:
+    // With the host composite the guest's dof draw is not needed; without
+    // it (no depth, D3D12) the guest composites over the host levels.
+    return built && REXCVAR_GET(bd_host_post_composite) && c.dof.valid;
+  }
+  case kMsTex: {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
-    BuildBloomMask(s, c, device_guest);
+    GuestTexture *scene = Source(s, s.textures[0]);
+    GuestTexture *bloom = BuildBloomMask(s, c, scene, device_guest);
+    const bool composed = HostComposite(s, c, scene, bloom, device_guest);
+    c.dof.valid = false;
     RestoreGuestDraw(s);
-    return false;
+    return composed;
+  }
   default:
     return false;
   }

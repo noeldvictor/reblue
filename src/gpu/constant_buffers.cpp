@@ -479,6 +479,17 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   return alloc;
 }
 
+ConstantAllocation UploadHostConstants(const void *data, u32 size) {
+  auto &s = upload_state();
+  if (!data || !size)
+    return {};
+  auto alloc = Allocate(s, size, kCBVAlignment);
+  if (!alloc.memory)
+    return {};
+  std::memcpy(alloc.memory, data, size);
+  return alloc;
+}
+
 ConstantAllocation UploadSharedConstants(u32 device_guest) {
   BD_CPU_ZONE("UploadSharedConstants");
   auto &s = upload_state();

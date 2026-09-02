@@ -93,6 +93,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Field-scene frame rate | **15 fps** (4 slots at 60 Hz) on either stereo path |
 | Character-anchored camera modes, diorama in battle | composed and unit-tested; tuning against a capture still wanted |
 | Tourist mode | HP/MP top-up works (desktop); encounter suppression never fires (`bdPlayerField*` family is dead, see closed doors) |
+| Post chain (bloom, depth of field) | **host-owned since 2026-09-02** (`gpu/post_chain.cpp`, `bd_host_post`): the guest's 15 tile-and-resolve quads a frame are replaced by host passes into the guest's own textures; image verified on desktop and Quest captures. The composites moved to the host next (one full-res pass); measure that once. |
 | Cel shading | not started |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull only (`bd_cull_distance`), hooked in `bdSceneNodeCullTraverse` |

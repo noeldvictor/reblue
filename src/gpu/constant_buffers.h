@@ -97,6 +97,9 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
                                                float eye_skew = 0.0f,
                                                float eye_shift = 0.0f);
 ConstantAllocation UploadPixelShaderConstants(u32 device_guest);
+// A host-filled block in the same ring, for host passes that read parameters
+// through the pixel constant binding (the host post chain's composite).
+ConstantAllocation UploadHostConstants(const void *data, u32 size);
 
 // Rebuilt from live guest state every draw: sampler fetch constants and bool
 // constants come from unhooked recompiled code, so there is no dirty signal.

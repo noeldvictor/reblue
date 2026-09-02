@@ -730,3 +730,21 @@ of field and bloom. The pyramid passes cost what the guest's small passes
 cost; the saving has to come from fewer passes - one dual-filter pass per
 level, and one host composite for the two full-resolution guest composites
 and the resolve between them.
+
+## The host composite: one full-resolution pass for both guest composites (15:45)
+
+`bd_host_post_composite` (default on): at the dof draw the host builds the
+five levels with one 13-tap downsampling blur each (Jimenez 2014) and drops
+the guest draw; at the ms_tex draw it builds the bloom mask and runs
+`post_composite_ps` into the frame - bd_pe_ps_dof's level cascade and
+bd_pe_ps_ms_tex's weighted sum in one pass - and drops that draw too. The
+guest's parameters ride a host-filled block through the pixel-constant
+binding (`UploadHostConstants`): c27 from the dof draw, c13/c14 from ms_tex
+(w0 = 4 is the resolve exponent-bias restore). Two things the captures
+taught: depth sits at 0.99+ everywhere with this projection, so the guest's
+level stays below one across the distance and the look is entirely the
+first level's blur - at the nominal kernel width the distance stayed sharp;
+at twice the width (`bd_host_post_blur=2`) the far buildings and cliffs blur
+as the guest's did, the character stays sharp (`frame_1788369916.png`). Nine
+host passes replace fifteen guest quads, two of them full resolution, and
+every resolve between them.

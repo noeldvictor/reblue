@@ -530,6 +530,18 @@ REXCVAR_DEFINE_BOOL(bd_host_post, true, kCvarGroup,
                     "Host-owned post chain: the bloom and depth-of-field "
                     "pyramids are built by host passes; the guest's producer "
                     "draws are skipped.");
+// The composite half of the host chain: one full-resolution pass replaces the
+// guest's depth-of-field composite, the resolve after it and the bloom
+// composite. Off keeps the guest's two composites over the host's pyramid.
+REXCVAR_DEFINE_BOOL(bd_host_post_composite, true, kCvarGroup,
+                    "Host post chain: fold the depth-of-field and bloom "
+                    "composites into one host pass (Vulkan only).");
+REXCVAR_DEFINE_DOUBLE(bd_host_post_blur, 2.0, kCvarGroup,
+                      "Host post chain: width of the per-level downsampling "
+                      "blur, in target texels. 1 = the nominal 13-tap kernel.");
+REXCVAR_DEFINE_INT32(bd_host_post_debug, 0, kCvarGroup,
+                     "Host composite debug view: 1 depth, 2 blur level, 3 "
+                     "scene only. 0 = the composite.");
 REXCVAR_DEFINE_INT32(bd_dump_post_draws, 0, kCvarGroup,
                      "Log every post-effect draw (by pixel shader) of this "
                      "many field-scene frames: target, sampled textures, "
