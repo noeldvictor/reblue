@@ -174,7 +174,7 @@ u32 ResolveSlotLocked(const plume::RenderSamplerDesc &desc) {
   }
 
   auto sampler = s.device->createSampler(desc);
-  s.sampler_descriptor_set->setSampler(slot, sampler.get());
+  s.sampler_descriptor_set->setSampler(SamplerDescriptor(slot), sampler.get());
 
   std::lock_guard lock(c.mutex);
   // On a race, return the winner's slot. Ours leaks (no reclaim on drop here).

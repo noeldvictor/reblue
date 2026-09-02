@@ -203,8 +203,10 @@ static void BindGuestConstants(VideoState &s) {
               s.constant_dyn_offsets[0], s.constant_dyn_offsets[1],
               s.constant_dyn_offsets[2]);
     }
+    // The sampler set carries the constant ranges: a 256-entry set copied
+    // per bind by the driver, where the texture set it used to be is 4096.
     s.command_list->setGraphicsDescriptorSetDynamic(
-        s.texture_descriptor_set.get(), 0, s.constant_dyn_offsets, 3);
+        s.sampler_descriptor_set.get(), 3, s.constant_dyn_offsets, 3);
   }
 #endif
 }

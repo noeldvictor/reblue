@@ -10,8 +10,8 @@
 // target can be sampled per eye without being flattened first. Every descriptor
 // in it is an array view, so this host shader has to agree on the type. Layer 0
 // unless the shader has a reason to pick another - these are mono passes.
-[[vk::binding(3, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+[[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
+[[vk::binding(3, 3)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 // Present flattens the multiview pair here instead of in a separate pass.
 //
 // ResourceDescriptorIndex2 is 0 for an ordinary single-layer source and 1 when

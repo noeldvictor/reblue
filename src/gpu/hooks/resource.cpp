@@ -155,6 +155,17 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   // SRV dimension. A cube must be TEXTURE_CUBE here or it builds a degenerate
   // 2D SRV.
   texture->viewDimension = view_dimension;
+  // And the layer count, for the same reason. BindTextureSRV discards a view
+  // whose textureViewOf is unset and rebuilds it with `arraySize = layers`, and
+  // with this assignment sitting after the SRV block it read 0 - so every
+  // two-layer resolve destination got a ONE-layer sampling view, and the post
+  // chain read the left eye for both. That is the "identical halves" multiview
+  // frame: the scene array held correct stereo, the guest's EDRAM resolve
+  // preserved both layers, and the first pass to sample the result flattened
+  // it. RenderDoc counted exactly these: 24 base=0 layers=1 views over
+  // two-layer full-resolution images. surface_pool had the same bug and the
+  // same fix.
+  texture->layers = texture_layers;
 
   auto *device = bd::gpu::Video::HostDevice();
   if (device) {
@@ -174,6 +185,10 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
       if (!is_cube)
         view_desc.arraySize = texture_layers;
       texture->textureView = texture->texture->createTextureView(view_desc);
+      // Name the image the view was built against, or BindTextureSRV treats
+      // the view as stale and rebuilds it from the fields above.
+      texture->textureViewOf = texture->texture;
+      texture->textureViewLayers = is_cube ? 6 : texture_layers;
       bd::gpu::Video::BindTextureSRV(texture);
     }
     if (texture->texture && rtype == bd::gpu::ResourceType::VolumeTexture) {
@@ -187,7 +202,6 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   } else {
     BD_ERROR("CreateTexture fired before Video host device exists");
   }
-  texture->layers = texture_layers;
   texture->width = width;
   texture->height = height;
   texture->depth = depth;

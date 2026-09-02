@@ -171,12 +171,19 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
   {
     static std::atomic<int> mv{0};
     static std::atomic<int> mono{0};
+    // Every 200th creation, with the log's timestamp, so the log says whether
+    // pipelines are still being compiled minutes into a field scene. On
+    // 2026-09-01 a Quest profile pinned to the field scene had five driver
+    // threads spending 75% of their samples in the Adreno shader compiler,
+    // and this counter printed only at 40 and 200 - both during startup.
     if (state.multiview) {
-      if (mv.fetch_add(1, std::memory_order_relaxed) < 3)
-        BD_INFO("[mv] MULTIVIEW pipeline created, viewMask={}", desc.viewMask);
+      const int m = mv.fetch_add(1, std::memory_order_relaxed);
+      if (m < 3 || (m % 200) == 0)
+        BD_INFO("[mv] MULTIVIEW pipeline created, viewMask={} ({} so far)",
+                desc.viewMask, m + 1);
     } else {
       const int m = mono.fetch_add(1, std::memory_order_relaxed);
-      if (m == 40 || m == 200)
+      if (m == 40 || (m % 200) == 0)
         BD_INFO("[mv] {} mono pipelines so far, {} multiview", m + 1,
                 mv.load(std::memory_order_relaxed));
     }

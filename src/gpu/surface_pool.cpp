@@ -32,6 +32,7 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_small_targets_mono);
 REXCVAR_DECLARE(bool, bd_mv_force_mono_targets);
 REXCVAR_DECLARE(bool, bd_mv_redirect_srv);
+REXCVAR_DECLARE(bool, bd_mv_resolve);
 REXCVAR_DECLARE(i32, bd_stereo_debug_layer);
 
 namespace bd::gpu {
@@ -566,7 +567,12 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
       view_desc.arraySize = layers;
       view_desc.arrayIndex = 0;
 
-      if (layers > 1) {
+      // Only for the obsolete resolve chain. With the array bindless heap
+      // nothing needs a companion or a per-eye slice view, and RenderDoc
+      // counted 48 such single-layer views over two-layer images in a frame
+      // that used none of them - dead descriptors that made the flatten bug
+      // look like a slot collision.
+      if (layers > 1 && REXCVAR_GET(bd_mv_resolve)) {
         // A two-layer target gets a companion the same size holding both eyes
         // side by side, and *that* is what everything downstream samples. See
         // the resolve comment on GuestTexture: one bindless heap declared

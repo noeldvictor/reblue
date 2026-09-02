@@ -48,18 +48,18 @@ constexpr u32 kBindlessTextureCount = 65536;
 constexpr u32 kBindlessSamplerCount = 1024;
 #endif
 
-// Guest constant chunks, bound as ByteAddressBuffers ahead of the texture array
-// in the same descriptor set.
+// Guest constant chunks, bound as dynamic uniform buffers ahead of the sampler
+// array in the sampler set (space 3).
 //
 // They have to live in an existing set: the pipeline layout already binds four
 // (spaces 0/1/2 all point at the texture set, space 3 at the samplers) and
 // Adreno's maxBoundDescriptorSets is exactly 4. They have to come *before* the
-// texture array, because that array is the boundless range and plume requires
+// sampler array, because that array is the boundless range and plume requires
 // the boundless range to be last.
 //
-// Which means every texture descriptor index in the physical set shifts up by
+// Which means every sampler descriptor index in the physical set shifts up by
 // this much. The shader is unaffected - it indexes within its own binding - so
-// this is purely a host-side offset, applied in TextureDescriptor() and nowhere
+// this is purely a host-side offset, applied in SamplerDescriptor() and nowhere
 // else. constant_buffers.cpp never allocates more chunks than this.
 //
 // Vulkan only. D3D12 reaches guest constants through a real constant buffer
@@ -72,9 +72,21 @@ constexpr u32 kConstantChunkDescriptors = 3;
 #endif
 
 // Where texture slot `slot` actually lives in the physical descriptor set.
-// Every setTexture on the texture set goes through this; the bindless slot
-// allocator above is unchanged and still hands out 0-based texture slots.
-inline u32 TextureDescriptor(u32 slot) {
+// Identity since 2026-09-01: the constant chunks moved out of the texture set
+// and into the SAMPLER set, so it is the sampler indices that shift now.
+//
+// Why they moved: the Adreno driver copies a descriptor set's contents on
+// every bind that carries dynamic offsets. With the three constant ranges in
+// the texture set, re-basing the constants per draw copied the whole
+// 4096-entry texture array along with them - 56% of the render thread's
+// samples in one driver memcpy on a Quest 2, and shrinking the array to 1024
+// took the thread from 44ms to 19ms. The sampler set is 256 entries.
+inline u32 TextureDescriptor(u32 slot) { return slot; }
+
+// Where sampler slot `slot` lives in the physical sampler set: after the
+// constant chunks. Every setSampler on the sampler set goes through this; the
+// shader indexes within its own binding and is unaffected.
+inline u32 SamplerDescriptor(u32 slot) {
   return kConstantChunkDescriptors + slot;
 }
 

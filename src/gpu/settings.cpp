@@ -455,9 +455,14 @@ REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
                     "Under multiview, give two layers only to surfaces at or "
                     "above half the design canvas.");
 
-REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
+// Off: the bindless heap is Texture2DArray now, so every reader samples the
+// layer it wants and present flattens the pair itself. The resolve chain was
+// five full-resolution passes a frame that existed only because a Texture2D
+// heap could not read an array - and could never work, being such a read
+// itself. Kept as a probe of the old path, not as a candidate.
+REXCVAR_DEFINE_BOOL(bd_mv_resolve, false, kCvarGroup,
                     "Run the multiview resolve pass that flattens the two "
-                    "layers into one side-by-side image.");
+                    "layers into one side-by-side image (obsolete).");
 
 // Capture the layered array itself, both slices, rather than the resolved
 // companion. Diagnostic: it answers whether the array has content at all.
@@ -480,9 +485,10 @@ REXCVAR_DEFINE_BOOL(bd_mv_capture_resolved, false, kCvarGroup,
                     "Capture the scene surface's resolved companion.");
 REXCVAR_DEFINE_BOOL(bd_mv_capture_array, false, kCvarGroup,
                     "Capture the multiview array instead of its companion.");
-REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, true, kCvarGroup,
+REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, false, kCvarGroup,
                     "Point a multiview surface's sampled view at the resolved "
-                    "companion rather than at array layer 0.");
+                    "companion rather than at the array (obsolete, needs "
+                    "bd_mv_resolve).");
 
 // Guest render-target textures get two layers under multiview, so the guest's
 // EDRAM resolve has a layered destination instead of collapsing the stereo pair

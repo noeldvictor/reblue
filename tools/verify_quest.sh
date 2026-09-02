@@ -92,6 +92,26 @@ echo "== cvars =="; sed 'N;s/\n/ /' "$ARGS_LOCAL" | sed 's/^--/  /'
 # setting that does nothing.
 run_adb push "$ARGS_LOCAL" "/storage/emulated/0/Android/data/$PKG/files/args.txt" 2>&1 | tail -1
 
+# The same settings as the profile TOML, which is the config path that
+# provably takes effect on device: bd::AuditProfileConfig reads it at startup
+# and prints "[config] all N settings in reblue.toml took effect" - or names
+# the line that did not. args.txt goes through the Java activity into argv and
+# reports only to logcat, and on 2026-08-31 a run configured through it alone
+# sat at the title screen for 170s with bd_vr_enabled still off. Both are
+# written; the [config] line below is the one to believe.
+TOML_LOCAL="$(dirname "$ARGS_LOCAL")/reblue.toml"
+: > "$TOML_LOCAL"
+echo "$CVARS" | tr ',' '\n' | while IFS='=' read -r k v; do
+  [ -z "$k" ] && continue
+  case "$v" in
+    true|false) echo "$k = $v" ;;
+    ''|*[!0-9.-]*) echo "$k = \"$v\"" ;;
+    *) echo "$k = $v" ;;
+  esac >> "$TOML_LOCAL"
+done
+run_adb shell "mkdir -p /storage/emulated/0/Android/data/$PKG/files/profiles/default"
+run_adb push "$TOML_LOCAL" "/storage/emulated/0/Android/data/$PKG/files/profiles/default/reblue.toml" 2>&1 | tail -1
+
 FILES_PRE="/sdcard/Android/data/$PKG/files"
 run_adb shell "am force-stop $PKG"
 run_adb shell "am broadcast -a com.oculus.vrpowermanager.prox_close" > /dev/null
@@ -117,6 +137,12 @@ while [ "$elapsed" -lt "$SETTLE" ]; do
   # enough for an unattended run.
   run_adb shell "am broadcast -a com.oculus.vrpowermanager.prox_close" > /dev/null 2>&1
   printf "  %ds\r" "$elapsed"
+  # One thread split taken while the field scene is up. The one at the end of
+  # the run is often a menu or a battle, and says nothing about the frame.
+  if [ "$elapsed" -eq 150 ]; then
+    MIDPID="$(run_adb shell "pidof $PKG" | tr -d '\r')"
+    [ -n "$MIDPID" ] && run_adb shell "top -H -b -n 1 -p $MIDPID | sed -n '5,14p'" | tr -d '\r' > "$(dirname "$ARGS_LOCAL")/top150.txt"
+  fi
 done
 echo
 
@@ -125,7 +151,8 @@ LOG="$(run_adb shell "ls -t $FILES/logs/*.log | head -1" | tr -d '\r')"
 
 echo
 echo "== did the build actually start, and did it survive? =="
-run_adb shell "grep -c 'args.txt added' '$LOG'" | tr -d '\r' | sed 's/^/  args.txt lines matched: /'
+run_adb logcat -d 2>/dev/null | grep 'args.txt added' | tail -1 | sed 's/.*reblue *: /  logcat: /'
+run_adb shell "grep -E '\[config\]' '$LOG' | head -6" | tr -d '\r' | sed 's/.*\[config\]/  [config]/'
 run_adb logcat -d 2>/dev/null | grep -i "dlopen.*reblue" | tail -2
 
 # Did it crash? A crash mid-run leaves every artefact below short or absent, and
@@ -153,7 +180,10 @@ echo "== performance hints and thread policy =="
 run_adb shell "grep -E 'performance level|registered thread|core clusters|thread policy' '$LOG' | head -4" | sed 's/.*\[bd\]/ /'
 
 echo
-echo "== per-thread CPU =="
+echo "== per-thread CPU at 150s (field scene) =="
+cat "$(dirname "$ARGS_LOCAL")/top150.txt" 2>/dev/null
+echo
+echo "== per-thread CPU at end of run =="
 PID="$(run_adb shell "pidof $PKG" | tr -d '\r')"
 [ -n "$PID" ] && run_adb shell "top -H -b -n 1 -p $PID | sed -n '5,12p'" | tr -d '\r'
 

@@ -88,6 +88,100 @@ def resolve(syms, starts, off):
     return name
 
 
+def per_thread_report(profile, modules, ours_path, nm, top):
+    """The '# TID' and '# SAMPLES2' sections: per thread, where the samples
+    land and - for a leaf in another library - who called it.
+
+    A flat PC histogram over seven threads cannot tell a worker blocked in a
+    futex from the main thread spinning at 100%: both sample as libc `syscall`.
+    On 2026-09-01 that read as "78% libc" and said nothing. The link register
+    names the caller of a leaf, and the tid splits the threads.
+
+    Other modules are resolved when a copy sits in out/device/<basename> -
+    `adb pull /apex/com.android.runtime/lib64/bionic/libc.so out/device/`.
+    """
+    tids = {}
+    rows = []
+    with open(profile, "r", errors="ignore") as fh:
+        for line in fh:
+            if line.startswith("# TID "):
+                p = line.split(None, 4)
+                if len(p) >= 4:
+                    tids[int(p[2])] = (int(p[3]), p[4].strip() if len(p) > 4 else "?")
+                continue
+            if line.startswith("#") or not line.strip():
+                continue
+            p = line.split()
+            if len(p) == 4:
+                rows.append((int(p[0]), int(p[1], 16), int(p[2], 16), int(p[3])))
+    if not rows:
+        return
+
+    def module_for(pc):
+        for lo, hi, foff, path in modules:
+            if lo <= pc < hi:
+                return path, pc - lo + foff
+        return None, None
+
+    ours = os.path.basename(ours_path)
+    symcache = {}
+
+    def symbols_for(path):
+        base = os.path.basename(path)
+        if base in symcache:
+            return symcache[base]
+        local = ours_path if base == ours else os.path.join("out", "device", base)
+        syms = None
+        if os.path.exists(local):
+            try:
+                syms = load_symbols(local, nm)
+                syms = (syms, [s[0] for s in syms])
+            except SystemExit:
+                syms = None
+        symcache[base] = syms
+        return syms
+
+    def name_of(pc):
+        path, off = module_for(pc)
+        if not path:
+            return "<unmapped>", "<unmapped>"
+        base = os.path.basename(path)
+        syms = symbols_for(path)
+        if syms:
+            n = resolve(syms[0], syms[1], off)
+            if n:
+                return base, n
+        return base, "%s+%x" % (base, off)
+
+    grand = sum(r[3] for r in rows) or 1
+    print("\nper thread (%d samples)" % grand)
+    by_tid = collections.defaultdict(list)
+    for tid, pc, lr, n in rows:
+        by_tid[tid].append((pc, lr, n))
+    for tid, items in sorted(by_tid.items(), key=lambda kv: -sum(i[2] for i in kv[1])):
+        tot = sum(i[2] for i in items)
+        comm = tids.get(tid, (0, "?"))[1]
+        print("\n== %s (tid %d): %d samples, %.1f%% of all ==" % (comm, tid, tot, 100.0 * tot / grand))
+        mods = collections.Counter()
+        fns = collections.Counter()
+        callers = collections.Counter()
+        for pc, lr, n in items:
+            base, fn = name_of(pc)
+            mods[base] += n
+            fns[fn] += n
+            if base != ours:
+                _, caller = name_of(lr)
+                callers[(fn, caller)] += n
+        print("  modules: " + ", ".join("%s %.0f%%" % (m, 100.0 * c / tot) for m, c in mods.most_common(5)))
+        print("  %-56s %7s %6s" % ("function", "samples", "share"))
+        for fn, n in fns.most_common(top):
+            print("  %-56s %7d %5.1f%%" % (fn[:56], n, 100.0 * n / tot))
+        if callers:
+            print("  leaf <- caller (samples outside %s)" % ours)
+            for (fn, caller), n in callers.most_common(top):
+                print("  %-28s <- %-28s %6d %5.1f%%" % (fn[:28], caller[:28], n, 100.0 * n / tot))
+
+
 def find_symbolizer():
     for c in ["C:/Program Files/LLVM/bin/llvm-symbolizer.exe", "llvm-symbolizer"]:
         try:
@@ -255,6 +349,9 @@ def main():
 
     print("\nA name here is a real function in generated/ - grep for "
           "DEFINE_REX_FUNC(<name>) to read its recompiled body.")
+
+    if modules and not args.so.lower().endswith(".exe"):
+        per_thread_report(args.profile, modules, args.so, find_nm(), args.top)
 
 
 if __name__ == "__main__":

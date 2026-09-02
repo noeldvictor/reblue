@@ -888,6 +888,10 @@ plume::RenderDescriptorSet *Video::TextureDescriptorSet() {
   return state().texture_descriptor_set.get();
 }
 
+plume::RenderDescriptorSet *Video::SamplerDescriptorSet() {
+  return state().sampler_descriptor_set.get();
+}
+
 const void *Video::CurrentRenderTargetForDiag() {
   return state().render_target;
 }
@@ -964,7 +968,8 @@ bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
   (void)shared_bytes;
   return true; // root descriptors; nothing to publish
 #else
-  auto *set = state().texture_descriptor_set.get();
+  // The constant ranges live in the sampler set, see SamplerDescriptor().
+  auto *set = state().sampler_descriptor_set.get();
   if (!set || !buffer)
     return false;
   // The range is the block the shader declares, not the buffer: a dynamic

@@ -85,10 +85,10 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
   if (!st.any || d.constant_offsets[0] != st.constant_offsets[0] ||
       d.constant_offsets[1] != st.constant_offsets[1] ||
       d.constant_offsets[2] != st.constant_offsets[2]) {
-    // Space 0 only. Spaces 1 and 2 are the same physical set and carry no
-    // constants the shader reads; frame_ring binds those once with zeroes.
-    if (auto *set = Video::TextureDescriptorSet())
-      cmd->setGraphicsDescriptorSetDynamic(set, 0, d.constant_offsets, 3);
+    // The constant ranges live in the sampler set (space 3); the texture
+    // spaces are bound once by frame_ring and never rebound.
+    if (auto *set = Video::SamplerDescriptorSet())
+      cmd->setGraphicsDescriptorSetDynamic(set, 3, d.constant_offsets, 3);
     st.constant_offsets[0] = d.constant_offsets[0];
     st.constant_offsets[1] = d.constant_offsets[1];
     st.constant_offsets[2] = d.constant_offsets[2];

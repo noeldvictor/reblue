@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <cstdio>
 #include <cstring>
@@ -44,6 +45,7 @@
 
 REXCVAR_DECLARE(bool, bd_sample_profiler);
 REXCVAR_DECLARE(i32, bd_sample_hz);
+REXCVAR_DECLARE(double, bd_capture_after_s);
 
 namespace bd {
 
@@ -56,6 +58,13 @@ constexpr u32 kRingSize = 1u << 16;
 constexpr u32 kRingMask = kRingSize - 1;
 
 std::atomic<u64> g_ring[kRingSize];
+// Alongside each PC: the link register and the thread. A flat PC histogram
+// over seven threads cannot say which thread was *running* - a worker blocked
+// in a futex and the main thread spinning at 100% both sample as libc
+// `syscall` - and a leaf like `syscall` or `memcpy` is only interesting for
+// who called it. LR names the caller of a leaf; the tid splits the threads.
+std::atomic<u64> g_ring_lr[kRingSize];
+std::atomic<u32> g_ring_tid[kRingSize];
 std::atomic<u32> g_head{0};
 std::atomic<u64> g_taken{0};
 std::atomic<u64> g_dropped{0};
@@ -91,6 +100,11 @@ void OnSigProf(int, siginfo_t *, void *ctx) {
   // meaningless for another, so the map has to travel with the samples.
   const u32 slot = g_head.fetch_add(1, std::memory_order_relaxed) & kRingMask;
   g_ring[slot].store(static_cast<u64>(pc), std::memory_order_relaxed);
+  g_ring_lr[slot].store(static_cast<u64>(uc->uc_mcontext.regs[30]),
+                        std::memory_order_relaxed);
+  // A raw syscall is async-signal-safe; gettid() is not declared below API 30.
+  g_ring_tid[slot].store(static_cast<u32>(::syscall(__NR_gettid)),
+                         std::memory_order_relaxed);
   g_taken.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -160,6 +174,8 @@ void RecordPc(uintptr_t pc) {
     return;
   const u32 slot = g_head.fetch_add(1, std::memory_order_relaxed) & kRingMask;
   g_ring[slot].store(offset, std::memory_order_relaxed);
+  g_ring_lr[slot].store(0, std::memory_order_relaxed);
+  g_ring_tid[slot].store(0, std::memory_order_relaxed);
   g_taken.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -235,11 +251,24 @@ void SamplingProfilerDump() {
 
   std::unordered_map<u64, u32> hist;
   hist.reserve(count);
+  // (tid, pc, lr) -> count, for the per-thread and caller views. Keyed on a
+  // string because the tuple is three words and this runs once.
+  std::unordered_map<std::string, u32> hist2;
+  std::unordered_map<u32, u32> per_tid;
   for (u32 i = 0; i < count; ++i) {
     const u32 slot = (head - 1 - i) & kRingMask;
     const u64 off = g_ring[slot].load(std::memory_order_relaxed);
-    if (off)
+    if (off) {
       ++hist[off];
+      const u64 lr = g_ring_lr[slot].load(std::memory_order_relaxed);
+      const u32 tid = g_ring_tid[slot].load(std::memory_order_relaxed);
+      char key[64];
+      std::snprintf(key, sizeof(key), "%u %llx %llx", tid,
+                    static_cast<unsigned long long>(off),
+                    static_cast<unsigned long long>(lr));
+      ++hist2[key];
+      ++per_tid[tid];
+    }
   }
 
   std::vector<std::pair<u64, u32>> sorted(hist.begin(), hist.end());
@@ -275,10 +304,35 @@ void SamplingProfilerDump() {
       std::fclose(m);
     }
 #endif
+    // Thread names, so the per-thread section below reads as "SDLThread" and
+    // not as a number that changes every launch.
+    for (const auto &kv : per_tid) {
+      char name[64] = {0};
+#if defined(__ANDROID__)
+      char p[64];
+      std::snprintf(p, sizeof(p), "/proc/self/task/%u/comm", kv.first);
+      if (FILE *c = std::fopen(p, "r")) {
+        if (std::fgets(name, sizeof(name), c)) {
+          if (char *nl = std::strchr(name, '\n'))
+            *nl = 0;
+        } else {
+          name[0] = 0;
+        }
+        std::fclose(c);
+      }
+#endif
+      std::fprintf(f, "# TID %u %u %s\n", kv.first, kv.second,
+                   name[0] ? name : "?");
+    }
     std::fprintf(f, "# SAMPLES\n");
     for (const auto &kv : sorted)
       std::fprintf(f, "%llx %u\n", static_cast<unsigned long long>(kv.first),
                    kv.second);
+    // "tid pc lr count": the same samples with their thread and caller. Lines
+    // have four fields so the plain reader above skips them.
+    std::fprintf(f, "# SAMPLES2\n");
+    for (const auto &kv : hist2)
+      std::fprintf(f, "%s %u\n", kv.first.c_str(), kv.second);
     std::fclose(f);
   }
 
@@ -330,6 +384,33 @@ void SamplingProfilerTick() {
     BD_INFO("[profile] sampling guest threads at {} Hz, base {:#x}",
             REXCVAR_GET(bd_sample_hz), g_module_base);
   }
+
+  // Dump once at the capture moment and stop. The ring holds the most recent
+  // 65536 samples - 16 seconds at 1000 Hz over four threads - so a periodic
+  // dump describes whatever the run was doing when the last tick landed. On
+  // 2026-09-01 that was a transition: 78% of samples in libc's syscall and
+  // nanosleep, 18% in the Adreno shader compiler, and 0.4% in this module.
+  // bd_capture_after_s already names the moment a run is known to be in a
+  // field scene, so the profile is pinned to the same moment as the capture.
+  static std::chrono::steady_clock::time_point t0 =
+      std::chrono::steady_clock::now();
+  static bool dumped_at_capture = false;
+  const double after = REXCVAR_GET(bd_capture_after_s);
+  if (after > 0.0 && !dumped_at_capture) {
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0)
+            .count();
+    if (elapsed >= after) {
+      dumped_at_capture = true;
+      SamplingProfilerDump();
+      g_running.store(false, std::memory_order_relaxed);
+      BD_INFO("[profile] dumped at {:.0f}s and stopped - this profile is the "
+              "16s before the capture", elapsed);
+    }
+    return;
+  }
+  if (dumped_at_capture)
+    return;
 
   // Periodic dumps, so a run that is killed rather than exited still leaves a
   // profile behind.

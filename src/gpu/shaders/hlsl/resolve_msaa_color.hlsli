@@ -11,7 +11,7 @@
 // without this, so the sample silently reads a uniform buffer and returns
 // black - which is exactly how the desktop present went black.
 // Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
-[[vk::binding(3, 0)]] Texture2DMS<float4, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
+[[vk::binding(0, 0)]] Texture2DMS<float4, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
 
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
 {

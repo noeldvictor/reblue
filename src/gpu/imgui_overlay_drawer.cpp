@@ -168,20 +168,21 @@ bool ImGuiOverlayDrawer::TryInitDeviceResources() {
   // Own layout (reblue's shared layout lacks the VERTEX ortho push constant
   // b0,space2). Never .create() the set builders: that exhausts plume's single
   // global heap.
-  // Must mirror the shared texture set's layout exactly: this binds
-  // state().texture_descriptor_set, and a set may only be bound against a
-  // layout it is compatible with. That set now leads with the three dynamic
-  // guest-constant ranges, so the texture array sits at kConstantChunkDescriptors.
+  // Must mirror the shared sets' layouts exactly: this binds
+  // state().texture_descriptor_set and state().sampler_descriptor_set, and a
+  // set may only be bound against a layout it is compatible with. The sampler
+  // set leads with the three dynamic guest-constant ranges, so the sampler
+  // array sits at kConstantChunkDescriptors; the texture array is at 0.
   plume::RenderDescriptorSetBuilder tex_b;
   tex_b.begin();
-  for (u32 i = 0; i < bd::gpu::kConstantChunkDescriptors; ++i)
-    tex_b.addConstantBufferDynamic(i);
-  tex_b.addTexture(bd::gpu::kConstantChunkDescriptors, kSharedTextureSlots);
+  tex_b.addTexture(0, kSharedTextureSlots);
   tex_b.end(true, kSharedTextureSlots);
 
   plume::RenderDescriptorSetBuilder samp_b;
   samp_b.begin();
-  samp_b.addSampler(0, kSharedSamplerSlots);
+  for (u32 i = 0; i < bd::gpu::kConstantChunkDescriptors; ++i)
+    samp_b.addConstantBufferDynamic(i);
+  samp_b.addSampler(bd::gpu::kConstantChunkDescriptors, kSharedSamplerSlots);
   samp_b.end(true, kSharedSamplerSlots);
 
   plume::RenderPipelineLayoutBuilder lb;
@@ -312,14 +313,14 @@ void ImGuiOverlayDrawer::Begin(rex::ui::UIDrawContext &ctx, float coord_w,
   // layout active and sets bind against whatever layout is current.
   cmd_->setGraphicsPipelineLayout(layout_.get());
   cmd_->setPipeline(pipeline_.get());
-  // The overlay never reads guest constants, but the layout declares them, so
-  // the bind still has to supply an offset for each.
+  // The overlay never reads guest constants, but the sampler set's layout
+  // declares them, so that bind still has to supply an offset for each.
   const u32 zero_offsets[3] = {0, 0, 0};
+  cmd_->setGraphicsDescriptorSet(bd::gpu::state().texture_descriptor_set.get(),
+                                 0);
   cmd_->setGraphicsDescriptorSetDynamic(
-      bd::gpu::state().texture_descriptor_set.get(), 0, zero_offsets,
+      bd::gpu::state().sampler_descriptor_set.get(), 1, zero_offsets,
       bd::gpu::kConstantChunkDescriptors);
-  cmd_->setGraphicsDescriptorSet(bd::gpu::state().sampler_descriptor_set.get(),
-                                 1);
 
   // Ortho projection push constant (b0,space2, VERTEX range 0), y flipped.
   struct Ortho {

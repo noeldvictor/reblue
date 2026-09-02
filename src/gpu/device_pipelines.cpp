@@ -138,20 +138,10 @@ bool BuildPipelineLayout(VideoState &s) {
   BD_INFO("[device] tex_set_builder.begin");
   tex_set_builder.begin();
   BD_INFO("[device] tex_set_builder.addTexture");
-  // Ahead of the texture array: the boundless range has to be last, so the
-  // constant chunks take bindings 0 and the textures move to 1. Every texture
-  // descriptor index shifts by kConstantChunkDescriptors as a result, which is
-  // what TextureDescriptor() applies.
-  // Vertex, pixel and shared guest constants, as dynamic uniform buffers: one
-  // buffer bound for the life of the device, re-based per draw with an offset.
-  // A uniform read goes through Adreno's constant path; the device address this
-  // replaces was an uncached global load per invocation.
-  if (kConstantChunkDescriptors > 0) {
-    tex_set_builder.addConstantBufferDynamic(0);
-    tex_set_builder.addConstantBufferDynamic(1);
-    tex_set_builder.addConstantBufferDynamic(2);
-  }
-  tex_set_builder.addTexture(kConstantChunkDescriptors, kBindlessTextureCount);
+  // Textures alone, at binding 0. The guest constant chunks used to sit ahead
+  // of this array and moved to the sampler set - see SamplerDescriptor() in
+  // bindless_allocator.h for the measurement that moved them.
+  tex_set_builder.addTexture(0, kBindlessTextureCount);
   BD_INFO("[device] tex_set_builder.end");
   tex_set_builder.end(true, kBindlessTextureCount);
 
@@ -179,7 +169,22 @@ bool BuildPipelineLayout(VideoState &s) {
 
   plume::RenderDescriptorSetBuilder sampler_set_builder;
   sampler_set_builder.begin();
-  sampler_set_builder.addSampler(0, kBindlessSamplerCount);
+  // Vertex, pixel and shared guest constants, as dynamic uniform buffers: one
+  // buffer bound for the life of the device, re-based per draw with an offset.
+  // A uniform read goes through Adreno's constant path; the device address this
+  // replaces was an uncached global load per invocation.
+  //
+  // In the SAMPLER set, ahead of the sampler array (the boundless range has to
+  // be last), so that the per-draw dynamic bind copies a 256-entry set and not
+  // the 4096-entry texture array. Every sampler descriptor index shifts by
+  // kConstantChunkDescriptors as a result, which is what SamplerDescriptor()
+  // applies.
+  if (kConstantChunkDescriptors > 0) {
+    sampler_set_builder.addConstantBufferDynamic(0);
+    sampler_set_builder.addConstantBufferDynamic(1);
+    sampler_set_builder.addConstantBufferDynamic(2);
+  }
+  sampler_set_builder.addSampler(kConstantChunkDescriptors, kBindlessSamplerCount);
   sampler_set_builder.end(true, kBindlessSamplerCount);
 
   BD_INFO("[device] sampler_set_builder.create");
@@ -207,7 +212,7 @@ bool BuildPipelineLayout(VideoState &s) {
     BD_ERROR("Plume createSampler for default sampler failed");
     return false;
   }
-  s.sampler_descriptor_set->setSampler(0, s.default_sampler.get());
+  s.sampler_descriptor_set->setSampler(SamplerDescriptor(0), s.default_sampler.get());
 
   // Point sampler at slot 1: reserved for host fullscreen blits.
   // Slot 0 (LINEAR) on a same-size blit blurs the scene every frame.
@@ -224,7 +229,7 @@ bool BuildPipelineLayout(VideoState &s) {
     BD_ERROR("Plume createSampler for point sampler failed");
     return false;
   }
-  s.sampler_descriptor_set->setSampler(1, s.point_sampler.get());
+  s.sampler_descriptor_set->setSampler(SamplerDescriptor(1), s.point_sampler.get());
 
   layout_builder.addDescriptorSet(sampler_set_builder);
 

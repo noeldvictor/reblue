@@ -170,9 +170,11 @@ public:
   // switches.
   static plume::RenderPipelineLayout *MainPipelineLayout();
 
-  // The bindless texture set. Its first kConstantChunkDescriptors entries are
-  // the guest constant blocks.
+  // The bindless texture set (spaces 0/1/2).
   static plume::RenderDescriptorSet *TextureDescriptorSet();
+  // The sampler set (space 3). Its first kConstantChunkDescriptors entries are
+  // the guest constant blocks, re-based per draw with dynamic offsets.
+  static plume::RenderDescriptorSet *SamplerDescriptorSet();
 
   // Diagnostic for the draw queue: which render target is bound right now.
   static const void *CurrentRenderTargetForDiag();

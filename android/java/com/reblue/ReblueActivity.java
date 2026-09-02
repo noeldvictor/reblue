@@ -77,13 +77,42 @@ public class ReblueActivity extends SDLActivity {
         try (java.io.BufferedReader reader =
                  new java.io.BufferedReader(new java.io.FileReader(file))) {
             String line;
+            // A "--name" line followed by a value line is joined into
+            // "--name=value" before it reaches the cvar parser. That parser is
+            // CLI11, and it registers every boolean cvar as a *flag*: a bare
+            // "--bd_reflections" means true, and a "false" on the next line is
+            // an unrelated positional it silently ignores. Every tool here
+            // writes the two-line form, so for as long as this passed lines
+            // through verbatim, "bd_reflections=false" through args.txt set
+            // it TRUE - and bd::AuditProfileConfig named it on 2026-09-01:
+            // "file says 'false', live value is 'true'", three settings in one
+            // run. Joining makes the two-line form mean what it says.
+            String pending = null;
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
                 // '#' comments out a line, so options can be parked rather than
                 // deleted.
-                if (!line.isEmpty() && !line.startsWith("#")) {
+                if (line.isEmpty() || line.startsWith("#")) {
+                    continue;
+                }
+                if (pending != null) {
+                    if (line.startsWith("--")) {
+                        extra.add(pending);
+                        pending = line;
+                    } else {
+                        extra.add(pending + "=" + line);
+                        pending = null;
+                    }
+                    continue;
+                }
+                if (line.startsWith("--") && line.indexOf('=') < 0) {
+                    pending = line;
+                } else {
                     extra.add(line);
                 }
+            }
+            if (pending != null) {
+                extra.add(pending);
             }
             android.util.Log.i("reblue", "args.txt added " + extra.size() + " argument(s)");
         } catch (java.io.IOException e) {
