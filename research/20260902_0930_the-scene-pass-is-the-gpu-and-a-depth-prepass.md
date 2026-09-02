@@ -406,3 +406,20 @@ present flattening it. `bd_mv_layered_textures` can default on. On the Quest
 the same path measures 59 ms GPU with the obsolete chain on and 277 ms with
 it off, and both are the tiling question - the scene pass in direct mode -
 which `XR_KHR_vulkan_enable2` plus Turnip is being built to answer.
+
+## XR_KHR_vulkan_enable2 works on the Quest
+
+`bd_xr_vulkan2=true` (the Android default now): plume builds its create-infos
+as before and hands them to `xrCreateVulkanInstanceKHR` /
+`xrCreateVulkanDeviceKHR` through two callbacks on `VulkanInterfaceOptions`;
+the physical device comes from `xrGetVulkanGraphicsDevice2KHR`.
+
+```
+[xr] runtime created the VkInstance (enable2), VkResult 0
+[xr] runtime created the VkDevice (enable2), VkResult 0
+GPU caps: Vulkan 1.1.284 on Adreno (TM) 650 ...
+dt 49.87 | gpu_total 40.43 | elsewhere 12-13 ms    (unchanged)
+```
+
+The runtime now dispatches through the `vkGetInstanceProcAddr` we pass, which
+is the precondition for driving the headset with a directly loaded ICD.
