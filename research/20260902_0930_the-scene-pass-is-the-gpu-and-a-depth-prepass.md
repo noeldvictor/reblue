@@ -328,3 +328,14 @@ So the vendor profiler will not say why. `bd_vulkan_icd=turnip` now loads
 Mesa's Turnip driver directly (plume `icdLibraryPath` ->
 `volkInitializeCustom`, the .so packaged with `EXTRA_LIBS`), and its trace is
 running on the flat path first, where no OpenXR loader interop is involved.
+
+## The "black" resolve attempts were contaminated
+
+`bd_mv_resolve` defaulted back to true late on 2026-09-01 (for the Quest's
+277 ms), and every desktop multiview test since - the `Texture2DMSArray`
+attempt, the view-index colour probe, the per-eye slice views - ran with the
+obsolete resolve chain ON. With `bd_msaa=0` (no MSAA resolve shader involved
+at all) multiview with layered textures is black too, so the blackout was the
+chain, never the shaders. The per-eye slice-view resolve is being re-tested
+with `bd_mv_resolve=false` set explicitly; the flat path with the same
+shaders already renders correctly.
