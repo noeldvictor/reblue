@@ -23,6 +23,7 @@
 #include "gpu/gpu_profiling.h"
 
 #include "core/logging.h"
+#include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/gpu_timing.h"
 #include "gpu/host_resource_heap.h"
@@ -73,15 +74,18 @@ void BeginCommandList(VideoState &s) {
   }
   // Every host pipeline shares s.pipeline_layout, so switches keep these.
   s.command_list->setGraphicsPipelineLayout(s.pipeline_layout.get());
-  // Spaces 0/1/2 are the same physical texture set, bound once and never
-  // rebound. The three dynamic constant ranges live in the sampler set (space
-  // 3), which is the one re-based per draw - so the driver's per-bind copy is
-  // of a 256-entry set, not the texture array. See SamplerDescriptor().
+  // The texture and sampler heaps are bound once and never rebound. The
+  // constant set is the one re-based per draw, and it holds nothing but the
+  // three dynamic ranges - so the driver's per-bind copy is 48 bytes, not a
+  // heap. See the layout note in bindless_allocator.h.
   const u32 zero_offsets[3] = {0, 0, 0};
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 0);
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 1);
-  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(), 2);
-  s.command_list->setGraphicsDescriptorSetDynamic(s.sampler_descriptor_set.get(), 3, zero_offsets, 3);
+  s.command_list->setGraphicsDescriptorSet(s.texture_descriptor_set.get(),
+                                           kTextureDescriptorSetIndex);
+  s.command_list->setGraphicsDescriptorSet(s.sampler_descriptor_set.get(),
+                                           kSamplerDescriptorSetIndex);
+  s.command_list->setGraphicsDescriptorSetDynamic(
+      s.constant_descriptor_set.get(), kConstantDescriptorSetIndex,
+      zero_offsets, 3);
   FrameBegin(s.device.get(), s.command_list, cur);
   s.command_list_open = true;
 

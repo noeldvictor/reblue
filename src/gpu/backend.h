@@ -57,7 +57,11 @@ inline constexpr u32 kCopyPushConstantByteOffset = 0;
 inline constexpr u32 kGuestPushConstantRangeIndex = 0;
 inline constexpr u32 kCopyPushConstantRangeIndex = 0;
 inline constexpr u32 kCopyPushConstantByteOffset = 24;
-inline constexpr u32 kOcclusionDescriptorSetIndex = 4;
+// The four Vulkan descriptor sets; see the layout note in bindless_allocator.h.
+inline constexpr u32 kTextureDescriptorSetIndex = 0;
+inline constexpr u32 kSamplerDescriptorSetIndex = 1;
+inline constexpr u32 kConstantDescriptorSetIndex = 2;
+inline constexpr u32 kOcclusionDescriptorSetIndex = 3;
 #endif
 
 } // namespace bd::gpu

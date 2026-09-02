@@ -627,9 +627,7 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       BD_ERROR("Back-buffer SRV bind failed: bindless heap full");
       return false;
     }
-    s.texture_descriptor_set->setTexture(
-        TextureDescriptor(slot), bb->texture, plume::RenderTextureLayout::SHADER_READ,
-        bb->textureView.get());
+    WriteTextureDescriptor(s, slot, bb->texture, bb->textureView.get());
     bb->descriptorIndex = slot;
 
     s.back_buffer_surface = bb;
@@ -777,9 +775,7 @@ GuestTexture *GetOrCreateDebugTexture() {
     delete t;
     return nullptr;
   }
-  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), t->texture,
-                                       plume::RenderTextureLayout::SHADER_READ,
-                                       t->textureView.get());
+  WriteTextureDescriptor(s, slot, t->texture, t->textureView.get());
   t->descriptorIndex = slot;
 
   plume::RenderTextureBarrier to_rt(t->texture,
@@ -976,6 +972,10 @@ plume::RenderDescriptorSet *Video::TextureDescriptorSet() {
   return state().texture_descriptor_set.get();
 }
 
+plume::RenderDescriptorSet *Video::ConstantDescriptorSet() {
+  return state().constant_descriptor_set.get();
+}
+
 plume::RenderDescriptorSet *Video::SamplerDescriptorSet() {
   return state().sampler_descriptor_set.get();
 }
@@ -1056,8 +1056,8 @@ bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
   (void)shared_bytes;
   return true; // root descriptors; nothing to publish
 #else
-  // The constant ranges live in the sampler set, see SamplerDescriptor().
-  auto *set = state().sampler_descriptor_set.get();
+  // The constant ranges are a set of their own, see bindless_allocator.h.
+  auto *set = state().constant_descriptor_set.get();
   if (!set || !buffer)
     return false;
   // The range is the block the shader declares, not the buffer: a dynamic

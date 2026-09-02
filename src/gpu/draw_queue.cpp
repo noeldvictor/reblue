@@ -14,6 +14,7 @@
 #include <rex/cvar.h>
 
 #include "core/logging.h"
+#include "gpu/backend.h"
 #include "gpu/device.h"
 
 REXCVAR_DECLARE(bool, bd_draw_defer);
@@ -87,10 +88,11 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
   if (!st.any || d.constant_offsets[0] != st.constant_offsets[0] ||
       d.constant_offsets[1] != st.constant_offsets[1] ||
       d.constant_offsets[2] != st.constant_offsets[2]) {
-    // The constant ranges live in the sampler set (space 3); the texture
-    // spaces are bound once by frame_ring and never rebound.
-    if (auto *set = Video::SamplerDescriptorSet())
-      cmd->setGraphicsDescriptorSetDynamic(set, 3, d.constant_offsets, 3);
+    // The constant ranges are a set of their own; the texture and sampler
+    // heaps are bound once by frame_ring and never rebound.
+    if (auto *set = Video::ConstantDescriptorSet())
+      cmd->setGraphicsDescriptorSetDynamic(set, kConstantDescriptorSetIndex,
+                                           d.constant_offsets, 3);
     st.constant_offsets[0] = d.constant_offsets[0];
     st.constant_offsets[1] = d.constant_offsets[1];
     st.constant_offsets[2] = d.constant_offsets[2];

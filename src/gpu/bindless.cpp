@@ -41,14 +41,22 @@ void ParkDescriptorSlotLocked(VideoState &s, u32 slot, u32 null_index) {
       {slot, null_index});
 }
 
+void WriteTextureDescriptor(VideoState &s, u32 slot,
+                            plume::RenderTexture *texture,
+                            plume::RenderTextureView *view) {
+  if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
+    return;
+  for (u32 dim = 0; dim < kTextureHeapDims; ++dim) {
+    s.texture_descriptor_set->setTexture(TextureDescriptor(slot, dim), texture,
+                                         plume::RenderTextureLayout::SHADER_READ,
+                                         view);
+  }
+}
+
 void DrainDescriptorSlotsLocked(VideoState &s, u32 slot) {
   for (const auto &d : s.descriptor_graveyard[slot]) {
-    if (s.texture_descriptor_set) {
-      s.texture_descriptor_set->setTexture(
-          TextureDescriptor(d.slot), s.null_textures[d.null_index].get(),
-          plume::RenderTextureLayout::SHADER_READ,
-          s.null_texture_views[d.null_index].get());
-    }
+    WriteTextureDescriptor(s, d.slot, s.null_textures[d.null_index].get(),
+                           s.null_texture_views[d.null_index].get());
     BindlessFreeSlot(s.descriptor_slot_used, d.slot,
                      kNullTextureDescriptorCount);
   }
@@ -137,10 +145,8 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
   // Already has a slot and the view was just rebuilt: re-point the descriptor
   // rather than leaking a new one.
   if (tex->descriptorIndex != kInvalidDescriptorIndex) {
-    s.texture_descriptor_set->setTexture(TextureDescriptor(tex->descriptorIndex),
-                                         tex->texture,
-                                         plume::RenderTextureLayout::SHADER_READ,
-                                         tex->textureView.get());
+    WriteTextureDescriptor(s, tex->descriptorIndex, tex->texture,
+                           tex->textureView.get());
     return tex->descriptorIndex;
   }
   const u32 slot = AllocateSlot(s);
@@ -149,9 +155,7 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
              kBindlessTextureCount);
     return kInvalidDescriptorIndex;
   }
-  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), tex->texture,
-                                       plume::RenderTextureLayout::SHADER_READ,
-                                       tex->textureView.get());
+  WriteTextureDescriptor(s, slot, tex->texture, tex->textureView.get());
   tex->descriptorIndex = slot;
   return slot;
 }
@@ -165,20 +169,14 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
 void SetBindlessTextureLocked(VideoState &s, u32 slot,
                               plume::RenderTexture *texture,
                               plume::RenderTextureView *view) {
-  if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
-    return;
-  s.texture_descriptor_set->setTexture(
-      TextureDescriptor(slot), texture, plume::RenderTextureLayout::SHADER_READ, view);
+  WriteTextureDescriptor(s, slot, texture, view);
 }
 
 void Video::SetBindlessTexture(u32 slot, plume::RenderTexture *texture,
                                plume::RenderTextureView *view) {
   auto &s = state();
   std::lock_guard lock(s.mutex);
-  if (!s.texture_descriptor_set || slot == kInvalidDescriptorIndex || !texture)
-    return;
-  s.texture_descriptor_set->setTexture(
-      TextureDescriptor(slot), texture, plume::RenderTextureLayout::SHADER_READ, view);
+  WriteTextureDescriptor(s, slot, texture, view);
 }
 
 // Registers a multiview surface's *resolved* companion as its sampled image, so
@@ -196,9 +194,7 @@ u32 Video::BindResolvedSRV(GuestTexture *tex) {
     BD_ERROR("Bindless heap full, multiview resolve SRV dropped");
     return kInvalidDescriptorIndex;
   }
-  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), tex->resolvedTexture,
-                                       plume::RenderTextureLayout::SHADER_READ,
-                                       tex->textureView.get());
+  WriteTextureDescriptor(s, slot, tex->resolvedTexture, tex->textureView.get());
   tex->descriptorIndex = slot;
   return slot;
 }

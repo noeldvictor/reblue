@@ -170,11 +170,15 @@ public:
   // switches.
   static plume::RenderPipelineLayout *MainPipelineLayout();
 
-  // The bindless texture set (spaces 0/1/2).
+  // The bindless texture set (set 0: the 2D, 3D and cube heaps as three
+  // bindings).
   static plume::RenderDescriptorSet *TextureDescriptorSet();
-  // The sampler set (space 3). Its first kConstantChunkDescriptors entries are
-  // the guest constant blocks, re-based per draw with dynamic offsets.
+  // The sampler set (set 1).
   static plume::RenderDescriptorSet *SamplerDescriptorSet();
+  // The guest constant set (set 2): the vertex, pixel and shared blocks as
+  // dynamic uniform buffers, re-based per draw with dynamic offsets. Vulkan
+  // only; D3D12 reaches the blocks through root descriptors.
+  static plume::RenderDescriptorSet *ConstantDescriptorSet();
 
   // Diagnostic for the draw queue: which render target is bound right now.
   static const void *CurrentRenderTargetForDiag();
@@ -433,9 +437,13 @@ struct VideoState {
   // Slots 0..2 are valid null Texture2D/3D/Cube descriptors, and real
   // allocation starts after kNullTextureDescriptorCount.
   std::unique_ptr<plume::RenderDescriptorSet> texture_descriptor_set;
+  // The three guest constant blocks as dynamic uniform buffers, a set of
+  // their own so the per-draw re-base copies 48 bytes and not a heap. Null
+  // on D3D12.
+  std::unique_ptr<plume::RenderDescriptorSet> constant_descriptor_set;
   // Base offsets for the vertex, pixel and shared guest constant blocks inside
   // the single constant buffer, supplied as dynamic uniform buffer offsets when
-  // set 0 is bound. Replaces three push-constant writes per draw.
+  // the constant set is bound. Replaces three push-constant writes per draw.
   u32 constant_dyn_offsets[3]{};
 
   // While true, FlushRenderState resolves a draw's state into `pending` instead
@@ -646,6 +654,17 @@ bool BuildFramebuffers(VideoState &s);
 bool BuildPresentSemaphores(VideoState &s);
 u32 AllocateSlot(VideoState &s);
 u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex);
+// Writes `view` of `texture` into texture slot `slot` of every heap. The three
+// HLSL heaps (2D array, 3D, cube) are three bindings of one set since
+// 2026-09-02, where they used to be three register spaces over one binding;
+// writing every heap keeps that exact behaviour - whichever heap a shader
+// reads a slot through, it finds the texture - and no caller has to know a
+// view's dimension. Routing by dimension is the tightening for later.
+// Caller holds s.mutex.
+void WriteTextureDescriptor(VideoState &s, u32 slot,
+                            plume::RenderTexture *texture,
+                            plume::RenderTextureView *view);
+
 // Points an allocated bindless slot at an arbitrary view, with the renderer
 // lock already held. The multiview resolve needs this: it rebuilds its per-eye
 // views inside a locked section.

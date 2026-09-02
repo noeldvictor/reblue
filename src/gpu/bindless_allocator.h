@@ -1,7 +1,7 @@
 /**
  * @file    gpu/bindless_allocator.h
  * @brief   Linear free slot scan shared by the texture and sampler bindless
- *          descriptor heaps.
+ *          descriptor heaps, and the physical layout of the texture heap.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.
@@ -10,14 +10,12 @@
  */
 #pragma once
 
-// kConstantChunkDescriptors below is chosen by REBLUE_D3D12, which makes this
-// header backend-conditional - and it had no guard, so it compiled happily into
-// the shared reblue_common library and resolved for whichever backend got there
-// first. gpu/bindless.cpp did exactly that: it wrote every texture descriptor at
-// TextureDescriptor(slot) using the D3D12 value of 0 while reblue_vk's pipeline
-// layout put the texture array at 3, so every texture in the Vulkan build was
-// sampled three slots away from where it was written and the whole scene
-// rendered black with a working overlay on top.
+// TextureDescriptor() below is chosen by REBLUE_D3D12, which makes this header
+// backend-conditional - and it had no guard, so it compiled happily into the
+// shared reblue_common library and resolved for whichever backend got there
+// first. gpu/bindless.cpp did exactly that: it wrote every texture descriptor
+// at the D3D12 index while reblue_vk's pipeline layout put it elsewhere, and
+// the whole scene rendered black with a working overlay on top.
 #if defined(REBLUE_COMMON_TU)
 #error "backend-conditional: move this TU to reblue_backend_only in src/CMakeLists.txt"
 #endif
@@ -38,9 +36,8 @@ namespace bd::gpu {
 // holding a small integer.
 //
 // This is still generous for the game: Blue Dragon is a 512 MB console title,
-// so its live texture set is nowhere near even this. Sizing it from
-// maxDescriptorSetUpdateAfterBindSampledImages at runtime would be better and
-// is the proper fix; this is the number that gets a frame on screen.
+// so its live texture set is nowhere near even this. BuildPipelineLayout logs
+// the device's update-after-bind limit against three times this number.
 constexpr u32 kBindlessTextureCount = 4096;
 constexpr u32 kBindlessSamplerCount = 256;
 #else
@@ -48,47 +45,57 @@ constexpr u32 kBindlessTextureCount = 65536;
 constexpr u32 kBindlessSamplerCount = 1024;
 #endif
 
-// Guest constant chunks, bound as dynamic uniform buffers ahead of the sampler
-// array in the sampler set (space 3).
+// The Vulkan pipeline layout, since 2026-09-02 - four real sets, which is
+// every set Adreno allows (maxBoundDescriptorSets = 4):
 //
-// They have to live in an existing set: the pipeline layout already binds four
-// (spaces 0/1/2 all point at the texture set, space 3 at the samplers) and
-// Adreno's maxBoundDescriptorSets is exactly 4. They have to come *before* the
-// sampler array, because that array is the boundless range and plume requires
-// the boundless range to be last.
+//   set 0  texture heap: binding 0 Texture2DArray[], 1 Texture3D[], 2
+//          TextureCube[], each kBindlessTextureCount entries, all
+//          update-after-bind and partially bound; bound once per command list
+//   set 1  sampler heap: binding 0 SamplerState[kBindlessSamplerCount];
+//          bound once per command list
+//   set 2  guest constants: bindings 0/1/2 the vertex, pixel and shared
+//          blocks as dynamic uniform buffers; the set re-based per draw
+//   set 3  the sun-occlusion counter UAV, bound only while counting
 //
-// Which means every sampler descriptor index in the physical set shifts up by
-// this much. The shader is unaffected - it indexes within its own binding - so
-// this is purely a host-side offset, applied in SamplerDescriptor() and nowhere
-// else. constant_buffers.cpp never allocates more chunks than this.
+// Why the constants have a set of their own: the Adreno driver copies a
+// descriptor set's contents on every bind that carries dynamic offsets. With
+// the three constant ranges in the texture set, re-basing them per draw copied
+// the whole 4096-entry texture array - 56% of the render thread's samples in
+// one driver memcpy on a Quest 2 (2026-09-01). Moving them into the 256-entry
+// sampler set took that to 1.3%; a set holding only the three ranges copies
+// 48 bytes. It also ends the spec violation the layer reported as
+// VUID-VkDescriptorSetLayoutCreateInfo-descriptorType-03001 (a dynamic uniform
+// buffer in a set with an update-after-bind binding), and frees the fourth
+// set for the occlusion counter, which Android had to drop.
 //
-// Vulkan only. D3D12 reaches guest constants through a real constant buffer
-// already (the packoffset path in shader_common.h), so it needs no chunk
-// descriptors and must keep its texture indices where they are.
+// The three HLSL heaps used to be three register spaces bound to one physical
+// set; they are now three bindings of one set. plume addresses a set's
+// descriptors by a flat index that runs across its ranges in order, so the
+// 3D heap starts at kBindlessTextureCount and the cube heap at twice that.
+constexpr u32 kTextureHeapDims = 3;
+constexpr u32 kTextureHeap2D = 0;
+constexpr u32 kTextureHeap3D = 1;
+constexpr u32 kTextureHeapCube = 2;
+
+// Where texture slot `slot` lives in the physical texture set for the heap of
+// dimension `dim`. The shader indexes within its own heap, so `slot` is what
+// the shared constants carry; this is purely the host-side placement.
+//
+// D3D12 keeps three register spaces over one descriptor heap, so every
+// dimension reads the same descriptor there.
+inline u32 TextureDescriptor(u32 slot, u32 dim) {
 #if defined(REBLUE_D3D12)
-constexpr u32 kConstantChunkDescriptors = 0;
+  (void)dim;
+  return slot;
 #else
-constexpr u32 kConstantChunkDescriptors = 3;
+  return dim * kBindlessTextureCount + slot;
 #endif
-
-// Where texture slot `slot` actually lives in the physical descriptor set.
-// Identity since 2026-09-01: the constant chunks moved out of the texture set
-// and into the SAMPLER set, so it is the sampler indices that shift now.
-//
-// Why they moved: the Adreno driver copies a descriptor set's contents on
-// every bind that carries dynamic offsets. With the three constant ranges in
-// the texture set, re-basing the constants per draw copied the whole
-// 4096-entry texture array along with them - 56% of the render thread's
-// samples in one driver memcpy on a Quest 2, and shrinking the array to 1024
-// took the thread from 44ms to 19ms. The sampler set is 256 entries.
-inline u32 TextureDescriptor(u32 slot) { return slot; }
-
-// Where sampler slot `slot` lives in the physical sampler set: after the
-// constant chunks. Every setSampler on the sampler set goes through this; the
-// shader indexes within its own binding and is unaffected.
-inline u32 SamplerDescriptor(u32 slot) {
-  return kConstantChunkDescriptors + slot;
 }
+
+// Where sampler slot `slot` lives in the physical sampler set. Identity since
+// the constant ranges left the sampler set; kept as the single place a shift
+// would go.
+inline u32 SamplerDescriptor(u32 slot) { return slot; }
 
 // First free slot in used[start_index..end), marked used, returned. on_full
 // when none free. Caller holds the heap's mutex.

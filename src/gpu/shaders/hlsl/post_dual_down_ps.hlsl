@@ -12,7 +12,7 @@
 #include "copy_common.hlsli"
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-[[vk::binding(3, 3)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+[[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
 {

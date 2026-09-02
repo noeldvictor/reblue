@@ -32,8 +32,9 @@ namespace bd::gpu {
 namespace {
 // Boundless D3D12 ranges become UINT_MAX in the root sig, so only consistency
 // with reblue's shared heaps matters, not the exact value.
-constexpr u32 kSharedTextureSlots = 65536;
-constexpr u32 kSharedSamplerSlots = 1024;
+// The shared heaps' sizes, which the private layout has to match exactly.
+constexpr u32 kSharedTextureSlots = bd::gpu::kBindlessTextureCount;
+constexpr u32 kSharedSamplerSlots = bd::gpu::kBindlessSamplerCount;
 
 const plume::RenderInputSlot
     kImGuiInputSlot(0, sizeof(rex::ui::ImmediateVertex),
@@ -125,8 +126,8 @@ bool ImGuiOverlayDrawer::UploadRGBA8Texture(
     BD_ERROR("ImGui overlay: bindless texture slot pool exhausted");
     return false;
   }
-  bd::gpu::state().texture_descriptor_set->setTexture(
-      TextureDescriptor(slot), tex.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
+  bd::gpu::WriteTextureDescriptor(bd::gpu::state(), slot, tex.get(),
+                                  view.get());
 
   plume::RenderTextureBarrier pre(tex.get(),
                                   plume::RenderTextureLayout::COPY_DEST);
@@ -170,19 +171,18 @@ bool ImGuiOverlayDrawer::TryInitDeviceResources() {
   // global heap.
   // Must mirror the shared sets' layouts exactly: this binds
   // state().texture_descriptor_set and state().sampler_descriptor_set, and a
-  // set may only be bound against a layout it is compatible with. The sampler
-  // set leads with the three dynamic guest-constant ranges, so the sampler
-  // array sits at kConstantChunkDescriptors; the texture array is at 0.
+  // set may only be bound against a layout it is compatible with. The texture
+  // set is three heaps (2D, 3D, cube) as bindings 0/1/2; the sampler set is
+  // the sampler array at binding 0. See bindless_allocator.h.
   plume::RenderDescriptorSetBuilder tex_b;
   tex_b.begin();
-  tex_b.addTexture(0, kSharedTextureSlots);
+  for (u32 dim = 0; dim < bd::gpu::kTextureHeapDims; ++dim)
+    tex_b.addTexture(dim, kSharedTextureSlots);
   tex_b.end(true, kSharedTextureSlots);
 
   plume::RenderDescriptorSetBuilder samp_b;
   samp_b.begin();
-  for (u32 i = 0; i < bd::gpu::kConstantChunkDescriptors; ++i)
-    samp_b.addConstantBufferDynamic(i);
-  samp_b.addSampler(bd::gpu::kConstantChunkDescriptors, kSharedSamplerSlots);
+  samp_b.addSampler(0, kSharedSamplerSlots);
   samp_b.end(true, kSharedSamplerSlots);
 
   plume::RenderPipelineLayoutBuilder lb;
@@ -313,14 +313,10 @@ void ImGuiOverlayDrawer::Begin(rex::ui::UIDrawContext &ctx, float coord_w,
   // layout active and sets bind against whatever layout is current.
   cmd_->setGraphicsPipelineLayout(layout_.get());
   cmd_->setPipeline(pipeline_.get());
-  // The overlay never reads guest constants, but the sampler set's layout
-  // declares them, so that bind still has to supply an offset for each.
-  const u32 zero_offsets[3] = {0, 0, 0};
   cmd_->setGraphicsDescriptorSet(bd::gpu::state().texture_descriptor_set.get(),
                                  0);
-  cmd_->setGraphicsDescriptorSetDynamic(
-      bd::gpu::state().sampler_descriptor_set.get(), 1, zero_offsets,
-      bd::gpu::kConstantChunkDescriptors);
+  cmd_->setGraphicsDescriptorSet(bd::gpu::state().sampler_descriptor_set.get(),
+                                 1);
 
   // Ortho projection push constant (b0,space2, VERTEX range 0), y flipped.
   struct Ortho {

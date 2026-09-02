@@ -18,8 +18,8 @@
 #include "copy_common.hlsli"
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
-[[vk::binding(3, 3)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
-[[vk::binding(1, 3)]] cbuffer PixelShaderConstantsBuf : register(b1, space4) { float4 g_PSC[224]; };
+[[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+[[vk::binding(1, 2)]] cbuffer PixelShaderConstantsBuf : register(b1, space4) { float4 g_PSC[224]; };
 
 float4 Tap(uint index, float2 uv)
 {

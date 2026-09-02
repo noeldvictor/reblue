@@ -105,8 +105,7 @@ bool BuildNullTextureDescriptors(VideoState &s) {
       return false;
     }
     BD_INFO("[device] null tex {}: setTexture", i);
-    s.texture_descriptor_set->setTexture(
-        TextureDescriptor(i), texture.get(), plume::RenderTextureLayout::SHADER_READ, view.get());
+    WriteTextureDescriptor(s, i, texture.get(), view.get());
     BD_INFO("[device] null tex {}: done", i);
     s.null_textures[i] = std::move(texture);
     s.null_texture_views[i] = std::move(view);
@@ -121,27 +120,69 @@ bool BuildPipelineLayout(VideoState &s) {
   // VK_EXT_descriptor_indexing - core in Vulkan 1.2, optional at 1.1. A driver
   // without it does not refuse politely; plume builds the set anyway and the
   // result is a jump through a pointer holding a small integer. Say so instead.
-  const bool bindless_ok = s.device->getCapabilities().descriptorIndexing;
-  BD_INFO("[device] descriptorIndexing={} bindless textures={} samplers={}",
-          bindless_ok, kBindlessTextureCount, kBindlessSamplerCount);
+  const auto &caps = s.device->getCapabilities();
+  const bool bindless_ok = caps.descriptorIndexing;
+  BD_INFO("[device] descriptorIndexing={} bindless textures={} x{} heaps "
+          "samplers={}",
+          bindless_ok, kBindlessTextureCount, kTextureHeapDims,
+          kBindlessSamplerCount);
   if (!bindless_ok) {
     BD_ERROR("This GPU has no descriptor indexing, which the bindless renderer "
              "requires. A non-bindless path would be needed here.");
     return false;
+  }
+  // The heaps are sized by hand (bindless_allocator.h); a device whose
+  // per-set limit is below them does not fail politely, so say so here. The
+  // update-after-bind limit is the one that applies; it reads zero when the
+  // device reports no descriptor indexing properties, in which case the
+  // plain limit is the best information there is.
+  {
+    const u32 tex_limit = caps.maxDescriptorSetUpdateAfterBindSampledImages
+                              ? caps.maxDescriptorSetUpdateAfterBindSampledImages
+                              : caps.maxDescriptorSetSampledImages;
+    const u32 smp_limit = caps.maxDescriptorSetUpdateAfterBindSamplers
+                              ? caps.maxDescriptorSetUpdateAfterBindSamplers
+                              : caps.maxDescriptorSetSamplers;
+    BD_INFO("[device] descriptor limits: sets={} sampled images/set={} "
+            "(uab {}) samplers/set={} (uab {})",
+            caps.maxBoundDescriptorSets, caps.maxDescriptorSetSampledImages,
+            caps.maxDescriptorSetUpdateAfterBindSampledImages,
+            caps.maxDescriptorSetSamplers,
+            caps.maxDescriptorSetUpdateAfterBindSamplers);
+    if (tex_limit && tex_limit < kBindlessTextureCount * kTextureHeapDims) {
+      BD_ERROR("[device] texture heap {} x {} exceeds the device's {} sampled "
+               "images per set; lower kBindlessTextureCount",
+               kBindlessTextureCount, kTextureHeapDims, tex_limit);
+      return false;
+    }
+    if (smp_limit && smp_limit < kBindlessSamplerCount) {
+      BD_ERROR("[device] sampler heap {} exceeds the device's {} samplers per "
+               "set; lower kBindlessSamplerCount",
+               kBindlessSamplerCount, smp_limit);
+      return false;
+    }
+    if (caps.maxBoundDescriptorSets && caps.maxBoundDescriptorSets < 4) {
+      BD_ERROR("[device] the layout needs 4 descriptor sets, the device "
+               "allows {}",
+               caps.maxBoundDescriptorSets);
+      return false;
+    }
   }
 
   plume::RenderPipelineLayoutBuilder layout_builder;
   BD_INFO("[device] layout_builder.begin");
   layout_builder.begin(false, true);
 
+  // Set 0: the three texture heaps as three bindings of one set - 2D array,
+  // 3D, cube - where they used to be three register spaces bound to one
+  // physical array. Every binding is update-after-bind and partially bound
+  // (plume flags every texture range of a boundless set); the variable count
+  // sits on the last. See the layout note in bindless_allocator.h.
   plume::RenderDescriptorSetBuilder tex_set_builder;
   BD_INFO("[device] tex_set_builder.begin");
   tex_set_builder.begin();
-  BD_INFO("[device] tex_set_builder.addTexture");
-  // Textures alone, at binding 0. The guest constant chunks used to sit ahead
-  // of this array and moved to the sampler set - see SamplerDescriptor() in
-  // bindless_allocator.h for the measurement that moved them.
-  tex_set_builder.addTexture(0, kBindlessTextureCount);
+  for (u32 dim = 0; dim < kTextureHeapDims; ++dim)
+    tex_set_builder.addTexture(dim, kBindlessTextureCount);
   BD_INFO("[device] tex_set_builder.end");
   tex_set_builder.end(true, kBindlessTextureCount);
 
@@ -160,31 +201,13 @@ bool BuildPipelineLayout(VideoState &s) {
     return false;
   }
 
-  // space 0 (Texture2D[]), space 1 (Texture3D[]), space 2 (TextureCube[]).
-  // All three runtime-bind to the same physical s.texture_descriptor_set.
-  BD_INFO("[device] addDescriptorSet x3 (texture spaces)");
-  layout_builder.addDescriptorSet(tex_set_builder);
-  layout_builder.addDescriptorSet(tex_set_builder);
+  BD_INFO("[device] addDescriptorSet (texture heaps)");
   layout_builder.addDescriptorSet(tex_set_builder);
 
+  // Set 1: the sampler heap alone.
   plume::RenderDescriptorSetBuilder sampler_set_builder;
   sampler_set_builder.begin();
-  // Vertex, pixel and shared guest constants, as dynamic uniform buffers: one
-  // buffer bound for the life of the device, re-based per draw with an offset.
-  // A uniform read goes through Adreno's constant path; the device address this
-  // replaces was an uncached global load per invocation.
-  //
-  // In the SAMPLER set, ahead of the sampler array (the boundless range has to
-  // be last), so that the per-draw dynamic bind copies a 256-entry set and not
-  // the 4096-entry texture array. Every sampler descriptor index shifts by
-  // kConstantChunkDescriptors as a result, which is what SamplerDescriptor()
-  // applies.
-  if (kConstantChunkDescriptors > 0) {
-    sampler_set_builder.addConstantBufferDynamic(0);
-    sampler_set_builder.addConstantBufferDynamic(1);
-    sampler_set_builder.addConstantBufferDynamic(2);
-  }
-  sampler_set_builder.addSampler(kConstantChunkDescriptors, kBindlessSamplerCount);
+  sampler_set_builder.addSampler(0, kBindlessSamplerCount);
   sampler_set_builder.end(true, kBindlessSamplerCount);
 
   BD_INFO("[device] sampler_set_builder.create");
@@ -233,6 +256,31 @@ bool BuildPipelineLayout(VideoState &s) {
 
   layout_builder.addDescriptorSet(sampler_set_builder);
 
+#if !defined(REBLUE_D3D12)
+  // Set 2: vertex, pixel and shared guest constants, as dynamic uniform
+  // buffers: one buffer bound for the life of the device, re-based per draw
+  // with an offset. A uniform read goes through Adreno's constant path; the
+  // device address this replaces was an uncached global load per invocation.
+  //
+  // A set of their own, holding nothing else: the driver copies a set's
+  // contents on every bind with dynamic offsets, so this per-draw bind
+  // copies three descriptors and not a heap. It is also what the spec
+  // requires - a set with an update-after-bind binding may not hold a
+  // dynamic buffer (VUID 03001), and both heaps are update-after-bind.
+  plume::RenderDescriptorSetBuilder constant_set_builder;
+  constant_set_builder.begin();
+  constant_set_builder.addConstantBufferDynamic(0);
+  constant_set_builder.addConstantBufferDynamic(1);
+  constant_set_builder.addConstantBufferDynamic(2);
+  constant_set_builder.end();
+  s.constant_descriptor_set = constant_set_builder.create(s.device.get());
+  if (!s.constant_descriptor_set) {
+    BD_ERROR("Plume createDescriptorSet for guest constants failed");
+    return false;
+  }
+  layout_builder.addDescriptorSet(constant_set_builder);
+#endif
+
 #if defined(REBLUE_D3D12)
   // VS/PS/Shared CBVs.
   layout_builder.addRootDescriptor(
@@ -259,21 +307,14 @@ bool BuildPipelineLayout(VideoState &s) {
                                  plume::RenderShaderStageFlag::VERTEX |
                                      plume::RenderShaderStageFlag::PIXEL);
 
-  // Sun occlusion counter UAV, set 4: one set per frame slot, pointed at the
-  // lazily created counter by Occlusion::Begin.
+  // Set 3: the sun occlusion counter UAV, one set per frame slot, pointed at
+  // the lazily created counter by Occlusion::Begin.
   //
-  // Skipped on Android, because this set is what pushes the layout over the
-  // edge. Sets 0/1/2 are the three texture spaces, 3 is the samplers, and this
-  // is the fifth - but Adreno exposes maxBoundDescriptorSets = 4, where a
-  // desktop GPU reports 8 or 32. Creating a five-set layout there does not fail
-  // politely; it takes the driver somewhere that jumps through a small integer.
-  //
-  // Dropping it costs the lens flare occlusion query, which is a single
-  // cosmetic draw. The real fix is to collapse sets 0/1/2, which all bind the
-  // same physical descriptor set and exist only to satisfy three HLSL register
-  // spaces - that would leave room for this one. See
-  // research/20260828_1720_quest-bindless-blocker.md.
-#if !defined(__ANDROID__)
+  // Back on Android since 2026-09-02: it used to be the fifth set, and Adreno
+  // exposes maxBoundDescriptorSets = 4 (a five-set layout there does not fail
+  // politely; it jumps through a small integer). Collapsing the three texture
+  // spaces into one set made room for it - see
+  // research/20260828_1720_quest-bindless-blocker.md for the original drop.
   plume::RenderDescriptorSetBuilder occlusion_set_builder;
   occlusion_set_builder.begin();
   occlusion_set_builder.addReadWriteByteAddressBuffer(0);
@@ -287,7 +328,6 @@ bool BuildPipelineLayout(VideoState &s) {
     }
   }
   layout_builder.addDescriptorSet(occlusion_set_builder);
-#endif
 #endif
 
   BD_INFO("[device] layout_builder.end");

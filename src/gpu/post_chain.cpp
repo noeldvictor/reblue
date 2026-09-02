@@ -473,7 +473,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   const u32 offsets[3] = {s.constant_dyn_offsets[0], alloc.dynamicOffset,
                           s.constant_dyn_offsets[2]};
   s.command_list->setGraphicsDescriptorSetDynamic(
-      s.sampler_descriptor_set.get(), 3, offsets, 3);
+      s.constant_descriptor_set.get(), kConstantDescriptorSetIndex, offsets, 3);
   Pass(s, pipe, fb, rt->width, rt->height,
        PostPush{scene->descriptorIndex, bloom->descriptorIndex,
                 float(REXCVAR_GET(bd_host_post_debug)), 0.0f});

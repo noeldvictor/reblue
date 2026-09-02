@@ -5,12 +5,10 @@
 // heap. plume creates a Texture2DMS SRV automatically when the source
 // texture's sampleCount > 1. Declaring the heap as Texture2DMS here reads
 // that descriptor correctly (mirrors UR's g_Texture2DMSDescriptorHeap).
-// Binding 3, not the default 0: the guest constant blocks took bindings 0-2
-// of this set when they became dynamic uniform buffers, and the texture
-// array moved up to make room. DXC maps register(t0, space0) to binding 0
-// without this, so the sample silently reads a uniform buffer and returns
-// black - which is exactly how the desktop present went black.
-// Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
+// Explicit binding: the 2D heap is binding 0 of set 0 (3D and cube are
+// bindings 1 and 2 of the same set). A wrong binding here reads a uniform
+// buffer and returns black, which is exactly how the desktop present went
+// black once. Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
 [[vk::binding(0, 0)]] Texture2DMS<float4, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
 
 // The second descriptor is the right eye's single-slice view of a two-layer

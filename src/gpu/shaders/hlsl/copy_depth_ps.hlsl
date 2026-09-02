@@ -11,7 +11,7 @@
 // in it is an array view, so this host shader has to agree on the type. Layer 0
 // unless the shader has a reason to pick another - these are mono passes.
 [[vk::binding(0, 0)]] Texture2DArray<float> g_Texture2DDescriptorHeap[] : register(t0, space0);
-[[vk::binding(3, 3)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
+[[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 // Which array layer this pass reads. The heap is Texture2DArray now; these are
 // mono passes over a single-layer surface, so layer 0. A multiview-aware
 // present would pick the eye here instead.

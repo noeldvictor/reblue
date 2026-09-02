@@ -121,9 +121,7 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
     delete t;
     return nullptr;
   }
-  s.texture_descriptor_set->setTexture(TextureDescriptor(slot), t->texture,
-                                       plume::RenderTextureLayout::SHADER_READ,
-                                       t->textureView.get());
+  WriteTextureDescriptor(s, slot, t->texture, t->textureView.get());
   t->descriptorIndex = slot;
 
   plume::RenderTextureBarrier pre(t->texture,
