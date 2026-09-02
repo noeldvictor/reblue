@@ -105,7 +105,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Cel shading | not started |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull only (`bd_cull_distance`); the walk itself is host code since 2026-09-02 (`gpu/scene/host_walk.cpp`, `bd_host_walk`), so a host cull attaches there |
-| Instancing / indirect draws | **instancing built on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`); desktop-verified, Quest run pending. Indirect draws not started |
+| Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. Indirect draws not started |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
@@ -120,9 +120,23 @@ shading fragments, 6.6 per pixel" described where the GPU sat, not what it waite
 is the per-draw translation of the Xbox 360 draw ABI; see "The direction" below. **Shipping
 side-by-side stereo: 37.5 ms GPU** (39.2 on 2026-09-01), 20 fps tier.
 
-**THE PER-DRAW ABI IS CUT, ON THE DESKTOP (2026-09-02, 16:30; Quest run pending - the
-headset was not attached).** Three steps on the existing draw queue, each verified on a
-village capture, `research/20260902_1630_the-per-draw-abi-cut-...md`:
+**THE QUEST NUMBERS FOR THE DAY'S WORK (2026-09-02 night, verify defaults, side-by-side).**
+Normal build (instancing and its reorder on, host walk, host draw): **45-47 ms GPU, 18-22 ms
+CPU**, 20 fps tier; yesterday's build read 37.5 / 13 in the same configuration. Within-run A/Bs
+settled what each switch is worth: **instancing plus its reorder is -8 ms** (52.9 -> 44.9;
+either alone is nothing, because without the reorder no repeated draw is consecutive);
+the host-issued draw is flat on the GPU (52.7 vs 53.0) and the host walk is flat (46.6 vs
+47.2); a probe build with no instancing machinery in the shaders reads 52.3, the same as
+"reorder off", so that machinery is free in the plain variant. Every scene draw through the
+instanced variant (storage-buffer constant reads) put the scene pass at 28.0 ms - the
+record path is for real groups only now. The CPU went 27 -> 21 ms once the instanced twin
+stopped compiling on the render thread (`FindPipeline`, never `GetOrCreate` there). **The
+remaining 8-10 ms against yesterday is in none of the runtime switches; the untested change
+is the descriptor layout (step A), which needs a build probe.** Cross-run drift stayed at
+5-8 ms; only the A/B arms and same-build traces above count. `research/20260902_1630_...md`.
+
+**THE PER-DRAW ABI IS CUT (2026-09-02, 16:30).** Three steps on the existing draw queue, each
+verified on a village capture, `research/20260902_1630_the-per-draw-abi-cut-...md`:
 
 - **Four real descriptor sets** (`bindless_allocator.h` note): the three texture heaps as three
   bindings of set 0, samplers set 1, the three dynamic constant ranges alone in set 2 (the
