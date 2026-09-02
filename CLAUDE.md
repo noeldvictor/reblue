@@ -89,7 +89,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | --- | --- |
 | SDK cross-built for android-arm64, APK, VFS over full game data, Vulkan, OpenXR session, Touch controllers as a pad, head pose driving the view | works |
 | `bd_stereo` (side-by-side, submits every draw twice) | **works, correct crossed depth**, the shipping stereo route |
-| `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | renders; **pair flattened to identical halves** - a named bug, see Multiview below |
+| `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | **works, correct crossed stereo on the desktop (2026-09-02)**; on the Quest 59 ms GPU with the obsolete resolve chain on, 277 ms off - the tiling question |
 | Field-scene frame rate | **15 fps** (4 slots at 60 Hz) on either stereo path |
 | Character-anchored camera modes, diorama in battle | composed and unit-tested; tuning against a capture still wanted |
 | Tourist mode | HP/MP top-up works (desktop); encounter suppression never fires (`bdPlayerField*` family is dead, see closed doors) |
@@ -217,8 +217,9 @@ and the distance to the next boundary, never fps.
    under the layer never reached a field scene. Next: a probe that issues the resolve's barriers
    without its draws, or a GPU-side view (`ovrgpuprofiler`, RenderDoc's Meta fork). Until then
    `bd_mv_resolve` defaults **on**.
-2. **Fix the multiview flatten**: the MSAA resolve has no layer axis (see Multiview below). The
-   desktop loop verifies it in 90 seconds.
+2. ~~Fix the multiview flatten~~ **Done 2026-09-02**: per-eye slice views on the MSAA resolve;
+   crossed stereo verified on screen and in a capture. Next for multiview is only the Quest's
+   GPU time, which is item 0.
 3. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
    `LOAD_OP_DONT_CARE` (`discardTexture` is in plume), MSAA is already off, then foveation.
 4. **Then the CPU work the owner has been asking for**, attached to the seams that exist:

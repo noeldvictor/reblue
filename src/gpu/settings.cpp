@@ -572,7 +572,9 @@ REXCVAR_DEFINE_BOOL(bd_mv_redirect_srv, false, kCvarGroup,
 // frame without it. The flatten and the resolve are correct; something writing
 // these textures is not producing layer 1. Off until that is found, rather than
 // reverted, because the destination genuinely has to be layered.
-REXCVAR_DEFINE_BOOL(bd_mv_layered_textures, false, kCvarGroup,
+// On since 2026-09-02: with the per-eye MSAA resolve the pair survives into
+// these textures and out to present - crossed stereo, verified on screen.
+REXCVAR_DEFINE_BOOL(bd_mv_layered_textures, true, kCvarGroup,
                     "Give guest render-target textures two layers under "
                     "multiview so the EDRAM resolve keeps both eyes.");
 

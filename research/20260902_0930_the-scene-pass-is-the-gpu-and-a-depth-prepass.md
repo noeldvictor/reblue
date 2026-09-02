@@ -382,3 +382,27 @@ itself through the `vkGetInstanceProcAddr` we pass in (`xrCreateVulkanInstanceKH
 `xrCreateVulkanDeviceKHR`), and plume adopts them instead of creating its
 own. That is the same seam `XR_FB_foveation` and runtime-composited swapchains
 need, so it is the next piece of the port rather than a probe.
+
+## Multiview stereo, on screen
+
+Desktop, `bd_stereo_multiview=true, bd_mv_layered_textures=true,
+bd_mv_resolve=false`, MSAA 4 (the default):
+
+```
+non-black 92.3%  mean RGB 73/66/49
+halves: mean abs diff 14.15, 31.8% of pixels differ
+stereo_check: OK, crossed disparity, near separating more than far
+```
+
+Looked at: two views of the field scene with clear parallax on the fence
+posts and the character. One difference to keep in mind: the shadow map is
+rendered once, so the character's ground shadow differs between the eyes
+(the right eye's is shorter). That is approximation the owner has accepted,
+and a per-eye shadow projection is not where the time should go now.
+
+So the multiview path is complete on the desktop: one submission, two layers,
+the array heap for every read, the per-eye MSAA resolve keeping the pair, and
+present flattening it. `bd_mv_layered_textures` can default on. On the Quest
+the same path measures 59 ms GPU with the obsolete chain on and 277 ms with
+it off, and both are the tiling question - the scene pass in direct mode -
+which `XR_KHR_vulkan_enable2` plus Turnip is being built to answer.
