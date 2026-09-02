@@ -26,7 +26,11 @@
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/host_resource_heap.h"
+#include "gpu/host_mips.h"
 #include "gpu/texture_upload.h"
+#include <rex/cvar.h>
+
+REXCVAR_DECLARE(bool, bd_host_mips);
 
 namespace bd::gpu {
 
@@ -378,23 +382,59 @@ GuestTexture *Build2DMirror(const MirrorLayout &L, const u8 *src,
   // or a base-map filter) or the mirror path is what this histogram says.
   {
     static std::atomic<u32> total{0}, mipped{0}, no_chain_requested{0},
-        base_map_filter{0}, mip_point{0};
+        base_map_filter{0}, mip_point{0}, no_chain_texels_k{0},
+        chain_texels_k{0}, listed{0};
     const u32 n = total.fetch_add(1, std::memory_order_relaxed) + 1;
+    const u32 texels_k = (L.width * L.height + 1023u) / 1024u;
     if (tex)
       mipped.fetch_add(1, std::memory_order_relaxed);
-    if (fetch.mip_max_level == 0u)
+    if (fetch.mip_max_level == 0u) {
       no_chain_requested.fetch_add(1, std::memory_order_relaxed);
+      no_chain_texels_k.fetch_add(texels_k, std::memory_order_relaxed);
+      // The large ones by name, so host mip generation can be judged by
+      // what it would cover (2026-09-02: the Quest samples 99% of texels
+      // from the base level).
+      if (L.width >= 256u && L.height >= 256u &&
+          listed.fetch_add(1, std::memory_order_relaxed) < 40)
+        BD_INFO("[mips] no chain: {}x{} fmt=0x{:X} va=0x{:08X}", L.width,
+                L.height, u32(L.format), guest_va);
+    } else {
+      chain_texels_k.fetch_add(texels_k, std::memory_order_relaxed);
+    }
     if (fetch.mip_filter == xe::TextureFilter::kBaseMap)
       base_map_filter.fetch_add(1, std::memory_order_relaxed);
     if (fetch.mip_filter == xe::TextureFilter::kPoint)
       mip_point.fetch_add(1, std::memory_order_relaxed);
     if (n == 64 || n == 512 || n == 2048)
       BD_INFO("[mips] {} 2D mirrors: {} with a mip chain, {} with "
-              "mip_max_level=0, {} mip_filter=baseMap, {} mip_filter=point "
+              "mip_max_level=0, {} mip_filter=baseMap, {} mip_filter=point; "
+              "texels without a chain {}k, with {}k "
               "(this one {}x{} mip_max_level={} filter={})",
               n, mipped.load(), no_chain_requested.load(),
-              base_map_filter.load(), mip_point.load(), L.width, L.height,
-              u32(fetch.mip_max_level), u32(fetch.mip_filter));
+              base_map_filter.load(), mip_point.load(),
+              no_chain_texels_k.load(), chain_texels_k.load(), L.width,
+              L.height, u32(fetch.mip_max_level), u32(fetch.mip_filter));
+  }
+  // No chain from the guest: build one on the host. Two thirds of the game's
+  // texture data is in this branch (2026-09-02), and without it every
+  // fragment of a distant surface samples the base level.
+  if (!tex && REXCVAR_GET(bd_host_mips) && HostMipsSupported(u32(L.format))) {
+    HostMipChain chain;
+    const u32 bh = (L.height + L.texels_per_edge - 1u) / L.texels_per_edge;
+    const u32 row_bytes = L.staging_row_bytes;
+    if (GenerateHostMips(u32(L.format), L.width, L.height, staging.data(),
+                         size_t(row_bytes) * bh, row_bytes, L.row_width_texels,
+                         chain)) {
+      tex = BuildBCMirrorTexture2DMips(L.width, L.height, u32(L.format),
+                                       chain.levels.data(),
+                                       u32(chain.levels.size()));
+      static std::atomic<u32> built{0};
+      const u32 n = built.fetch_add(1, std::memory_order_relaxed);
+      if (n < 8 || n % 256 == 0)
+        BD_INFO("[mips] host chain #{}: {}x{} fmt=0x{:X} -> {} levels{}", n,
+                L.width, L.height, u32(L.format), chain.levels.size(),
+                tex ? "" : " (build failed)");
+    }
   }
   if (!tex) {
     tex = BuildBCMirrorTexture(L.width, L.height, u32(L.format),

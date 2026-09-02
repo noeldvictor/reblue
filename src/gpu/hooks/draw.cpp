@@ -166,7 +166,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // overlay or copy the guest makes after the chain; name it by hash.
     char other_name[24];
     if (!post_name && args.vertexOrIndexCount <= 6 && vs.render_target &&
-        vs.render_target->width >= 640) {
+        vs.render_target->width >= 640 && vs.depth_stencil == nullptr) {
       std::snprintf(other_name, sizeof(other_name), "quad_%08llX",
                     static_cast<unsigned long long>(ps_hash & 0xFFFFFFFFull));
       post_name = other_name;

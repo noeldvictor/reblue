@@ -526,6 +526,12 @@ REXCVAR_DEFINE_BOOL(bd_debug_no_uab, false, kCvarGroup,
 // and the bloom mask are produced by host passes into the guest's own
 // textures, and the thirteen guest draws that made them through the EDRAM
 // tile are dropped. The guest's two composites run unchanged.
+// Host-generated mip chains for DXT1/3/5 textures the guest ships without
+// one - two thirds of its texture data, the world textures (2026-09-02).
+// Built once at upload on the CPU; costs about a third more texture memory.
+REXCVAR_DEFINE_BOOL(bd_host_mips, true, kCvarGroup,
+                    "Generate mip chains on the host for compressed textures "
+                    "that ship without one.");
 REXCVAR_DEFINE_BOOL(bd_host_post, true, kCvarGroup,
                     "Host-owned post chain: the bloom and depth-of-field "
                     "pyramids are built by host passes; the guest's producer "

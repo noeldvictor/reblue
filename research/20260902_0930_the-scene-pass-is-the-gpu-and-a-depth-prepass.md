@@ -754,3 +754,24 @@ before the host chain, 38.0 with the first form); the capture is a correct
 stereo pair. The post chain's GPU share on the Quest was small all along; the
 rewrite removes the Xbox 360 tile-and-resolve structure and fifteen guest
 draws, and buys no frame time there. The frame is the scene pass.
+
+## Two thirds of the texture data has no mip chain (16:20)
+
+The mirror histogram with texel totals (desktop, 512 textures): 316 ship a
+chain and hold 21.0 M texels; 196 ship none and hold **43.1 M** - and they are
+the world textures, 1024x1024 and 2048x1024 in DXT1 (0x12), DXT3 (0x13) and
+DXT5 (0x14). Every fragment of those samples the base level, which is what
+the Quest's texture pipes at 66% with 25% L1 misses look like. Host mip
+generation at upload - decode the blocks, box-filter, re-encode with
+stb_dxt (added to thirdparty/stb, public domain) - is the next piece.
+
+## Host mip chains, first working (16:50)
+
+`src/gpu/host_mips.cpp`, `bd_host_mips` (default on): for a DXT1/3/5 texture
+the guest ships without a chain, the mirror decodes the base blocks,
+box-filters each level and re-encodes with stb_dxt; DXT1's punch-through
+alpha and DXT3's explicit alpha block are done by hand (stb has neither),
+and the levels feed the same chain builder the guest's own mips use. Desktop:
+chains of 4-8 levels build at upload, the capture shows cliffs, ground,
+buildings and foliage cutouts intact (`frame_1788370957.png`). Quest
+measurement follows.
