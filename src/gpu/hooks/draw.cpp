@@ -37,11 +37,14 @@
 #include "gpu/gpu_timing.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
+#include "gpu/post_chain.h"
 #include "gpu/shaders/shader_cache.h"
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_half_width);
+REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
@@ -129,6 +132,86 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
 #endif
   bd::gpu::NoteDraw();
   bd::gpu::NoteDrawVertices(args.vertexOrIndexCount);
+  // bd_dump_post_draws: name every post-effect draw of the next N frames by
+  // its pixel shader, with the target it writes, the textures it samples and
+  // the two parameter registers the bd_pe_* shaders read (c26 g_vCount, c27
+  // g_vParam). The filters are vtable-dispatched and the function map does not
+  // name them, so this log is the only record of the chain's per-frame order
+  // (2026-09-02, for the host-owned post chain).
+  if (const i32 dump_frames = REXCVAR_GET(bd_dump_post_draws); dump_frames > 0) {
+    auto &vs = bd::gpu::state();
+    const auto *ps = vs.pixel_shader;
+    const u64 ps_hash =
+        (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0;
+    static const struct {
+      u64 hash;
+      const char *name;
+    } kPostShaders[] = {
+        {0xFFDBD782126EB6E8ull, "brightpass"}, {0xD386EA2FABF16CE9ull, "ms_bright"},
+        {0x57119886DF6D73C0ull, "ms_ave"},     {0x1E2676BD7DBBE4F7ull, "ms_weight"},
+        {0x620B403BCBBF1B98ull, "ms_tex"},     {0x77344D98A7F5B956ull, "quoter"},
+        {0xF6FF1BED057E0FC4ull, "dof"},        {0x51DE4E8BB53154BEull, "dof_quoter"},
+        {0x66FC81994AC2E6F0ull, "dof_glare"},  {0x540B8B07B2908FABull, "lenzflare"},
+        {0xE91190BD6F0C677Dull, "heatshimmer"}, {0xD8F0F8BA9A0F14A6ull, "colcoord"},
+        {0xF9ADCBCF92CA2258ull, "discolor"},   {0x92B9BD677B2A3B82ull, "reverse"},
+        {0x5B476664F31C6F18ull, "ntsc"},       {0xA78FF7850A4C372Eull, "noise"},
+        {0x500521BAC3F60D5Full, "fisheye"},    {0x5C45045200D30CF0ull, "packed"},
+        {0xD94E164866C3B9BCull, "blur"},
+    };
+    const char *post_name = nullptr;
+    for (const auto &e : kPostShaders)
+      if (e.hash == ps_hash)
+        post_name = e.name;
+    // vs.frame is the ring slot, not a counter: frames are counted here by
+    // slot changes, and the window opens after enough draws to be deep in a
+    // field scene (a menu frame is ~20 draws, a field frame ~550).
+    static u32 draws_total = 0;
+    static u32 last_slot = ~0u;
+    static u32 frame = 0;
+    static u32 first_frame = 0;
+    static u32 frames_seen = 0;
+    ++draws_total;
+    const u32 slot = vs.frame.load(std::memory_order_relaxed);
+    if (slot != last_slot) {
+      last_slot = slot;
+      ++frame;
+    }
+    if (post_name && draws_total > 200000u) {
+      if (first_frame == 0)
+        first_frame = frame;
+      if (frame - first_frame < u32(dump_frames)) {
+        auto dims = [](const bd::gpu::GuestTexture *t) {
+          return t ? fmt::format("{}x{}L{}", t->width, t->height, t->layers)
+                   : std::string("-");
+        };
+        const auto *device_p =
+            bd::mem::at<const bd::gpu::D3DDevice>(device_guest);
+        float c26[4] = {0, 0, 0, 0};
+        float c27[4] = {0, 0, 0, 0};
+        if (device_p) {
+          const auto *psc = reinterpret_cast<const u32 *>(
+              reinterpret_cast<const u8 *>(device_p) +
+              offsetof(bd::gpu::D3DDevice, psFloatConstants));
+          for (int i = 0; i < 4; ++i) {
+            const u32 a = __builtin_bswap32(psc[26 * 4 + i]);
+            const u32 b = __builtin_bswap32(psc[27 * 4 + i]);
+            std::memcpy(&c26[i], &a, 4);
+            std::memcpy(&c27[i], &b, 4);
+          }
+        }
+        BD_INFO("[post] f{} {:<11} rt={} ds={} verts={} tex0={} tex1={} "
+                "tex2={} tex3={} c26=({:.3g},{:.3g},{:.3g},{:.3g}) "
+                "c27=({:.3g},{:.3g},{:.3g},{:.3g}) blend={}",
+                frame, post_name, dims(vs.render_target),
+                dims(vs.depth_stencil), args.vertexOrIndexCount,
+                dims(vs.textures[0]), dims(vs.textures[1]),
+                dims(vs.textures[2]), dims(vs.textures[3]), c26[0], c26[1],
+                c26[2], c26[3], c27[0], c27[1], c27[2], c27[3],
+                vs.pipelineState.alphaBlendEnable ? 1 : 0);
+        ++frames_seen;
+      }
+    }
+  }
 
   // Diagnostic, off by default. A field scene submits ~2925 draws and spends
   // ~110ms on the GPU fence, and that cost does not move when the render
@@ -178,6 +261,16 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   if (!bd::gpu::Video::BindDrawFramebufferLocked()) {
     return;
   }
+  {
+    // The host-owned post chain takes the guest's post-effect producer draws
+    // here, before any state is flushed for them, and fills the textures the
+    // guest's composites sample. See gpu/post_chain.cpp.
+    const auto *ps = s.pixel_shader;
+    const u64 ps_hash =
+        (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0;
+    if (ps_hash && bd::gpu::HostPostIntercept(s, ps_hash, device_guest))
+      return;
+  }
   // Whether this draw is scene geometry, decided before the flush because the
   // shared constants are uploaded there and the multiview skew reads them.
   //
@@ -188,9 +281,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // constant slide of the finished image rather than parallax. Measured as a
   // uniform +38px of disparity at every depth, which is 2*separation at w = 1.
   const u32 stereo_pct = u32(REXCVAR_GET(bd_render_scale));
+  // Under bd_mv_half_width the scene target is half the design width, so the
+  // width test compares the layer's width doubled.
+  const u32 width_factor =
+      (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width)) ? 2u
+                                                                          : 1u;
   const bool scene_pass =
       s.render_target != nullptr &&
-      s.render_target->width >=
+      s.render_target->width * width_factor >=
           u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u &&
       s.render_target->height >=
           u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u &&

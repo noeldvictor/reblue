@@ -29,6 +29,8 @@
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(i32, bd_render_scale);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(bool, bd_shadows);
 REXCVAR_DECLARE(bool, bd_reflections);
 REXCVAR_DECLARE(f64, bd_effect_distance);
@@ -73,6 +75,11 @@ void bdSceneResolutionScaleHook(PPCRegister &r3, PPCRegister &r4) {
   if (pct < 100) {
     r3.u32 = std::max(1u, r3.u32 * u32(pct) / 100u);
     r4.u32 = std::max(1u, r4.u32 * u32(pct) / 100u);
+  }
+  // Multiview at side-by-side's per-eye pixels: each layer is half the scene
+  // width, and the guest sizes its post chain from this. See bd_mv_half_width.
+  if (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width)) {
+    r3.u32 = std::max(1u, r3.u32 / 2u);
   }
 }
 

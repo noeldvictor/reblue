@@ -522,6 +522,18 @@ REXCVAR_DEFINE_BOOL(bd_debug_no_uab, false, kCvarGroup,
 // overdraws); exists to ask the render-stage trace whether depth-writing
 // draws are what keeps the scene pass direct - the one full-size pass that
 // binned (2026-09-02) was the effects instance, which does not write depth.
+// The host-owned post chain (gpu/post_chain.cpp): the depth-of-field pyramid
+// and the bloom mask are produced by host passes into the guest's own
+// textures, and the thirteen guest draws that made them through the EDRAM
+// tile are dropped. The guest's two composites run unchanged.
+REXCVAR_DEFINE_BOOL(bd_host_post, true, kCvarGroup,
+                    "Host-owned post chain: the bloom and depth-of-field "
+                    "pyramids are built by host passes; the guest's producer "
+                    "draws are skipped.");
+REXCVAR_DEFINE_INT32(bd_dump_post_draws, 0, kCvarGroup,
+                     "Log every post-effect draw (by pixel shader) of this "
+                     "many field-scene frames: target, sampled textures, "
+                     "parameter registers. 0 = off.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_depth_write, false, kCvarGroup,
                     "Probe: disable depth writes in every pipeline.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
@@ -537,6 +549,19 @@ REXCVAR_DEFINE_BOOL(bd_mv_force_mono_targets, false, kCvarGroup,
                     "Measurement: force every multiview target to one layer. "
                     "Renders incorrectly on purpose.");
 
+// Multiview at side-by-side's pixel count. Side-by-side gives each eye half
+// the scene width (688x720 of 1376x720); multiview rendered two full-width
+// layers, twice the fragments, and its 62.7 ms on the Quest (2026-09-02) was
+// that and nothing else. The guest's scene resolution is halved in width
+// (bdSceneResolutionScaleHook), so the guest sizes its own post chain, and
+// the full-width projection squeezes each layer exactly as side-by-side does.
+// Off until the present-side chain follows: measured 2026-09-02 14:20, the
+// scene target became 688x720x2 and the frame 62.7 -> 41.7 ms, but the front
+// buffer the guest resolves into is still sized from the output fit (1376
+// wide) and the presented frame was black.
+REXCVAR_DEFINE_BOOL(bd_mv_half_width, false, kCvarGroup,
+                    "Multiview: render each layer at half the scene width, "
+                    "matching side-by-side's per-eye pixels. Requires restart.");
 REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
                     "Under multiview, give two layers only to surfaces at or "
                     "above half the design canvas.");

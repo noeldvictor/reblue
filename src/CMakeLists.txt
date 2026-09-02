@@ -16,6 +16,7 @@ set(reblue_backend_only
     gpu/gpu_timing.cpp
     gpu/hooks/shader.cpp
     gpu/multiview_resolve.cpp
+    gpu/post_chain.cpp
     gpu/imgui_overlay_drawer.cpp
     gpu/occlusion.cpp
     gpu/pipeline/pipeline_cache.cpp

@@ -641,3 +641,92 @@ at 768x432 is the whole scene, correctly framed (`frame_1788365213.png`).
 Headset verification (13:15): the pulled 1466x768 capture is the whole field
 frame, correctly framed, normal brightness; `gpu_total_ms` 34.8, audit all 13
 settings took effect.
+
+## Side-by-side stereo with today's changes: 37.5 ms GPU (13:30)
+
+`verify_quest.sh` defaults (bd_stereo=true, the shipping route): `gpu_total_ms`
+**37.5** (39.2 yesterday evening), 20 fps tier, 4.2 ms above the boundary;
+CPU elsewhere 15 ms. The pulled 1466x768 capture is a correct stereo pair
+(733x768 per eye, visible parallax). Next: the multiview path's Quest cost
+under the render-stage trace, resolve chain on and off.
+
+## Multiview on the Quest, resolve chain on: 62.7 ms, and the reason is pixels (13:45)
+
+Render-stage trace (`bd_stereo_multiview=true`, `bd_mv_layered_textures=true`,
+resolve on): the scene pass is `Direct`, Render **35.7 ms** (mono 19.6), frame
+62.7 ms, 15 fps. Multiview renders two full 1376x720 layers; side-by-side
+gives each eye 688x720 - half the fragments. The fragment-bound pass costs
+what its pixels cost, so the multiview target has to be a 688x720 two-layer
+image before its number means anything against side-by-side. That is the
+next piece: layered targets at half width, the per-layer viewport at x=0,
+the present composing each layer into its half.
+
+## Multiview without the resolve chain: 424 ms, and the trace sees none of it (14:05)
+
+`bd_mv_resolve=false`: `gpu_total_ms` 424, 2.3 fps, `[xr] fence 357 ms`. The
+render-stage trace (2.5 s window) lists twelve compositor surfaces and not one
+of ours, so whatever the driver is doing in that frame is not a render pass
+it reports - a fence that long reads as the driver serialising or waiting,
+not rendering slowly. Not shipped (resolve is on by default on Android), so
+parked behind the half-width multiview measurement; a longer trace window
+and the realtime metrics are the instruments when it is picked up.
+
+## Half-width multiview: 41.7 ms, and the frame is black (14:20)
+
+`bd_mv_half_width` halves the width the guest asks for in
+`bdSceneResolutionScaleHook` under multiview: the scene target became
+688x720 with two layers and the frame went 62.7 -> 41.7 ms - but the guest's
+front buffer stays 1376 wide (sized from the output fit, not the scene), the
+present still reads a 1376x720 layered rt, and the pulled capture is black.
+Default off until the present-side chain follows the narrower scene; to be
+read out of the code, not probed.
+
+## The post chain, recorded per frame (14:45)
+
+`bd_dump_post_draws` names every post draw by pixel shader hash. A desktop
+field frame at 1280x720, 15 full-screen quads, all through the tile + resolve:
+
+```
+quoter    1280x720 -> 640x360      (bilinear downsample)
+quoter     640x360 -> 320x180
+quoter     320x180 -> 160x90
+quoter     160x90  ->  80x45
+quoter      80x45  ->  80x45
+ms_weight  640x360 in place, 13 taps   (blur)
+ms_weight  320x180, 160x90, 80x45, 80x45 likewise
+dof       1280x720: scene, depth, blur640, blur320; c27=(2.4, 0.075, 0.5, 0.997)
+brightpass 1280x720 -> 320x180; c27=(0.25 threshold, 10 intensity)
+ms_weight  320x180 x2 (13 taps each)
+ms_tex    1280x720: scene + bloom320, 2 weights
+```
+
+The 160x90 and 80x45 levels are computed and not read by anything in this
+scene. Host plan: downsample 1/2 and 1/4, blur each, DoF composite, bright
+pass at 1/4, two blurs, composite - nine passes, no resolves, the guest's
+parameters read from its live constant block at the draw it would have made.
+
+## The host-owned post chain, first working (15:00)
+
+`src/gpu/post_chain.cpp`, `bd_host_post` (default on). Read from the chain
+recording: the two composites (`dof`, `ms_tex`) are full-screen draws that
+sample fixed slots - depth 0, scene 1, five blurred levels 2-6 at 1/2, 1/4,
+1/8, 1/16, 1/16 for `dof`; scene 0 and the 320x180 bloom mask 1 for
+`ms_tex`. Everything that produced those textures (five quarter downsamples,
+seven 13-tap blurs, one bright pass, each through the tile plus a resolve)
+is replaced: the draw path hands post draws to `HostPostIntercept` right
+after the framebuffer bind and before any state flush; producers into
+non-fullscreen targets are dropped, and at each composite the host first
+fills the sampled guest textures itself - a box downsample and a separable
+9-tap gaussian through two host scratch textures per size, the bright mask
+with threshold and intensity read from the guest's live c27. The composites
+then run as the guest wrote them, so no host DoF or composite shader exists.
+No host pass touches the tile; nothing is resolved. Desktop capture
+(`frame_1788368105.png`): depth of field on the distance, the character
+sharp, bloom on the sky - the frame reads the same as the guest chain's.
+
+Quest, side-by-side defaults, host chain on: `gpu_total_ms` **38.0** (37.5
+before), draws 534 (541), capture a correct stereo pair with the same depth
+of field and bloom. The pyramid passes cost what the guest's small passes
+cost; the saving has to come from fewer passes - one dual-filter pass per
+level, and one host composite for the two full-resolution guest composites
+and the resolve between them.
