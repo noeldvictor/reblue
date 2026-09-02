@@ -199,19 +199,19 @@ configuration as yesterday's 37.5 ms:
 
 Retired by the within-run A/Bs:
 
-- **The instancing reorder costs 8 ms of GPU.** Sorting a run of order-independent draws by
-  pipeline and key scatters near and far geometry, and on this direct-mode pass the shaded
-  fragments follow the draw order: the guest's tree order is nearer to front-to-back than
-  anything keyed by pipeline. Off by default. Instances have to be brought together with a
-  depth-aware grouping, not a pipeline sort.
+- **The instancing reorder is worth 8 ms of GPU** (arm 0 of the A/B is the flag OFF: 52.9 ms
+  off, 44.9 ms on; read backwards for an hour, which cost three runs at 52.9 with the default
+  flipped). The reorder groups a run of order-independent draws by pipeline and key; fewer
+  pipeline switches and the instances it brings together outweigh whatever it does to
+  overdraw on this direct-mode pass. On by default again.
 - **Instancing itself, with singles on the plain pipeline, is flat** (52.7 vs 53.0 ms): the
   field scene autoplay lands in has few consecutive repeats, so the record path neither helps
   nor hurts there. The first measurement, with every scene draw through the instanced variant,
   put the scene pass at 28.0 ms - the storage-buffer constant reads on Adreno, the path the
   2026-08-29 note measured slow. The record path is for real groups only now.
 
-Not yet explained: the systematic gap between yesterday's 37.5 ms and today's 45-53 ms with
-instancing and reorder off. The remaining suspects are the host-issued draw (A/B running) and
+Not yet explained: the gap between yesterday's 37.5 ms and today's 45 ms with the reorder on
+(the 52.9 runs were the reorder off). The remaining suspects are the host-issued draw (A/B running) and
 the instancing machinery every vertex shader now carries even in its plain variant (the
 `SV_InstanceID` input, the `BD_VSC` spec-constant branch and the storage-buffer binding); a
 probe APK built with `XENOS_RECOMP_NO_INSTANCING` removes the latter. Cross-run drift is
