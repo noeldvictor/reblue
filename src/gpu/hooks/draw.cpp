@@ -235,14 +235,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // Arm deferral before the flush, because the flush is what resolves a draw
   // into the handful of things worth recording.
   //
-  // Not on the side-by-side stereo path: that submits the same draw twice with
-  // different viewports, and a queued draw carries no viewport. Multiview needs
-  // no such loop - the hardware replicates - so the headset path defers fine.
-  // Not on the quad-list path either, which rewrites the index binding itself.
-  const bool side_by_side = REXCVAR_GET(bd_stereo) &&
-                            !REXCVAR_GET(bd_stereo_multiview);
-  s.deferring_draw = bd::gpu::DrawQueueEnabled() && !side_by_side &&
-                     primitive_type != 13 && VertexDataOutlivesTheDraw(name);
+  // The side-by-side stereo path defers too, as of 2026-09-02: a queued draw
+  // carries its own viewport, scissor and constant offsets now, so the per-eye
+  // loop below records one queued draw per eye. Until then the shipping stereo
+  // path bypassed the queue entirely - and with it the sort, the prepass and
+  // every other technique that attaches there.
+  // Not on the quad-list path, which rewrites the index binding itself.
+  s.deferring_draw = bd::gpu::DrawQueueEnabled() && primitive_type != 13 &&
+                     VertexDataOutlivesTheDraw(name);
 
   // A draw that cannot wait forces out everything that was waiting, so the
   // order the guest submitted in is preserved exactly. Without this, an
@@ -328,8 +328,12 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // the result is the same image twice, side by side. That is deliberate - it
   // separates "can the renderer emit every draw twice" from "are the per-eye
   // matrices right", and the matrices are the part that already has unit tests.
-  if (s.deferring_draw) {
-    bd::gpu::QueuedDraw &q = s.pending;
+  // Record instead of emit. With an eye viewport the queued draw takes that
+  // viewport and whatever vertex-constant offset the eye skew just uploaded;
+  // without one it keeps what FlushViewport and FlushRenderState recorded.
+  const auto push_queued = [&](const plume::RenderViewport *eye_vp,
+                               const plume::RenderRect *eye_rc) {
+    bd::gpu::QueuedDraw q = s.pending;
     q.indexed = args.indexed;
     q.count = args.vertexOrIndexCount;
     q.start_index = args.startIndex;
@@ -345,7 +349,15 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     q.depth = static_cast<float>(bd::engine::LastNodeViewDistanceSq());
     q.recorded_rt = s.render_target;
     q.framebuffer = s.pending_framebuffer;
+    if (eye_vp) {
+      q.viewport = *eye_vp;
+      q.scissor = *eye_rc;
+      q.has_viewport = true;
+      q.constant_offsets[0] = s.constant_dyn_offsets[0];
+    }
     bd::gpu::DrawQueuePush(q);
+  };
+  const auto finish_deferred = [&]() {
     s.deferring_draw = false;
     // Flush every draw: functionally identical to immediate submission, but it
     // still goes through the whole record-and-replay path. If this renders
@@ -354,8 +366,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // way to tell those apart from the batched result alone.
     if (REXCVAR_GET(bd_draw_defer_each))
       bd::gpu::DrawQueueFlush(s.command_list);
-    return;
-  }
+  };
 
   const auto emit = [&]() {
   if (primitive_type == 13) {
@@ -452,7 +463,12 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
                 s.render_target ? s.render_target->width : 0u,
                 s.render_target ? s.render_target->height : 0u, min_w, min_h);
     }
-    emit();
+    if (s.deferring_draw) {
+      push_queued(nullptr, nullptr);
+      finish_deferred();
+    } else {
+      emit();
+    }
     return;
   }
   {
@@ -495,8 +511,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     if (sep != 0.0f || conv != 0.0f)
       bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? -sep : sep,
                                              eye ? conv : -conv);
-    emit();
+    if (s.deferring_draw)
+      push_queued(&half, &rc);
+    else
+      emit();
   }
+  if (s.deferring_draw)
+    finish_deferred();
   // The last eye left a skewed block bound and FlushRenderState believes the
   // constants are clean, so without this the next draw inherits an eye.
   s.dirtyStates.vertexShaderConstants = true;

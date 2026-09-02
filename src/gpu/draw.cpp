@@ -27,6 +27,7 @@
 #include "gpu/pipeline/pso_recorder.h"
 
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
+REXCVAR_DECLARE(bool, bd_depth_prepass);
 REXCVAR_DECLARE(bool, bd_blend_off_when_opaque);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
 
@@ -351,6 +352,38 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
       s.command_list->setPipeline(pso);
     NotePSOSwitch();
     s.current_pso = pso;
+
+    // Depth-prepass variants, built beside the real pipeline and cached the
+    // same way. Only for a deferred draw that writes depth with a LESS or
+    // LEQUAL test and touches no stencil - anything else keeps its single
+    // pass. The prepass pipeline drops colour writes and blending; the colour
+    // pipeline drops the depth write and tests LEQUAL so the draw passes
+    // against the depth it laid down itself. See draw_queue.cpp for why.
+    s.current_prepass_pso = nullptr;
+    s.current_color_pso = nullptr;
+    if (s.deferring_draw && REXCVAR_GET(bd_depth_prepass) && s.depth_stencil &&
+        lookup.zEnable && lookup.zWriteEnable && !lookup.stencilEnable &&
+        (lookup.zFunc == plume::RenderComparisonFunction::LESS ||
+         lookup.zFunc == plume::RenderComparisonFunction::LESS_EQUAL)) {
+      PipelineState pre = lookup;
+      pre.colorWriteEnable = 0;
+      pre.alphaBlendEnable = false;
+      pre.srcBlend = plume::RenderBlend::ONE;
+      pre.destBlend = plume::RenderBlend::ZERO;
+      pre.srcBlendAlpha = plume::RenderBlend::ONE;
+      pre.destBlendAlpha = plume::RenderBlend::ZERO;
+      SanitizePipelineState(pre);
+      PipelineState col = lookup;
+      col.zWriteEnable = false;
+      col.zFunc = plume::RenderComparisonFunction::LESS_EQUAL;
+      SanitizePipelineState(col);
+      auto *pre_pso = GetOrCreatePipeline(pre, nullptr);
+      auto *col_pso = GetOrCreatePipeline(col, nullptr);
+      if (pre_pso && col_pso) {
+        s.current_prepass_pso = pre_pso;
+        s.current_color_pso = col_pso;
+      }
+    }
   } else if (!s.current_pso) {
     // Clean dirty bits but no PSO bound: the first draw after a command list
     // reset that lost the force-dirty.
@@ -460,6 +493,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // overwrites its own views between draws and a queued draw is replayed
     // long after that.
     s.pending.pipeline = s.current_pso;
+    s.pending.prepass_pipeline = s.current_prepass_pso;
+    s.pending.color_pipeline = s.current_color_pso;
     const u32 first = s.bound_vertex_first;
     const u32 count = s.bound_vertex_count;
     for (u32 i = first; i < first + count && i < 16u; ++i) {

@@ -379,6 +379,18 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
+// Depth prepass on the deferred queue: every depth-writing draw of a pass is
+// emitted first with colour writes off, then the pass is emitted again with
+// depth writes off and a LEQUAL test, so only the nearest fragment at each
+// pixel is shaded. The scene pass costs ~7 ms per eye at 1376x720 on a Quest 2
+// with ~2x overdraw shaded in full, because 64% of its draws blend and write
+// depth and that switches the tiler's low-resolution Z off for the rest of the
+// pass. This makes rejection independent of LRZ. Needs bd_draw_defer.
+REXCVAR_DEFINE_BOOL(bd_depth_prepass, false, kCvarGroup,
+                    "Emit a colour-off depth prepass before each deferred "
+                    "pass, then shade with depth writes off (needs "
+                    "bd_draw_defer).");
+
 // The early-out half of bdSetSamplerState, done host-side. ~23,000 guest calls
 // a frame, the vast majority of which exist only to discover they have nothing
 // to do - and each pays a recompiled prologue to find out. The slow path still

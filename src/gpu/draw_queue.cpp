@@ -251,7 +251,51 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
   const plume::RenderPipeline *prev = nullptr;
   float dmin = 1e30f, dmax = -1e30f;
   u32 opaque = 0;
-  for (const QueuedDraw &d : g_queue) {
+
+  // Depth prepass: every draw that qualified is emitted first with colour
+  // writes off, near to far (a depth-only draw has no ordering constraint, and
+  // near-first is cheapest for the fine depth test too). The colour pass then
+  // runs in submission order with depth writes off and a LEQUAL test, so a
+  // fragment behind the nearest depth is rejected before it is shaded. The
+  // scene pass measured ~7 ms per eye at 1376x720 on a Quest 2 with ~2x
+  // overdraw shaded in full, because 64% of its draws blend and write depth
+  // and that disables the tiler's low-resolution Z for the rest of the pass.
+  u32 prepassed = 0;
+  for (const QueuedDraw &d : g_queue)
+    if (d.prepass_pipeline && d.color_pipeline)
+      ++prepassed;
+  if (prepassed) {
+    static std::vector<const QueuedDraw *> order;
+    order.clear();
+    order.reserve(prepassed);
+    for (const QueuedDraw &d : g_queue)
+      if (d.prepass_pipeline && d.color_pipeline)
+        order.push_back(&d);
+    std::stable_sort(order.begin(), order.end(),
+                     [](const QueuedDraw *a, const QueuedDraw *b) {
+                       if (a->depth != b->depth)
+                         return a->depth < b->depth;
+                       return a->prepass_pipeline < b->prepass_pipeline;
+                     });
+    for (const QueuedDraw *p : order) {
+      QueuedDraw d = *p;
+      d.pipeline = d.prepass_pipeline;
+      if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
+      EmitOne(cmd, d, st);
+    }
+    static u32 told = 0;
+    if (told < 3 && g_queue.size() > 100) {
+      ++told;
+      BD_INFO("[draw-queue] depth prepass: {} of {} draws", prepassed,
+              g_queue.size());
+    }
+  }
+
+  for (const QueuedDraw &q : g_queue) {
+    const bool two_pass = q.prepass_pipeline && q.color_pipeline;
+    QueuedDraw d = q;
+    if (two_pass)
+      d.pipeline = q.color_pipeline;
     if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
     if (!d.blended) {
       ++opaque;

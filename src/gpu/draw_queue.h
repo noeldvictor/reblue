@@ -87,6 +87,14 @@ struct QueuedDraw {
   float depth = 0.0f;
   u32 sequence = 0;
   bool blended = false;
+  // Depth prepass. When set, the flush first emits this draw with
+  // `prepass_pipeline` (colour writes off, depth as recorded) and then again
+  // with `color_pipeline` (depth writes off, LEQUAL) in submission order. The
+  // prepass leaves the nearest depth at every pixel, so the colour pass shades
+  // only what is visible - with or without the tiler's low-resolution Z, which
+  // this scene's blended depth-writing draws keep switching off.
+  plume::RenderPipeline *prepass_pipeline = nullptr;
+  plume::RenderPipeline *color_pipeline = nullptr;
 };
 
 // Recording. Returns false when deferral is off, in which case the caller

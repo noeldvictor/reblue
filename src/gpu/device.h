@@ -488,6 +488,13 @@ struct VideoState {
   // setPipeline when pipelineState is clean. Reset in BeginCommandList (list
   // begin drops the bound pipeline).
   plume::RenderPipeline *current_pso = nullptr;
+  // Depth-prepass variants of current_pso, built alongside it when
+  // bd_depth_prepass is on and the state qualifies (writes depth with a
+  // LESS/LEQUAL test, no stencil ops): a colour-off pipeline for the prepass
+  // and a no-depth-write LEQUAL pipeline for the colour pass. Null otherwise,
+  // and the draw is emitted once, unchanged.
+  plume::RenderPipeline *current_prepass_pso = nullptr;
+  plume::RenderPipeline *current_color_pso = nullptr;
 
   bool clear_pending = false;
   u32 clear_flags = 0;
