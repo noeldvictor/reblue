@@ -410,15 +410,14 @@ REXCVAR_DEFINE_BOOL(bd_draw_instancing, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_instancing_singles_plain, true, kCvarGroup,
                     "Emit single-draw instancing groups through the plain "
                     "pipeline.");
-// OFF: a within-run A/B on the Quest 2 (2026-09-02, verify defaults) put the
-// GPU frame at 52.9 ms with this on and 44.9 ms off. Sorting a run by
-// pipeline and key scatters near and far geometry, and on this direct-mode
-// pass the shaded fragments follow the draw order - the guest's tree order is
-// nearer to front-to-back than anything keyed by pipeline. A depth-aware
-// grouping is the way to bring instances together; this is not it.
-REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder, false, kCvarGroup,
+// ON, and worth 8 ms of GPU: a within-run A/B on the Quest 2 (2026-09-02,
+// verify defaults) put the GPU frame at 52.9 ms with it off and 44.9 ms on -
+// fewer pipeline switches and the instances it brings together outweigh any
+// change in overdraw on this direct-mode pass. (Read backwards for an hour
+// the first time: the summary's arm 0 is the flag off.)
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder, true, kCvarGroup,
                     "Reorder order-independent scene draws so instances "
-                    "become consecutive (measured -8 ms GPU off).");
+                    "become consecutive (measured -8 ms GPU on).");
 // Blended draws that write depth count as order-independent for the reorder
 // above. The guest leaves blending on for most opaque and cut-out materials
 // (64% of scene draws blend and write depth), so without this almost nothing
