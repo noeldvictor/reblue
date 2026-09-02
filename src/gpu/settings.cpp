@@ -448,7 +448,13 @@ REXCVAR_DEFINE_BOOL(bd_node_write_diag, false, kCvarGroup,
 // the next bd_host_draw_refresh frames, world rebuilt from the palette slot;
 // then the interpreter runs once and refreshes it. Skinned nodes, foliage
 // (c57) and animated materials keep the interpreter.
-REXCVAR_DEFINE_BOOL(bd_host_draw, true, kCvarGroup,
+// OFF until the interaction with instancing groups is fixed: with the reorder
+// on, a replayed node that shares a mesh and material with an interpreted
+// one merges into its group with the wrong record, and the village's big
+// rock draws twice in one place and not at all in the other (desktop bisect,
+// 2026-09-02 night: reorder off or instancing off brings it back). The host
+// draw measured flat on the Quest's GPU, so nothing is lost by waiting.
+REXCVAR_DEFINE_BOOL(bd_host_draw, false, kCvarGroup,
                     "Issue scene node draws from host templates, skipping the "
                     "guest's per-node interpreter.");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
