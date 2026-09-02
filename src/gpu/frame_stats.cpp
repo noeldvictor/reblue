@@ -85,6 +85,7 @@ std::atomic<u32> g_pso_switch_count{0};
 // low-resolution Z for the remainder of the pass, so one early in the scene
 // costs every later draw its early rejection.
 std::atomic<u32> g_blended_depth_writes{0};  // real blend + depth write
+std::atomic<u32> g_blended_depth_writes_alpha_test{0}; // ... with alpha test
 std::atomic<u32> g_suppressed{0};
 // Reported four times and then never again. NoteBlendDepthMode is called once
 // per blended depth-writing draw - 337 times a frame - so holding a mutex for
@@ -273,9 +274,12 @@ void UpdateFrameStats() {
     static u32 told = 0;
     if (told < 4 && draws > 300) {
       ++told;
-      BD_INFO("[lrz] {} of {} draws REALLY blend and write depth; {} more are "
-              "opaque but the sort treats them as blended",
+      BD_INFO("[lrz] {} of {} draws REALLY blend and write depth ({} of them "
+              "alpha-test); {} more are opaque but the sort treats them as "
+              "blended",
               bdw, draws,
+              g_blended_depth_writes_alpha_test.exchange(
+                  0, std::memory_order_relaxed),
               g_misclassified.exchange(0, std::memory_order_relaxed));
       BD_INFO("[lrz] depth-write suppressed on {} draws this frame",
               g_suppressed.exchange(0, std::memory_order_relaxed));
@@ -389,6 +393,10 @@ void NoteDepthWriteSuppressed() {
   g_suppressed.fetch_add(1, std::memory_order_relaxed);
 }
 
+void NoteBlendedDepthWriteAlphaTest(bool alpha_test) {
+  if (alpha_test)
+    g_blended_depth_writes_alpha_test.fetch_add(1, std::memory_order_relaxed);
+}
 void NoteBlendedDepthWrite(bool real_blend, bool heuristic_blend,
                            bool writes_depth) {
   if (real_blend && writes_depth)

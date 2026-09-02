@@ -39,6 +39,7 @@
 #include "gpu/output.h"
 #include "gpu/post_chain.h"
 #include "gpu/shaders/shader_cache.h"
+#include "gpu/shaders/shader_constants.h"
 
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
@@ -419,6 +420,9 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         s.pipelineState.zWriteEnable && s.pipelineState.zEnable;
     bd::gpu::NoteBlendedDepthWrite(s.pipelineState.alphaBlendEnable, heuristic,
                                    writes_depth);
+    if (s.pipelineState.alphaBlendEnable && writes_depth)
+      bd::gpu::NoteBlendedDepthWriteAlphaTest(
+          (s.pipelineState.specConstants & bd::gpu::kSpecConstantAlphaTest) != 0);
     if (s.pipelineState.alphaBlendEnable && writes_depth)
       bd::gpu::NoteBlendDepthMode(u32(s.pipelineState.srcBlend),
                                   u32(s.pipelineState.destBlend));

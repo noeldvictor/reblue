@@ -81,6 +81,7 @@ u32 DrawsThisFrame();
 // Draws that blend AND write depth. Each one invalidates the tiler's
 // low-resolution Z for the rest of the pass, so on a scene with real overdraw
 // a single early one costs every later draw its early rejection.
+void NoteBlendedDepthWriteAlphaTest(bool alpha_test);
 void NoteBlendedDepthWrite(bool real_blend, bool heuristic_blend,
                           bool writes_depth);
 // Draws whose depth write bd_blend_no_depth_write actually suppressed.

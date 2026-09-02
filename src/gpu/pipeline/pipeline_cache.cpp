@@ -26,6 +26,8 @@
 REXCVAR_DECLARE(bool, bd_debug_depth_always);
 REXCVAR_DECLARE(bool, bd_debug_no_stencil_bias);
 REXCVAR_DECLARE(bool, bd_debug_no_depth_write);
+REXCVAR_DECLARE(bool, bd_cutout_opaque);
+#include "gpu/shaders/shader_constants.h"
 namespace bd::gpu {
 
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
@@ -50,6 +52,17 @@ void SanitizePipelineState(PipelineState &state) {
   // Probe: no depth writes anywhere. See bd_debug_no_depth_write.
   if (REXCVAR_GET(bd_debug_no_depth_write))
     state.zWriteEnable = false;
+  // Alpha-tested, depth-writing, source-over blending -> opaque cutout. See
+  // bd_cutout_opaque.
+  if (REXCVAR_GET(bd_cutout_opaque) && state.alphaBlendEnable &&
+      state.zWriteEnable && state.zEnable &&
+      (state.specConstants & kSpecConstantAlphaTest) != 0 &&
+      state.srcBlend == plume::RenderBlend::SRC_ALPHA &&
+      state.destBlend == plume::RenderBlend::INV_SRC_ALPHA) {
+    state.alphaBlendEnable = false;
+    state.srcBlend = plume::RenderBlend::ONE;
+    state.destBlend = plume::RenderBlend::ZERO;
+  }
   // No color render target -> the output merger color path is inactive, so
   // renderTargetCount is 0. A PSO that enables blend (or a color write mask)
   // against slot 0 while its RTV format is UNKNOWN is rejected by

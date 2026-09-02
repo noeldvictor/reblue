@@ -50,6 +50,14 @@ Fork goals, in the owner's priority order:
 3. **Cel shading on characters**, optional, from the in-game options menu.
 4. **Tourist mode** - infinite HP, 999 stats, encounter suppression.
 
+Owner decisions of 2026-09-02, binding until changed: **72 fps native on the Quest 2 at
+1440x1584 per eye is the target**; the frame becomes host-owned in stages (see "The
+direction"); multiview only; assets cooked once on the desktop and shipped, generated LODs,
+impostors and merges allowed, 1.5 GB budget; materials carry a lighting-model slot so cel
+shading is a switch; animation moves to the host after the walk; shadows on in the target
+configuration, not measured apart; approximate visuals are fine; desktop first, one Quest run
+per finished stage.
+
 The fork is low-stakes and AI-driven. Prefer working, understandable changes over polish. No
 support infrastructure (issue templates, changelogs) unless asked.
 
@@ -90,18 +98,27 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | SDK cross-built for android-arm64, APK, VFS over full game data, Vulkan, OpenXR session, Touch controllers as a pad, head pose driving the view | works |
 | `bd_stereo` (side-by-side, submits every draw twice) | **works, correct crossed depth**, the shipping stereo route |
 | `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | **works, correct crossed stereo on the desktop (2026-09-02)**; on the Quest 59 ms GPU with the obsolete resolve chain on, 277 ms off - the tiling question |
-| Field-scene frame rate | **15 fps** (4 slots at 60 Hz) on either stereo path |
+| Field-scene frame rate | **20 fps** (3 slots at 60 Hz), 37.5 ms GPU, on side-by-side (2026-09-02); target 72 fps, see "The direction" |
 | Character-anchored camera modes, diorama in battle | composed and unit-tested; tuning against a capture still wanted |
 | Tourist mode | HP/MP top-up works (desktop); encounter suppression never fires (`bdPlayerField*` family is dead, see closed doors) |
 | Post chain (bloom, depth of field) | **host-owned since 2026-09-02** (`gpu/post_chain.cpp`, `bd_host_post`): the guest's 15 tile-and-resolve quads a frame are replaced by host passes into the guest's own textures; image verified on desktop and Quest captures. The composites moved to the host next (one full-res pass); measure that once. |
 | Cel shading | not started |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull only (`bd_cull_distance`), hooked in `bdSceneNodeCullTraverse` |
-| Instancing / indirect draws | seams exist (`bd_draw_defer` queue, host `bdSceneNodeDrawSingle` in `gpu/hooks/scene_node.cpp`), nothing built on them yet |
+| Instancing / indirect draws | seams exist (`bd_draw_defer` queue, host `bdSceneNodeDrawSingle` in `gpu/hooks/scene_node.cpp`); stage 1 of "The direction" (the scene-walk recorder and host submission) is being built on them |
 | Sun occlusion descriptor set on Adreno | dropped, not fixed (Adreno has 4 sets, the renderer wants 5) |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
-## What is true now, measured. Quest 2, 2026-08-31 and 2026-09-01.
+## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-02.
+
+**THE SCENE PASS IS DRAW-BOUND (2026-09-02, 18:00).** Mono render-stage traces: 535 draws
+render in 19.2-19.7 ms; 332 draws (`bd_cull_distance=20`) in 12.3-14.4 ms - ~36 us of GPU
+per draw, and the count is what moves it. Nothing that reduces fragment work moved it: depth
+ALWAYS, the depth prepass, the density map, position-only vertex shaders, opaque cutouts
+(`bd_cutout_opaque`), host mip chains, the host post chain. The realtime counters' "99%
+shading fragments, 6.6 per pixel" described where the GPU sat, not what it waited on. The cost
+is the per-draw translation of the Xbox 360 draw ABI; see "The direction" below. **Shipping
+side-by-side stereo: 37.5 ms GPU** (39.2 on 2026-09-01), 20 fps tier.
 
 **`bd_stereo` is GPU-bound at ~39 ms with ~13 ms of CPU** (2026-09-01 evening; **34.4 ms
 GPU after the 2026-09-02 work below, mono trace configuration**,
@@ -243,67 +260,53 @@ and the distance to the next boundary, never fps.
   count; it profiles at ~5%. "Most draws are blended full-screen passes" reasoned from counts
   while the measured time was 81% in the scene pass. This mistake has been made four times.
 
-## Start here. Ordered.
+## The direction (owner, 2026-09-02 evening): a host-owned frame
 
-0. **PARKED 2026-09-02 12:30, after eighteen probes.** Nothing the app controls has moved the
-   Adreno blob off `Mode: 0 (Direct)` for the scene pass, and the two things left could not be
-   tested (compositor preemption, the driver's own reasons). Fixed foveation still depends on
-   it: a fragment density map on a direct-mode pass is what measured +17 ms for nothing. Do
-   not spend another day here without a new instrument. The original item, for the record:
-   **Make the scene pass bin.** Read the render-stage trace after every change
-   (`bash tools/gpu_drawtrace_quest.sh`, `python tools/gpu_trace_summary.py`): the scene
-   surface must stop saying `Mode: 0 (Direct)` and start showing tens of bins. **Eliminated by
-   one trace each (2026-09-02):** in-pass timestamps, side-by-side's doubled draws and per-draw
-   viewports (mono is direct too), blending on depth writers, the seed copy, the vertex-stage
-   `SV_ViewID`, the draw count per pass instance, alpha-test discard, and (10:05) update-after-bind
-   on the bindless sets (`bd_debug_no_uab`, invalid on purpose, trace only). The vendor profiler
-   gives no reason. **The binned 1920x3664 and 1024x1024 surfaces in every trace are the
-   compositor's** (an idle-system trace lists the same two, 10:30). Eliminated by one trace
-   each on 2026-09-02, all with the audit confirming the setting took: robustness features
-   (`bd_vulkan_no_robust`), every optional device extension (`bd_vulkan_no_ext`), the load ops
-   (the scene pass now begins with CLEAR on colour and depth, see below), the vertex shaders'
-   size (`XENOS_RECOMP_POS_ONLY_VS`: position-only shaders, same 19.4 ms), stencil and depth
-   bias (`bd_debug_no_stencil_bias`), depth writes (`bd_debug_no_depth_write`). **The one
-   full-size pass of ours that bins** (16 bins, seen twice) is the scene target's last instance,
-   the ~60 effect draws after the mid-frame resolve: same attachments, formats and layouts as
-   the main instance. The remaining suspects are the amount of geometry per pass (the
-   visibility stream has a size limit; `bd_cull_distance=20` is the probe) and the compositor's
-   preemption (Preempt 4-6 ms in every scene pass; the flat path could not be traced, the
-   profiler sees only the VR foreground). Do not re-run any of the eliminated probes.
-   **Turnip is closed (10:20):** the Meta runtime validates and dispatches every handle-only
-   call through Android's platform loader, so a directly loaded ICD gets as far as the VkInstance
-   and `xrCreateVulkanDeviceKHR` answers `XR_ERROR_HANDLE_INVALID`; the trace and the
-   extension filter in `xr_session.cpp` stay, and `XR_KHR_vulkan_enable2` is the default binding
-   on the headset (`bd_xr_vulkan2`), which is what `XR_FB_foveation` and runtime-owned swapchains
-   build on.
-1. **Multiview's 277 ms on the Quest without the resolve pass.** Measured three ways on
-   2026-09-01: resolve off 277 ms GPU; resolve on 59 ms; resolve on with its companion never
-   sampled (`bd_mv_redirect_srv=false`) **59 ms**. So the array heap's sampling is free and
-   something the resolve pass does to the frame - its barriers, or ending the guest's render
-   pass and rebinding - is what Adreno needs; without it every pass runs ~4.5x slower. Validation
-   under the layer never reached a field scene. Next: a probe that issues the resolve's barriers
-   without its draws, or a GPU-side view (`ovrgpuprofiler`, RenderDoc's Meta fork). Until then
-   `bd_mv_resolve` defaults **on**.
-2. ~~Fix the multiview flatten~~ **Done 2026-09-02**: per-eye slice views on the MSAA resolve;
-   crossed stereo verified on screen and in a capture. Next for multiview is only the Quest's
-   GPU time, which is item 0.
-3. **GPU levers, now that the GPU is the wall at 34.4 ms and the 30 fps boundary is 33.3.**
-   Done 2026-09-02: the scene pass clears instead of loading (held clears), the present at
-   1466x768 instead of the panel. Next, in order of size on the render-stage trace: the guest's
-   post chain is ~8 ms of one-draw full-screen passes at 1376x720 and below (bloom, DoF,
-   downsample chain), each `Direct` with 1.3-1.8 ms of compositor preemption attached - merging
-   or skipping links there is the next millisecond; then foveation, which waits on item 0.
-4. **Then the CPU work the owner has been asking for**, attached to the seams that exist:
-   instancing (2083 `bdSceneNodeDrawSingle` calls a frame take only 1270 distinct first
-   arguments), indirect draws off `bd_draw_defer`, and the SDK's vector-register codegen (VMX
-   lives in memory: ~15 memory ops per useful arithmetic op in `libreblue.so`). The one negative
-   result that shapes all of it: replacing `bdSetSamplerState` with host code measured *slower*,
-   twice. Translating guest functions one-for-one is not the win. **Submitting less is.**
-5. **LRZ.** 64% of scene draws blend AND write depth, which forces low-resolution-Z invalidation
-   on Adreno, and front-to-back sorting measured exactly zero because of it. Both naive fixes
-   destroy the image (depth-of-field and fog sample the depth buffer). Needs a discriminator
-   narrower than `alphaBlendEnable`.
-6. Foveation through `XR_FB_foveation`, which needs the scene rendered into the XR swapchain.
+The last trace of the day settled where the frame goes: **the scene pass is draw-bound, not
+fragment-bound.** 535 draws render in 19.5 ms and 332 draws in 12.3-14.4 ms - about 36 us of
+GPU per draw - and every fragment-side change (depth ALWAYS, the prepass, the density map,
+position-only vertex shaders, opaque cutouts, host mip chains, the host post chain) moved
+nothing. The cost is the per-draw translation of the Xbox 360 draw ABI: a descriptor set with
+three dynamic offsets, up to sixteen vertex streams, viewport, scissor and pipeline for each
+node's draw. The owner's answer is to stop translating and own the frame:
+
+> "once everything is moved to host, we can much easier see how to boost super performance
+> ... alter rendering pipelines and assets to do clever things like billboarding etc."
+
+**Target: 72 fps native on the Quest 2 at the runtime's 1440x1584 per eye**, multiview only.
+Approximate visuals are fine. Desktop first; one Quest run with a capture per finished stage.
+Stages, each shipping working:
+
+1. **Record the guest's scene walk.** A recorder on the `bdSceneNodeDrawSingle` seam writes
+   what each node draw is (mesh, material pipeline, textures, transform, bone palette) and
+   which guest structures it came from. This is how the host learns the scene tree; the host
+   then submits the recorded list itself - sorted by pipeline, instanced where mesh and
+   material repeat, streams bound once per mesh, descriptor sets once per frame, a push
+   constant carrying each draw's constant base. Removes the 36 us per draw.
+2. **The host walks the tree.** The host reads the guest's scene tree data directly and
+   decides what to draw: its own culling, LOD, instancing. The guest's walk is switched off.
+3. **Assets cooked once.** A desktop playthrough with the recorder fills a host cache (meshes
+   in host vertex/index buffers, textures with chains, materials as pipelines with a
+   lighting-model slot: the guest look, and cel), shipped with the game data; unvisited areas
+   convert live and add themselves. Generated assets are allowed: decimated LODs, impostor
+   billboards, merged static geometry, atlases. Budget 1.5 GB on the headset.
+4. **The host owns the targets.** Scene colour and depth, shadow map, post textures, present;
+   the EDRAM resolve emulation (tile aliasing, seed copies, deferred resolves) goes.
+5. **Shadows on the host** from the host scene list into a small map fitted to the view; the
+   guest's 4096x4096 second geometry pass and stencil pass are skipped. Shadows are on in the
+   target configuration and are not measured as a separate cost.
+6. **Animation on the host** (bone palettes evaluated by the host, skinning on the GPU).
+7. **Multiview and foveation on the host frame**, rendered at per-eye resolution straight
+   into the runtime's swapchain (`XR_FB_foveation`).
+8. **Occlusion culling and indirect draws** on the host list; billboarding at distance.
+
+Effects and particles stay on the old per-draw path until the host frame is stable.
+
+Parked, for the record: the Adreno render-mode hunt (eighteen probes, nothing the app
+controls moved the scene pass off `Direct`; foveation on the app's own pass depended on it -
+stage 7 renders into the runtime's swapchain instead), multiview's 277 ms without the resolve
+chain (not shipped), and `bd_mv_half_width` (62.7 -> 41.7 ms, present chain does not follow;
+superseded by stage 7).
 
 ## Multiview: where it is and what is left
 

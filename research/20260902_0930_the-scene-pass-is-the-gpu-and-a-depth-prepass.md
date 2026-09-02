@@ -781,3 +781,45 @@ no change. The sampler LOD range is unbounded, so the chains are sampled;
 the texture pipes' load is fragment volume, not minification misses. The
 chains stay for the image. A fresh render-stage trace of the shipping
 configuration with everything landed follows.
+
+## Opaque cutouts for alpha-tested blended depth-writers (17:30)
+
+The census says every blended depth-writing scene draw blends SRC_ALPHA over
+INV_SRC_ALPHA, and about half of them alpha-test (desktop: 315 of 621). A
+blended draw that writes depth invalidates the tiler's low-resolution Z and
+rejects nothing behind it; a cutout - alpha test deciding the pixel, no
+blend, depth written - is what a modern engine draws foliage and fences as.
+`bd_cutout_opaque` makes the conversion in `SanitizePipelineState`: blend
+off, ONE/ZERO, for pipelines with alpha test, depth write, depth test and
+that blend pair. Desktop capture (`frame_1788371951.png`): foliage, fence
+and rope edges read the same as blended. Quest measurement follows; the
+half without alpha test stays blended for now.
+
+Quest, side-by-side defaults, `bd_cutout_opaque=true`: `gpu_total_ms`
+**37.5**, 193 of 321 blended depth-writers converted, capture a correct pair.
+No change - the fourth work-reducing change today that leaves the
+frame-wide number where it was (post chain, mip chains, cutouts), while the
+two pass-structure changes moved it. The frame's GPU span includes the
+compositor's preemption and any idle gaps; per-pass render time from the
+render-stage trace is the only honest gauge of our own work. A mono trace
+with everything landed, against the morning's 19.5 ms scene pass, is
+running.
+
+## THE SCENE PASS IS DRAW-BOUND, NOT FRAGMENT-BOUND (18:00)
+
+Mono render-stage trace with everything landed (held clears, present size,
+host post chain, host mips, cutouts): scene pass Render **19.2-19.7 ms**,
+535 draws - the morning's 19.5 ms exactly. The second point is the morning's
+`bd_cull_distance=20` run: 332 draws, Render 12.3-14.4 ms. Both sit on one
+line: **~36 us of GPU time per scene draw**, and the count is what changed.
+Everything that reduces fragment work moved nothing: depth ALWAYS, the depth
+prepass, the density map, position-only vertex shaders, opaque cutouts, mip
+chains, the host post chain. The realtime counters that said "99% shading
+fragments, 6.6 fragments per pixel" described where the GPU sat, not what it
+waited on. The scene pass costs what its draws cost: the command stream and
+the state each carries - a descriptor set bind with three dynamic offsets,
+vertex buffer binds for up to sixteen streams, viewport and scissor, the
+pipeline. Fewer draws (instancing on the bdSceneNodeDrawSingle seam) and
+cheaper draws (constants indexed by a push constant instead of a per-draw
+descriptor bind, only the streams a declaration uses) are the levers - the
+"submit less" work the mandate names. `gpu_total_ms` 34.8 mono.

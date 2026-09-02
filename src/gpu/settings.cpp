@@ -552,6 +552,14 @@ REXCVAR_DEFINE_INT32(bd_dump_post_draws, 0, kCvarGroup,
                      "Log every post-effect draw (by pixel shader) of this "
                      "many field-scene frames: target, sampled textures, "
                      "parameter registers. 0 = off.");
+// Alpha-tested geometry the guest draws blended over inverse source alpha
+// AND depth-writing - foliage, fences, cutouts - becomes opaque: the alpha
+// test decides the pixel, blending is dropped, depth stays written, so a
+// tiler can reject what lies behind it. ~300 of a field frame's 470 scene
+// draws are of this kind (2026-09-02). Edges go from soft to hard.
+REXCVAR_DEFINE_BOOL(bd_cutout_opaque, false, kCvarGroup,
+                    "Draw alpha-tested, depth-writing, alpha-blended "
+                    "geometry as opaque cutouts.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_depth_write, false, kCvarGroup,
                     "Probe: disable depth writes in every pipeline.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
