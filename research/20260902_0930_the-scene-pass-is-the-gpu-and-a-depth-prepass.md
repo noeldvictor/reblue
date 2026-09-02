@@ -775,3 +775,9 @@ and the levels feed the same chain builder the guest's own mips use. Desktop:
 chains of 4-8 levels build at upload, the capture shows cliffs, ground,
 buildings and foliage cutouts intact (`frame_1788370957.png`). Quest
 measurement follows.
+
+Quest, side-by-side defaults, host mip chains on: `gpu_total_ms` **37.6** -
+no change. The sampler LOD range is unbounded, so the chains are sampled;
+the texture pipes' load is fragment volume, not minification misses. The
+chains stay for the image. A fresh render-stage trace of the shipping
+configuration with everything landed follows.

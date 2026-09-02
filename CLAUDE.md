@@ -171,6 +171,20 @@ composite pass took its viewport from the window (the first capture was the top-
 game, magnified), and the guest-surface capture site consumed the one-shot latch in mono so the
 composite site never recorded.
 
+**Two thirds of the texture data had no mip chain (2026-09-02, 16:20).** The mirror histogram
+with texel totals: 316 textures ship a chain and hold 21.0 M texels; 196 ship none and hold
+43.1 M, and they are the 1024x1024 and 2048x1024 world textures in DXT1/3/5. Every fragment of
+those sampled the base level, which is what the texture pipes at 66% with 25% L1 misses were.
+`gpu/host_mips.cpp` (`bd_host_mips`) builds the chain at upload: decode, box-filter, re-encode
+with stb_dxt, punch-through and DXT3 alpha by hand. Image verified on the desktop and the
+Quest; **the Quest frame did not move: 37.6 ms.** The chains are used (the sampler's LOD range
+is unbounded), so the texture pipes' load is fragment volume, not cache misses from
+minification. Keep the chains for the image; do not expect frame time from them.
+
+**The post chain is host-owned (2026-09-02, 15:45)** and buys no Quest frame time: 37.6 ms
+against 37.5 before. Its GPU share was small; the rewrite removed the tile-and-resolve
+structure and fifteen guest draws. The frame is the scene pass.
+
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
