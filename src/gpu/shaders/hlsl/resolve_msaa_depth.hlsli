@@ -11,10 +11,14 @@
 // Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
 [[vk::binding(0, 0)]] Texture2DMS<float, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
 
-float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Depth
+// Per-eye slice by SV_ViewID, for the same reason as the colour resolve.
+float main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+           in uint viewId : SV_ViewID) : SV_Depth
 {
-    Texture2DMS<float, SAMPLE_COUNT> tex =
-        g_Texture2DMSDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
+    const uint slot = (viewId == 1u && g_PushConstants.ResourceDescriptorIndex2 != 0u)
+                          ? g_PushConstants.ResourceDescriptorIndex2
+                          : g_PushConstants.ResourceDescriptorIndex;
+    Texture2DMS<float, SAMPLE_COUNT> tex = g_Texture2DMSDescriptorHeap[slot];
     uint w, h, samples;
     tex.GetDimensions(w, h, samples);
     int2 coord = min(int2(texCoord * float2(w, h)), int2(w - 1, h - 1));

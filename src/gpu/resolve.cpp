@@ -320,7 +320,46 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     }
     s.command_list->setPipeline(pipeline);
     NotePSOSwitch();
-    const u32 descriptor_index = src->descriptorIndex;
+    u32 descriptor_index = src->descriptorIndex;
+    u32 descriptor_index2 = 0u;
+
+    // A multisampled two-layer source gets one single-slice view per eye, and
+    // the MSAA resolve shaders pick the slice by SV_ViewID. This is the
+    // multiview flatten: tools/rdc_layer_diff.py read every pass's layers
+    // back and found the scene pair collapsing at exactly this draw, because
+    // Texture2DMS has no layer axis and both views loaded layer 0. Declaring
+    // the heap Texture2DMSArray instead compiled and rendered nothing at all
+    // on the desktop, so the slice is selected here, by descriptor, keeping
+    // the shader type that is known to work. The non-MSAA path
+    // (copy_color_ps) already reads the array by SV_ViewID.
+    if (src->layers > 1 && src->sampleCount != plume::RenderSampleCount::COUNT_1) {
+      for (u32 layer = 0; layer < 2; ++layer) {
+        if (!src->layerView[layer] || src->layerViewOf != src->texture) {
+          plume::RenderTextureViewDesc eye;
+          eye.format = src->format;
+          eye.dimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+          eye.mipLevels = 1;
+          eye.arraySize = 1;
+          eye.arrayIndex = layer;
+          src->layerView[layer] = src->texture->createTextureView(eye);
+          if (src->layerView[layer]) {
+            if (src->layerDescriptorIndex[layer] == kInvalidDescriptorIndex)
+              src->layerDescriptorIndex[layer] =
+                  Video::AllocateBindlessTextureSlot();
+            if (src->layerDescriptorIndex[layer] != kInvalidDescriptorIndex)
+              SetBindlessTextureLocked(s, src->layerDescriptorIndex[layer],
+                                       src->texture,
+                                       src->layerView[layer].get());
+          }
+        }
+      }
+      src->layerViewOf = src->texture;
+      if (src->layerDescriptorIndex[0] != kInvalidDescriptorIndex &&
+          src->layerDescriptorIndex[1] != kInvalidDescriptorIndex) {
+        descriptor_index = src->layerDescriptorIndex[0];
+        descriptor_index2 = src->layerDescriptorIndex[1];
+      }
+    }
 
     u32 box_ratio = 0u;
     if (!depth_dst && src->sampleCount == plume::RenderSampleCount::COUNT_1 &&
@@ -336,8 +375,8 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
       u32 resourceDescriptorIndex2;
       float param0;
       float param1;
-    } push{descriptor_index, 0u, depth_dst ? 1.0f : resolve_scale,
-           static_cast<float>(box_ratio)};
+    } push{descriptor_index, descriptor_index2,
+           depth_dst ? 1.0f : resolve_scale, static_cast<float>(box_ratio)};
     s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &push,
                                              kCopyPushConstantByteOffset,
                                              sizeof(push));

@@ -13,10 +13,17 @@
 // Ignored when DXC targets DXIL, so the D3D12 path is unaffected.
 [[vk::binding(0, 0)]] Texture2DMS<float4, SAMPLE_COUNT> g_Texture2DMSDescriptorHeap[] : register(t0, space0);
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+// The second descriptor is the right eye's single-slice view of a two-layer
+// multisampled source, chosen by SV_ViewID under multiview. Texture2DMS has no
+// layer axis, which is how the stereo pair used to collapse at this draw;
+// resolve.cpp registers one view per slice instead. Zero means single-source.
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
-    Texture2DMS<float4, SAMPLE_COUNT> tex =
-        g_Texture2DMSDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
+    const uint slot = (viewId == 1u && g_PushConstants.ResourceDescriptorIndex2 != 0u)
+                          ? g_PushConstants.ResourceDescriptorIndex2
+                          : g_PushConstants.ResourceDescriptorIndex;
+    Texture2DMS<float4, SAMPLE_COUNT> tex = g_Texture2DMSDescriptorHeap[slot];
     uint w, h, samples;
     tex.GetDimensions(w, h, samples);
     // Map this destination pixel to the (smaller) MS source texel, then

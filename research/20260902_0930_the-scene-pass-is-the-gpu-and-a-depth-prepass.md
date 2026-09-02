@@ -315,3 +315,16 @@ offsets on an update-after-bind set, and the recompiled shaders' size. A
 Turnip build in the app's lib directory (`EXTRA_LIBS`) would name the reason
 outright - Mesa's driver logs why it falls back to sysmem - and is the
 instrument to reach for before more blind probes.
+
+## Second batch, after the headset came back
+
+| probe | result |
+| --- | --- |
+| `bd_debug_no_alpha_test=true` | `gpu_total 33.67` (unchanged); the render-stage trace failed to start for that run |
+| `bd_debug_no_stencil_bias=true` | the run never reached VR frames (`Swap chain resize failed`, no `[xr]` lines, no CSV) - invalid, not a result |
+| verbose trace (`-v`) | adds per-bin stage timing only: the scene pass is `Render 11.05 / Preempt 1.68 / Render 5.80 / Preempt 1.69 / Render 0.80`, one 1x1 logical bin, no reason given |
+
+So the vendor profiler will not say why. `bd_vulkan_icd=turnip` now loads
+Mesa's Turnip driver directly (plume `icdLibraryPath` ->
+`volkInitializeCustom`, the .so packaged with `EXTRA_LIBS`), and its trace is
+running on the flat path first, where no OpenXR loader interop is involved.
