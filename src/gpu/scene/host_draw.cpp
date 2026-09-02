@@ -67,6 +67,8 @@ namespace bd::gpu::scene {
 namespace {
 
 constexpr u32 kBlockBytes = 256 * 16;
+constexpr u32 kShadowVsRegs = 5;
+constexpr u32 kShadowPsRegs = 14;
 
 struct RegDelta {
   u16 reg;
@@ -149,6 +151,8 @@ struct Pending {
   alignas(16) u8 vs[kBlockBytes];
   alignas(16) u8 ps[kBlockBytes];
   u32 fetch[32][6];
+  u32 shadow_vs[kShadowVsRegs][4];
+  u32 shadow_ps[kShadowPsRegs][4];
   u32 set_mask = 0;
   u32 sampler_mask = 0;
   u32 vs_set[8] = {};
@@ -227,6 +231,54 @@ bool ComputeFoliage(const NodeTag &tag, Foliage &out) {
   return true;
 }
 
+// The guest's deferred state shadow at 0x82DD80D8: the interpreter copies
+// vertex c0..c4 from +0 and pixel c0..c13 from +0x50 (the setter hooks named
+// the source, 2026-09-02). Whether those bytes already hold the node's values
+// when its run begins - the pass having set them - decides whether the host
+// can read the shadow at replay instead of interpreting a node per visual per
+// frame. Counted per register; a register the interpreter itself fills during
+// the run (a material colour) will disagree and stays on the visual path.
+constexpr u32 kShadowVa = 0x82DD80D8u;
+constexpr u32 kShadowPsOffset = 0x50;
+u32 g_shadow_checked = 0;
+u32 g_shadow_vs_wrong[kShadowVsRegs];
+u32 g_shadow_ps_wrong[kShadowPsRegs];
+
+// The registers the shadow already holds when a node's run begins - the
+// pass's state, which the interpreter only copies (400 village runs, 0
+// disagreements on 2026-09-02): vertex c0, c1, c4 and pixel c0..c2, c5..c9,
+// c13. A replay reads these from the live shadow, so they are always the
+// current pass's. The others (vertex c2/c3, pixel c3, c4, c10..c12) the
+// interpreter fills itself - the material colour among them - and stay on
+// the template / per-visual path.
+constexpr u32 kShadowSourcedVs = (1u << 0) | (1u << 1) | (1u << 4);
+constexpr u32 kShadowSourcedPs =
+    (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5) | (1u << 6) | (1u << 7) |
+    (1u << 8) | (1u << 9) | (1u << 13);
+
+inline bool ShadowSourced(bool vertex, u32 reg) {
+  return vertex ? (reg < 32 && ((kShadowSourcedVs >> reg) & 1u))
+                : (reg < 32 && ((kShadowSourcedPs >> reg) & 1u));
+}
+
+// A shadow float as the constant file would hold it (the upload flushes NaN).
+inline u32 ShadowBits(u32 raw) {
+  if ((raw & 0x7F800000u) == 0x7F800000u && (raw & 0x007FFFFFu))
+    return 0;
+  return raw;
+}
+
+void ReadShadow(u32 vs_out[kShadowVsRegs][4], u32 ps_out[kShadowPsRegs][4]) {
+  const auto *v = bd::mem::try_at<const be_u32>(kShadowVa);
+  const auto *p = bd::mem::try_at<const be_u32>(kShadowVa + kShadowPsOffset);
+  for (u32 r = 0; r < kShadowVsRegs; ++r)
+    for (u32 k = 0; k < 4; ++k)
+      vs_out[r][k] = v ? static_cast<u32>(v[r * 4 + k]) : 0;
+  for (u32 r = 0; r < kShadowPsRegs; ++r)
+    for (u32 k = 0; k < 4; ++k)
+      ps_out[r][k] = p ? static_cast<u32>(p[r * 4 + k]) : 0;
+}
+
 u32 g_foliage_checked = 0;
 u32 g_foliage_wrong = 0;
 constexpr u32 kFoliageTrustAfter = 200;
@@ -282,12 +334,15 @@ void DiffBlock(const u8 *before, const u8 *now, const u32 *set,
 
 // Same register set: the structure. Values that moved turn the register's
 // stable flag off in `have`.
-bool MergeDelta(std::vector<RegDelta> &have, const std::vector<RegDelta> &now) {
+bool MergeDelta(std::vector<RegDelta> &have, const std::vector<RegDelta> &now,
+                bool vertex) {
   if (have.size() != now.size())
     return false;
   for (size_t i = 0; i < have.size(); ++i) {
     if (have[i].reg != now[i].reg)
       return false;
+    if (ShadowSourced(vertex, have[i].reg))
+      continue; // read live at replay, whatever it did between sightings
     if (std::memcmp(have[i].value, now[i].value, 16) != 0)
       have[i].stable = false;
   }
@@ -340,11 +395,11 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
       ++g_why[3];
       return false;
     }
-    if (!MergeDelta(x.vs_delta, y.vs_delta)) {
+    if (!MergeDelta(x.vs_delta, y.vs_delta, true)) {
       ++g_why[4];
       return false;
     }
-    if (!MergeDelta(x.ps_delta, y.ps_delta)) {
+    if (!MergeDelta(x.ps_delta, y.ps_delta, false)) {
       ++g_why[5];
       return false;
     }
@@ -477,6 +532,7 @@ void HostDrawSnapshotBefore() {
   CopyGuestVertexBlock(device_guest, p.vs);
   CopyGuestPixelBlock(device_guest, p.ps);
   ReadFetch(dev, p.fetch);
+  ReadShadow(p.shadow_vs, p.shadow_ps);
   p.valid = true;
 }
 
@@ -535,6 +591,40 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   }
   DiffBlock(p.vs, t_vs_block, p.vs_set, d.vs_delta, true);
   DiffBlock(p.ps, t_ps_block, p.ps_set, d.ps_delta, false);
+  // The shadow as it stood at entry against what the run wrote. (The
+  // constant files hold NaN-flushed host floats and the shadow raw guest
+  // bits, so the compare goes through the same flush.)
+  {
+    bool any = false;
+    for (const RegDelta &r : d.vs_delta)
+      if (r.reg < kShadowVsRegs) {
+        any = true;
+        for (u32 k = 0; k < 4; ++k) {
+          u32 s = p.shadow_vs[r.reg][k];
+          if ((s & 0x7F800000u) == 0x7F800000u && (s & 0x007FFFFFu)) s = 0;
+          if (s != r.value[k]) { ++g_shadow_vs_wrong[r.reg]; break; }
+        }
+      }
+    for (const RegDelta &r : d.ps_delta)
+      if (r.reg < kShadowPsRegs) {
+        any = true;
+        for (u32 k = 0; k < 4; ++k) {
+          u32 s = p.shadow_ps[r.reg][k];
+          if ((s & 0x7F800000u) == 0x7F800000u && (s & 0x007FFFFFu)) s = 0;
+          if (s != r.value[k]) { ++g_shadow_ps_wrong[r.reg]; break; }
+        }
+      }
+    if (any && ++g_shadow_checked == 400) {
+      std::string vs, ps;
+      for (u32 r = 0; r < kShadowVsRegs; ++r)
+        vs += fmt::format(" c{}:{}", r, g_shadow_vs_wrong[r]);
+      for (u32 r = 0; r < kShadowPsRegs; ++r)
+        ps += fmt::format(" c{}:{}", r, g_shadow_ps_wrong[r]);
+      BD_INFO("[node] shadow at entry vs what the run wrote, over {} runs - "
+              "disagreements VS:{} | PS:{}",
+              g_shadow_checked, vs, ps);
+    }
+  }
   ReadFetch(dev, t_fetch);
   for (u32 i = 0; i < 32; ++i) {
     const bool touched = (p.sampler_mask >> i) & 1u;
@@ -674,12 +764,14 @@ bool HostDrawReplay(const NodeTag &tag) {
     v = vit != st.visuals.end() ? &vit->second : nullptr;
     for (const SubDraw &d : t->draws) {
       for (const RegDelta &r : d.vs_delta)
-        if (!r.stable && (!v || v->vs_frame[r.reg] != frame)) {
+        if (!r.stable && !ShadowSourced(true, r.reg) &&
+            (!v || v->vs_frame[r.reg] != frame)) {
           ++st.stale_bail;
           return false;
         }
       for (const RegDelta &r : d.ps_delta)
-        if (!r.stable && (!v || v->ps_frame[r.reg] != frame)) {
+        if (!r.stable && !ShadowSourced(false, r.reg) &&
+            (!v || v->ps_frame[r.reg] != frame)) {
           ++st.stale_bail;
           return false;
         }
@@ -745,17 +837,37 @@ bool HostDrawReplay(const NodeTag &tag) {
     saved.alpha = Video::AlphaThreshold();
   }
 
+  // The pass's registers, straight from the guest's shadow as it stands now.
+  u32 shadow_vs[kShadowVsRegs][4];
+  u32 shadow_ps[kShadowPsRegs][4];
+  ReadShadow(shadow_vs, shadow_ps);
+  for (auto &reg : shadow_vs)
+    for (u32 &b : reg)
+      b = ShadowBits(b);
+  for (auto &reg : shadow_ps)
+    for (u32 &b : reg)
+      b = ShadowBits(b);
+
   t_replaying = true;
   MaterialOverride ov;
   for (const SubDraw &d : t->draws) {
-    // The constant sources: the live files, the template's stable values,
-    // the visual's fresh values, and the world rows.
+    // The constant sources: the live files, the shadow for the pass's
+    // registers, the template's stable values, the visual's fresh values,
+    // and the world rows.
     CopyGuestVertexBlock(device_guest, t_vs_block);
     CopyGuestPixelBlock(device_guest, t_ps_block);
-    for (const RegDelta &r : d.vs_delta)
-      std::memcpy(t_vs_block + r.reg * 16, r.stable ? r.value : v->vs[r.reg], 16);
-    for (const RegDelta &r : d.ps_delta)
-      std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
+    for (const RegDelta &r : d.vs_delta) {
+      const void *src = ShadowSourced(true, r.reg) ? static_cast<const void *>(shadow_vs[r.reg])
+                        : r.stable                 ? static_cast<const void *>(r.value)
+                                                   : static_cast<const void *>(v->vs[r.reg]);
+      std::memcpy(t_vs_block + r.reg * 16, src, 16);
+    }
+    for (const RegDelta &r : d.ps_delta) {
+      const void *src = ShadowSourced(false, r.reg) ? static_cast<const void *>(shadow_ps[r.reg])
+                        : r.stable                  ? static_cast<const void *>(r.value)
+                                                    : static_cast<const void *>(v->ps[r.reg]);
+      std::memcpy(t_ps_block + r.reg * 16, src, 16);
+    }
     std::memcpy(t_vs_block + 20 * 16, world_rows, sizeof(world_rows));
     u32 bools[8];
     std::memcpy(bools, d.bools, sizeof(bools));
