@@ -32,6 +32,7 @@
 
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(f64, bd_xr_refresh_rate);
+REXCVAR_DECLARE(bool, bd_xr_vulkan2);
 
 #if defined(__ANDROID__)
 #include <unistd.h>
@@ -191,8 +192,12 @@ bool Session::CreateInstance() {
   // is why the optional one below is checked first rather than simply listed:
   // adding it unconditionally took the whole session down on a runtime that
   // does not advertise it, and the app then died before it could log why.
+  // enable2 (bd_xr_vulkan2) has the runtime create the VkInstance and VkDevice
+  // through the vkGetInstanceProcAddr we choose - see VulkanEnable2().
+  vulkanEnable2_ = REXCVAR_GET(bd_xr_vulkan2);
   std::vector<const char *> extensions = {
-      XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,
+      vulkanEnable2_ ? XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME
+                     : XR_KHR_VULKAN_ENABLE_EXTENSION_NAME,
 #if defined(__ANDROID__)
       XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME,
 #endif
@@ -289,15 +294,23 @@ bool Session::CreateInstance() {
 
   // What the runtime demands of Vulkan. These feed
   // plume::VulkanInterfaceOptions; see patches/plume-openxr-seam.patch.
+  // Under enable2 the runtime adds its own instance and device extensions
+  // inside xrCreateVulkanInstanceKHR / xrCreateVulkanDeviceKHR, so the two
+  // extension queries do not exist and the lists stay empty; the requirements
+  // query has a "2" spelling with the same structure.
   PFN_xrGetVulkanGraphicsRequirementsKHR getRequirements = nullptr;
   PFN_xrGetVulkanInstanceExtensionsKHR getInstanceExtensions = nullptr;
   PFN_xrGetVulkanDeviceExtensionsKHR getDeviceExtensions = nullptr;
-  xrGetInstanceProcAddr(instance, "xrGetVulkanGraphicsRequirementsKHR",
+  xrGetInstanceProcAddr(instance,
+                        vulkanEnable2_ ? "xrGetVulkanGraphicsRequirements2KHR"
+                                       : "xrGetVulkanGraphicsRequirementsKHR",
                         reinterpret_cast<PFN_xrVoidFunction *>(&getRequirements));
-  xrGetInstanceProcAddr(instance, "xrGetVulkanInstanceExtensionsKHR",
-                        reinterpret_cast<PFN_xrVoidFunction *>(&getInstanceExtensions));
-  xrGetInstanceProcAddr(instance, "xrGetVulkanDeviceExtensionsKHR",
-                        reinterpret_cast<PFN_xrVoidFunction *>(&getDeviceExtensions));
+  if (!vulkanEnable2_) {
+    xrGetInstanceProcAddr(instance, "xrGetVulkanInstanceExtensionsKHR",
+                          reinterpret_cast<PFN_xrVoidFunction *>(&getInstanceExtensions));
+    xrGetInstanceProcAddr(instance, "xrGetVulkanDeviceExtensionsKHR",
+                          reinterpret_cast<PFN_xrVoidFunction *>(&getDeviceExtensions));
+  }
 
   if (getRequirements) {
     XrGraphicsRequirementsVulkanKHR requirements{
@@ -337,17 +350,95 @@ bool Session::CreateInstance() {
 VkPhysicalDevice_T *Session::VulkanPhysicalDevice(VkInstance_T *instance) const {
   if (!instance_ || !instance)
     return nullptr;
+  VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+  if (vulkanEnable2_) {
+    PFN_xrGetVulkanGraphicsDevice2KHR getDevice2 = nullptr;
+    xrGetInstanceProcAddr(AsInstance(instance_), "xrGetVulkanGraphicsDevice2KHR",
+                          reinterpret_cast<PFN_xrVoidFunction *>(&getDevice2));
+    if (!getDevice2)
+      return nullptr;
+    XrVulkanGraphicsDeviceGetInfoKHR info{XR_TYPE_VULKAN_GRAPHICS_DEVICE_GET_INFO_KHR};
+    info.systemId = systemId_;
+    info.vulkanInstance = reinterpret_cast<VkInstance>(instance);
+    if (XR_FAILED(getDevice2(AsInstance(instance_), &info, &physicalDevice)))
+      return nullptr;
+    return reinterpret_cast<VkPhysicalDevice_T *>(physicalDevice);
+  }
   PFN_xrGetVulkanGraphicsDeviceKHR getDevice = nullptr;
   xrGetInstanceProcAddr(AsInstance(instance_), "xrGetVulkanGraphicsDeviceKHR",
                         reinterpret_cast<PFN_xrVoidFunction *>(&getDevice));
   if (!getDevice)
     return nullptr;
-  VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
   if (XR_FAILED(getDevice(AsInstance(instance_), systemId_,
                           reinterpret_cast<VkInstance>(instance),
                           &physicalDevice)))
     return nullptr;
   return reinterpret_cast<VkPhysicalDevice_T *>(physicalDevice);
+}
+
+int Session::CreateVulkanInstance(const void *vkInstanceCreateInfo,
+                                  void *vkGetInstanceProcAddr,
+                                  VkInstance_T **out) {
+  *out = nullptr;
+  if (!instance_ || !vulkanEnable2_)
+    return -3; // VK_ERROR_INITIALIZATION_FAILED
+  PFN_xrCreateVulkanInstanceKHR create = nullptr;
+  xrGetInstanceProcAddr(AsInstance(instance_), "xrCreateVulkanInstanceKHR",
+                        reinterpret_cast<PFN_xrVoidFunction *>(&create));
+  if (!create)
+    return -3;
+  XrVulkanInstanceCreateInfoKHR info{XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR};
+  info.systemId = systemId_;
+  info.createFlags = 0;
+  info.pfnGetInstanceProcAddr =
+      reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+  info.vulkanCreateInfo =
+      static_cast<const VkInstanceCreateInfo *>(vkInstanceCreateInfo);
+  info.vulkanAllocator = nullptr;
+  VkInstance vk = VK_NULL_HANDLE;
+  VkResult vkResult = VK_ERROR_INITIALIZATION_FAILED;
+  const XrResult xr = create(AsInstance(instance_), &info, &vk, &vkResult);
+  if (XR_FAILED(xr)) {
+    BD_ERROR("[xr] xrCreateVulkanInstanceKHR failed: {}", static_cast<int>(xr));
+    return -3;
+  }
+  *out = reinterpret_cast<VkInstance_T *>(vk);
+  BD_INFO("[xr] runtime created the VkInstance (enable2), VkResult {}",
+          static_cast<int>(vkResult));
+  return static_cast<int>(vkResult);
+}
+
+int Session::CreateVulkanDevice(VkPhysicalDevice_T *physicalDevice,
+                                const void *vkDeviceCreateInfo,
+                                void *vkGetInstanceProcAddr, VkDevice_T **out) {
+  *out = nullptr;
+  if (!instance_ || !vulkanEnable2_)
+    return -3;
+  PFN_xrCreateVulkanDeviceKHR create = nullptr;
+  xrGetInstanceProcAddr(AsInstance(instance_), "xrCreateVulkanDeviceKHR",
+                        reinterpret_cast<PFN_xrVoidFunction *>(&create));
+  if (!create)
+    return -3;
+  XrVulkanDeviceCreateInfoKHR info{XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR};
+  info.systemId = systemId_;
+  info.createFlags = 0;
+  info.pfnGetInstanceProcAddr =
+      reinterpret_cast<PFN_vkGetInstanceProcAddr>(vkGetInstanceProcAddr);
+  info.vulkanPhysicalDevice = reinterpret_cast<VkPhysicalDevice>(physicalDevice);
+  info.vulkanCreateInfo =
+      static_cast<const VkDeviceCreateInfo *>(vkDeviceCreateInfo);
+  info.vulkanAllocator = nullptr;
+  VkDevice vk = VK_NULL_HANDLE;
+  VkResult vkResult = VK_ERROR_INITIALIZATION_FAILED;
+  const XrResult xr = create(AsInstance(instance_), &info, &vk, &vkResult);
+  if (XR_FAILED(xr)) {
+    BD_ERROR("[xr] xrCreateVulkanDeviceKHR failed: {}", static_cast<int>(xr));
+    return -3;
+  }
+  *out = reinterpret_cast<VkDevice_T *>(vk);
+  BD_INFO("[xr] runtime created the VkDevice (enable2), VkResult {}",
+          static_cast<int>(vkResult));
+  return static_cast<int>(vkResult);
 }
 
 bool Session::CreateSession(VkInstance_T *instance,

@@ -354,6 +354,31 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
       xr_options.extraInstanceExtensions = session.VulkanInstanceExtensions();
       xr_options.extraDeviceExtensions = session.VulkanDeviceExtensions();
       xr_options.minApiVersion = session.VulkanMinApiVersion();
+      if (session.VulkanEnable2()) {
+        // The runtime creates the instance and device from plume's
+        // create-info, dispatching through whatever vkGetInstanceProcAddr volk
+        // holds - the loader's, or a directly loaded ICD's (bd_vulkan_icd).
+        xr_options.createInstance = [](const VkInstanceCreateInfo *ci,
+                                       VkInstance *out) -> VkResult {
+          VkInstance_T *inst = nullptr;
+          const int r = bd::xr::Session::Get().CreateVulkanInstance(
+              ci, reinterpret_cast<void *>(vkGetInstanceProcAddr), &inst);
+          *out = reinterpret_cast<VkInstance>(inst);
+          return static_cast<VkResult>(r);
+        };
+        xr_options.createDevice = [](VkPhysicalDevice pd,
+                                     const VkDeviceCreateInfo *ci,
+                                     VkDevice *out) -> VkResult {
+          VkDevice_T *dev = nullptr;
+          const int r = bd::xr::Session::Get().CreateVulkanDevice(
+              reinterpret_cast<VkPhysicalDevice_T *>(pd), ci,
+              reinterpret_cast<void *>(vkGetInstanceProcAddr), &dev);
+          *out = reinterpret_cast<VkDevice>(dev);
+          return static_cast<VkResult>(r);
+        };
+        BD_INFO("[xr] XR_KHR_vulkan_enable2: the runtime will create the "
+                "VkInstance and VkDevice");
+      }
       BD_INFO("[xr] runtime present, {} instance / {} device extensions "
               "required, per-eye {}x{}",
               xr_options.extraInstanceExtensions.size(),

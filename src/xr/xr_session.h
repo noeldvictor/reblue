@@ -78,6 +78,20 @@ public:
   VkPhysicalDevice_T *VulkanPhysicalDevice(VkInstance_T *instance) const;
   // Minimum Vulkan API version the runtime supports, as VK_MAKE_API_VERSION.
   u32 VulkanMinApiVersion() const { return vulkanMinApiVersion_; }
+  // XR_KHR_vulkan_enable2: the runtime creates the VkInstance and VkDevice
+  // from the create-info plume built, dispatching through the
+  // vkGetInstanceProcAddr handed in - the system loader's, or a directly
+  // loaded ICD's. True once the instance came up with that extension.
+  bool VulkanEnable2() const { return vulkanEnable2_; }
+  // Return the VkResult the runtime reports for the Vulkan call, or
+  // VK_ERROR_INITIALIZATION_FAILED (-3) if the XR call itself failed. The
+  // create-info pointers are VkInstanceCreateInfo / VkDeviceCreateInfo, kept
+  // opaque so this header stays free of vulkan.h.
+  int CreateVulkanInstance(const void *vkInstanceCreateInfo,
+                           void *vkGetInstanceProcAddr, VkInstance_T **out);
+  int CreateVulkanDevice(VkPhysicalDevice_T *physicalDevice,
+                         const void *vkDeviceCreateInfo,
+                         void *vkGetInstanceProcAddr, VkDevice_T **out);
 
   // --- phase 2: once the device exists ---
 
@@ -176,6 +190,7 @@ private:
   std::vector<std::string> vulkanInstanceExtensions_;
   std::vector<std::string> vulkanDeviceExtensions_;
   u32 vulkanMinApiVersion_ = 0;
+  bool vulkanEnable2_ = false;
 
   u32 recommendedWidth_ = 0;
   u32 recommendedHeight_ = 0;

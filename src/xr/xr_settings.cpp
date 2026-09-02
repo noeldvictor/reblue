@@ -73,6 +73,18 @@ REXCVAR_DEFINE_DOUBLE(bd_vr_anchor_eye_height, 150.0, kCvarGroup,
                       "this is how far down the anchor's origin sits.")
     .range(0.0, 1000.0);
 
+// XR_KHR_vulkan_enable2: the runtime creates the VkInstance and VkDevice
+// through the vkGetInstanceProcAddr we hand it, instead of taking ours. On by
+// default on the headset - it is what a directly loaded ICD (bd_vulkan_icd)
+// needs, and what XR_FB_foveation and runtime-owned swapchains build on. Off
+// elsewhere: tools/xrsim implements only the original extension.
+#if defined(__ANDROID__)
+REXCVAR_DEFINE_BOOL(bd_xr_vulkan2, true, kCvarGroup,
+                    "Bind Vulkan to OpenXR through XR_KHR_vulkan_enable2.");
+#else
+REXCVAR_DEFINE_BOOL(bd_xr_vulkan2, false, kCvarGroup,
+                    "Bind Vulkan to OpenXR through XR_KHR_vulkan_enable2.");
+#endif
 REXCVAR_DEFINE_DOUBLE(bd_xr_refresh_rate, 0.0, kCvarGroup,
                       "Display refresh rate to request, in Hz. 0 leaves it to "
                       "the runtime. The nearest supported rate at or below the "
