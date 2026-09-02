@@ -199,10 +199,16 @@ and the distance to the next boundary, never fps.
 ## Start here. Ordered.
 
 0. **Make the scene pass bin.** Read the render-stage trace after every change
-   (`bash tools/gpu_drawtrace_quest.sh`): the scene surface must stop saying `Mode: 0 (Direct)`
-   and start showing tens of bins. Candidates in order: draws per pass (side-by-side doubles
-   them; multiview halves them - trace it), the blended depth-writing draws, and anything the
-   pass does that a tiler cannot bin. Until it bins, no fragment-side lever can measure.
+   (`bash tools/gpu_drawtrace_quest.sh`, `python tools/gpu_trace_summary.py`): the scene
+   surface must stop saying `Mode: 0 (Direct)` and start showing tens of bins. **Eliminated by
+   one trace each (2026-09-02):** in-pass timestamps, side-by-side's doubled draws and per-draw
+   viewports (mono is direct too), blending on depth writers, the seed copy, the vertex-stage
+   `SV_ViewID`, the draw count per pass instance, alpha-test discard. The vendor profiler gives
+   no reason. **Next: `XR_KHR_vulkan_enable2`**, so the runtime creates the instance and device
+   through a `vkGetInstanceProcAddr` we choose - which lets Mesa's Turnip (`bd_vulkan_icd=turnip`,
+   packaged with `EXTRA_LIBS=out/turnip/libvulkan_freedreno.so`, loaded through its HAL `HMI`)
+   run the headset path and say in its own log why a pass is not binned. The flat path cannot
+   host it: Android's surface extensions live in the platform loader, not the driver.
 1. **Multiview's 277 ms on the Quest without the resolve pass.** Measured three ways on
    2026-09-01: resolve off 277 ms GPU; resolve on 59 ms; resolve on with its companion never
    sampled (`bd_mv_redirect_srv=false`) **59 ms**. So the array heap's sampling is free and
@@ -249,6 +255,13 @@ single-layer views over two-layer full-resolution images**, and the reading that
 sampling view. That was a real bug and is fixed (2026-09-01, `gpu/hooks/resource.cpp`), **and it
 was not the cause**: the desktop still presents two byte-identical halves with it in, with the
 obsolete slice views gone, and with `bd_mv_layered_textures=true`.
+
+**FIXED on 2026-09-02, verified in a capture.** The MSAA resolve now reads the multisampled
+scene through one single-slice view per eye and picks the slice by `SV_ViewID`
+(`resolve.cpp`, `resolve_msaa_color/depth.hlsli` at `ps_6_1`); the readback shows the pair
+surviving that draw (72.7% of bytes differ) and reaching the present-side targets (61%). The
+day of "black" results before that came from `bd_mv_resolve` defaulting on again for the Quest's
+277 ms; it is Android-only now. The paragraphs below are how it was found.
 
 **Found, by reading pixels.** `tools/rdc_layer_diff.py` (run as
 `RDC_CAPTURE=<abs path> qrenderdoc.exe --python tools/rdc_layer_diff.py`; report in

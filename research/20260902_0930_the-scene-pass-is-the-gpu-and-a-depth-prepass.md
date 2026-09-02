@@ -359,3 +359,26 @@ multisampled scene, selected by `SV_ViewID` in `resolve_msaa_color/depth`
 (`ps_6_1`), keep both eyes; the post chain and present carry them through.
 The black screen in those runs was `bd_mv_resolve` defaulting on, which is
 now Android-only.
+
+## Turnip loads; the loader's surface extensions block the flat path
+
+With `bd_vulkan_icd=turnip` plume opens `libvulkan_freedreno.so` through its
+`HMI` module (Mesa's Android builds export nothing else) and volk initialises
+from the HAL device's `GetInstanceProcAddr`. Instance creation then fails:
+
+```
+Missing required extension: VK_KHR_android_surface.
+Missing required extension: VK_KHR_surface.
+```
+
+Those are implemented by Android's platform loader, not by the driver, so a
+directly loaded ICD can never present through a flat swapchain. The OpenXR
+path needs no Vulkan surface - the runtime owns the swapchain images - but
+under `XR_KHR_vulkan_enable` (the binding the session uses) the runtime calls
+Vulkan on our instance through the system loader, and a driver-native handle
+is not loader-dispatchable. The route that works, and is the modern one, is
+`XR_KHR_vulkan_enable2`: the runtime creates the VkInstance and VkDevice
+itself through the `vkGetInstanceProcAddr` we pass in (`xrCreateVulkanInstanceKHR`,
+`xrCreateVulkanDeviceKHR`), and plume adopts them instead of creating its
+own. That is the same seam `XR_FB_foveation` and runtime-composited swapchains
+need, so it is the next piece of the port rather than a probe.
