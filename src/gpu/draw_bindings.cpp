@@ -17,6 +17,7 @@
 
 #include <plume_render_interface.h>
 
+#include "gpu/scene/host_draw.h"
 #include "gpu/shaders/shader_constants.h"
 
 REXCVAR_DECLARE(bool, bd_debug_no_alpha_test);
@@ -53,6 +54,7 @@ void Video::SetTexture(u32 index, GuestTexture *texture) {
   if (s.textures[index] != texture)
     s.texture_bindings_dirty = true;
   s.textures[index] = texture;
+  bd::gpu::scene::NoteTextureSet(index);
 }
 
 void Video::SetVertexShader(GuestShader *shader) {

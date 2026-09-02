@@ -26,7 +26,7 @@ namespace bd::gpu::scene {
 // Keys are content hashes, never guest addresses - the guest recycles those
 // within a session and asset names collide.
 constexpr char kWalkMagic[4] = {'B', 'D', 'S', 'W'};
-constexpr u32 kWalkVersion = 1;
+constexpr u32 kWalkVersion = 2;
 
 struct WalkHeader {
   char magic[4];
@@ -56,6 +56,9 @@ struct NodeDrawRecord {
   u64 material_key;
   float depth_sq; // the walk's view distance, the queue's sort key
   u32 _pad;
+  // c20..c22 of the vertex block this draw went out with, to settle how the
+  // interpreter derives them from the palette slot (world[] above).
+  float vs_c20[12];
 };
 
 struct MeshStream {
@@ -113,6 +116,12 @@ struct TextureRecord {
 // Cheap, per node draw: whether the window is open. The DrawSingle hook
 // fills the node tag only when this is true.
 bool RecordingArmed();
+
+// The guest D3D device the draws go through, as last seen by the draw hook;
+// 0 before the first draw. The DrawSingle seam reads the guest's constant
+// registers through it.
+u32 LastGuestDeviceVa();
+void NoteGuestDeviceVa(u32 device_guest);
 
 // From the draw hook, once the queued draw is complete, under the video
 // state's mutex.

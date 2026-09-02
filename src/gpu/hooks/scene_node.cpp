@@ -33,6 +33,10 @@
 // against a capture, instead of as one 1,935-instruction leap.
 
 #include <atomic>
+#include <cstring>
+#include <string>
+
+#include <fmt/format.h>
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -42,14 +46,66 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/host_draw.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
 extern "C" void __imp__bdSceneNodeDrawSingle(PPCContext &__restrict ctx,
                                              uint8_t *base);
 
+REXCVAR_DECLARE(bool, bd_node_write_diag);
+
 namespace {
 std::atomic<u64> g_node_calls{0};
+
+// Which constant registers the per-node interpreter writes. Snapshot the
+// guest's vertex and pixel register files on entry, diff on return, and
+// after a few thousand node draws print, per register, how many draws
+// changed it. This is what a host-issued node draw has to reproduce; the
+// registers it does NOT touch stay whatever the material or the pass set.
+constexpr u32 kRegBytes = 256 * 16;
+thread_local u8 t_vs_before[kRegBytes];
+thread_local u8 t_ps_before[kRegBytes];
+u32 g_diag_hist_vs[256];
+u32 g_diag_hist_ps[256];
+u32 g_diag_draws = 0;
+bool g_diag_told = false;
+
+void DiagBefore(u32 device) {
+  const auto *vs = bd::mem::try_at<const u8>(device + 0x700);
+  const auto *ps = bd::mem::try_at<const u8>(device + 0x1700);
+  if (!vs || !ps)
+    return;
+  std::memcpy(t_vs_before, vs, kRegBytes);
+  std::memcpy(t_ps_before, ps, kRegBytes);
+}
+
+void DiagAfter(u32 device) {
+  const auto *vs = bd::mem::try_at<const u8>(device + 0x700);
+  const auto *ps = bd::mem::try_at<const u8>(device + 0x1700);
+  if (!vs || !ps)
+    return;
+  for (u32 r = 0; r < 256; ++r) {
+    if (std::memcmp(vs + r * 16, t_vs_before + r * 16, 16) != 0)
+      ++g_diag_hist_vs[r];
+    if (std::memcmp(ps + r * 16, t_ps_before + r * 16, 16) != 0)
+      ++g_diag_hist_ps[r];
+  }
+  if (++g_diag_draws == 4000 && !g_diag_told) {
+    g_diag_told = true;
+    std::string vs_s, ps_s;
+    for (u32 r = 0; r < 256; ++r) {
+      if (g_diag_hist_vs[r])
+        vs_s += fmt::format(" c{}:{}", r, g_diag_hist_vs[r]);
+      if (g_diag_hist_ps[r])
+        ps_s += fmt::format(" c{}:{}", r, g_diag_hist_ps[r]);
+    }
+    BD_INFO("[node] registers changed by bdSceneNodeDrawSingle over {} node "
+            "draws - VS:{} | PS:{}",
+            g_diag_draws, vs_s.empty() ? " none" : vs_s,
+            ps_s.empty() ? " none" : ps_s);
+  }
+}
 } // namespace
 
 REX_HOOK_RAW(bdSceneNodeDrawSingle) {
@@ -67,7 +123,17 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
   // traverse context - and what the context points at. Only while the
   // recorder's window is open; the tag is the seam the host walk will later
   // stand on, and every draw of this node reaches the queue with it set.
-  if (bd::gpu::scene::RecordingArmed()) {
+  if (REXCVAR_GET(bd_node_write_diag) && !g_diag_told) {
+    const u32 device = bd::gpu::scene::LastGuestDeviceVa();
+    if (device) {
+      DiagBefore(device);
+      __imp__bdSceneNodeDrawSingle(ctx, base);
+      DiagAfter(device);
+      return;
+    }
+  }
+
+  if (bd::gpu::scene::RecordingArmed() || bd::gpu::scene::HostDrawEnabled()) {
     using namespace bd::gpu::scene;
     NodeTag tag;
     tag.mesh_va = ctx.r3.u32;
@@ -83,7 +149,16 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     tag.seq = static_cast<u32>(n);
     tag.valid = true;
     SetCurrentNodeTag(tag);
-    __imp__bdSceneNodeDrawSingle(ctx, base);
+    // The host issues this node's draw itself when it has a template for it;
+    // the interpreter runs otherwise, and what it writes becomes the template.
+    if (!HostDrawReplay(tag)) {
+      const bool capture = HostDrawEnabled();
+      if (capture)
+        HostDrawSnapshotBefore();
+      __imp__bdSceneNodeDrawSingle(ctx, base);
+      if (capture)
+        HostDrawCommit(tag);
+    }
     ClearCurrentNodeTag();
     return;
   }
@@ -128,6 +203,7 @@ constexpr u32 kSamplerStateCacheVa = 0x82DBE330u;
 } // namespace
 
 REX_HOOK_RAW(bdSetSamplerState) {
+  bd::gpu::scene::NoteSamplerSet(ctx.r3.u32);
   if (!REXCVAR_GET(bd_host_sampler_state)) {
     __imp__bdSetSamplerState(ctx, base);
     return;

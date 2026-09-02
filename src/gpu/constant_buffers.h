@@ -138,6 +138,14 @@ u32 StageInstanceRecord();
 // Copies n staged records contiguously into the GPU buffer; the first
 // instance index to draw with, or ~0u when the slot's region is exhausted.
 u32 CommitInstanceRecords(const u32 *staged, u32 n);
+// A staged record's bytes (this frame), or null.
+const InstanceRecord *StagedInstanceRecord(u32 index);
+
+// The guest's vertex / pixel constant file, byte-swapped and NaN-flushed into
+// `out` (4096 bytes) the way the uploads read it; from the guest device, never
+// through a material override. For the host-issued node draw.
+void CopyGuestVertexBlock(u32 device_guest, u8 *out);
+void CopyGuestPixelBlock(u32 device_guest, u8 *out);
 
 // Diagnostic: the host-visible bytes of a constant block by its dynamic
 // offset (the ring is mapped for the life of the device). Null when unmapped.

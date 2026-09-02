@@ -605,6 +605,11 @@ const u8 *ConstantBlockBytes(u32 dynamic_offset) {
   return s.buffer.mapped + dynamic_offset;
 }
 
+const InstanceRecord *StagedInstanceRecord(u32 index) {
+  auto &s = upload_state();
+  return index < s.staged.size() ? &s.staged[index] : nullptr;
+}
+
 u32 CommitInstanceRecords(const u32 *staged, u32 n) {
   auto &s = upload_state();
   if (!s.instances.mapped || n == 0)
@@ -665,13 +670,52 @@ void PinScreenUVScaleReg(u8 *block) {
   }
 }
 
+// The vertex or pixel block into scratch: from the host-issued draw's
+// template when one is set (already host order), else swapped from the guest.
+void FetchVertexBlock(UploadState &s, u32 device_guest) {
+  const auto *ov = bd::gpu::state().material_override;
+  if (ov && ov->vs) {
+    std::memcpy(s.scratchVS, ov->vs, kConstantBlockBytes);
+    return;
+  }
+  CopyByteSwap32FlushNaN(s.scratchVS,
+                         device_guest + offsetof(D3DDevice, vsFloatConstants),
+                         kConstantBlockBytes);
+}
+
+void FetchPixelBlock(UploadState &s, u32 device_guest) {
+  const auto *ov = bd::gpu::state().material_override;
+  if (ov && ov->ps) {
+    std::memcpy(s.scratchPS, ov->ps, kConstantBlockBytes);
+    return;
+  }
+  CopyByteSwap32FlushNaN(s.scratchPS,
+                         device_guest + offsetof(D3DDevice, psFloatConstants),
+                         kConstantBlockBytes);
+}
+
+void CopyGuestVertexBlock(u32 device_guest, u8 *out) {
+  if (!device_guest || !out)
+    return;
+  CopyByteSwap32FlushNaN(out,
+                         device_guest + offsetof(D3DDevice, vsFloatConstants),
+                         kConstantBlockBytes);
+}
+
+void CopyGuestPixelBlock(u32 device_guest, u8 *out) {
+  if (!device_guest || !out)
+    return;
+  CopyByteSwap32FlushNaN(out,
+                         device_guest + offsetof(D3DDevice, psFloatConstants),
+                         kConstantBlockBytes);
+  PinScreenUVScaleReg(out);
+}
+
 void SnapshotVertexShaderConstants(u32 device_guest) {
   auto &s = upload_state();
   if (!device_guest)
     return;
-  CopyByteSwap32FlushNaN(s.scratchVS,
-                         device_guest + offsetof(D3DDevice, vsFloatConstants),
-                         kConstantBlockBytes);
+  FetchVertexBlock(s, device_guest);
 }
 
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
@@ -683,9 +727,7 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
   if (!device_guest)
     return {};
   u8 *block = s.scratchVS;
-  CopyByteSwap32FlushNaN(block,
-                         device_guest + offsetof(D3DDevice, vsFloatConstants),
-                         kConstantBlockBytes);
+  FetchVertexBlock(s, device_guest);
   if (eye_skew != 0.0f || eye_shift != 0.0f) {
     // The four registers are the four COLUMNS of the view-projection, not its
     // rows. Read off a scene draw, register 35 is (0.063, -0.122, 0.991,
@@ -760,9 +802,7 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   if (!device_guest)
     return {};
   u8 *block = s.scratchPS;
-  CopyByteSwap32FlushNaN(block,
-                         device_guest + offsetof(D3DDevice, psFloatConstants),
-                         kConstantBlockBytes);
+  FetchPixelBlock(s, device_guest);
   PinScreenUVScaleReg(block);
   if (s.psBound && std::memcmp(block, s.lastPS, kConstantBlockBytes) == 0) {
     NoteConstantUpload(false, false);
@@ -877,10 +917,12 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       // so the address mode bits there are valid.
       if (device_p) {
         const auto &fc_be = device_p->fetchConstants[i];
-        const u32 fc[6] = {
+        u32 fc[6] = {
             u32(fc_be.dword[0]), u32(fc_be.dword[1]), u32(fc_be.dword[2]),
             u32(fc_be.dword[3]), u32(fc_be.dword[4]), u32(fc_be.dword[5]),
         };
+        if (const auto *ov = vs.material_override; ov && ov->fetch)
+          std::memcpy(fc, ov->fetch[i], sizeof(fc));
         const bool clamp3d =
             tex->viewDimension == plume::RenderTextureViewDimension::TEXTURE_3D;
         auto &sc = s.samplerSlots[i];
@@ -915,7 +957,10 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // Shader bool constants: VS at device+0x2700, PS at device+0x2710, 4 BE
   // dwords each. Shaders branch on BOOL_BIT(n) of a 256-bit register file
   // (VS 0..127, PS 128..255).
-  if (device_guest) {
+  if (const auto *ov = vs.material_override; ov && ov->bools) {
+    for (u32 i = 0; i < 8; ++i)
+      s.shared.booleansArr[i] = ov->bools[i];
+  } else if (device_guest) {
     const auto *device = bd::mem::at<const D3DDevice>(device_guest);
     for (u32 i = 0; i < 4; ++i) {
       s.shared.booleansArr[i] = device ? u32(device->vsBoolConstants[i]) : 0u;

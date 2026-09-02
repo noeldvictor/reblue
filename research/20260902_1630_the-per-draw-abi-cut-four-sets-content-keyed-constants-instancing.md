@@ -158,3 +158,28 @@ out like the guest's, keeps the render-view-1 per-node counter, and hands surviv
 host's `bdSceneNodeDrawSingle`. Village run: 847-850 draws a frame against 819-860 with the
 guest walk, the same instancing tally, the same frame. The walk is ours now; the interpreter
 behind each node is still the guest's, which is stage 2b.
+
+## Evening: the host-issued node draw (stage 2b), and what the interpreter really writes
+
+`bd_node_write_diag` (a register-file diff across 4000 `bdSceneNodeDrawSingle` calls) and
+then the setter hooks settled what the per-node interpreter writes: vertex c0-c4 and c20-c23
+on every node, pixel c0-c13 on every node, c57 in the foliage shaders, the bone palette
+c60-c151 for skinned nodes; five textures and eleven sampler states through the hooks. The
+world rows are the palette slot transposed with the translation in .w (3728 of 3728 recorded
+draws; `tools/scene_walk_dump.py` prints the comparison).
+
+Three wrong versions on the way, each visible on the desktop within a minute: (1) one draw
+per node - a node's run issues one draw per material range, so the rock behind Shu vanished;
+(2) a value diff as the delta - a same-value write is invisible, so a replay after a different
+material inherited that material's register (lighting flicker); (3) whole-block templates -
+the view-projection moves every frame and every template went volatile. The version that
+holds: per sub-draw the host state and the registers the setter hooks saw written; a register
+whose value moved between sightings is "per visual" and comes from the latest interpreted node
+of the same visual this frame (one node per visual per frame is interpreted for that);
+everything else is the template's. `gpu/scene/host_draw.cpp`.
+
+Village: **111 of 420 node draws a frame host-issued**, 17 interpreted for fresh visual
+values, 0 volatile templates, 0 dropped draws, frame identical (`frame_1788384614`). The
+remaining 290 are foliage (c57) and skinned nodes, which stage 6 takes, and the 14 pixel and
+5 vertex per-visual registers, which are the lighting and camera terms the host should compute
+from the visual itself - the owner has cleared deep rewrites of the camera and lighting.

@@ -19,7 +19,7 @@ import sys
 HEADER = struct.Struct("<4sIIIIIII")
 
 # NodeDrawRecord
-NODE = struct.Struct("<IIIIIIII16fIIQQfI")
+NODE = struct.Struct("<IIIIIIII16fIIQQfI12f")
 # MeshRecord: key, block_hash, block_size, stream_count, 16 x (slot, offset,
 # stride, size), ib_offset, ib_bytes, ib_format, indexed, count, start_index,
 # base_vertex, start_vertex, decl_hash, centre[3], radius
@@ -36,8 +36,8 @@ def read(path):
     magic, version, first, frames, n_node, n_mesh, n_mat, n_tex = HEADER.unpack_from(data, 0)
     if magic != b"BDSW":
         sys.exit(f"{path}: not a scene walk (magic {magic!r})")
-    if version != 1:
-        sys.exit(f"{path}: version {version}, this tool reads 1")
+    if version != 2:
+        sys.exit(f"{path}: version {version}, this tool reads 2")
     off = HEADER.size
     nodes = [NODE.unpack_from(data, off + i * NODE.size) for i in range(n_node)]
     off += n_node * NODE.size
@@ -111,6 +111,30 @@ def main():
             print(f"  {len(ms):5} meshes  vs {vs:016x} ps {ps:016x} tech {tech} {n_tex} textures")
         else:
             print(f"  {len(ms):5} meshes  mat {mt:016x}")
+
+    # How c20..c22 relate to the palette slot: identical rows, transposed, or
+    # neither (composed with something else).
+    same = transposed = other = 0
+    example = None
+    for n in nodes[:2000]:
+        w = n[8:24]
+        c = n[30:42]
+        as_is = all(abs(w[r * 4 + k] - c[r * 4 + k]) < 1e-4 for r in range(3) for k in range(4))
+        col = all(abs(w[k * 4 + r] - c[r * 4 + k]) < 1e-4 for r in range(3) for k in range(3)) and \
+              all(abs(w[12 + r] - c[r * 4 + 3]) < 1e-4 for r in range(3))
+        if as_is:
+            same += 1
+        elif col:
+            transposed += 1
+        else:
+            other += 1
+            if example is None:
+                example = n
+    print(f"\nc20..c22 against the palette slot (first {min(2000, len(nodes))} draws): "
+          f"as-is {same}, transposed (rows = columns of the slot) {transposed}, neither {other}")
+    if example is not None:
+        print("  example palette:", [round(v, 3) for v in example[8:24]])
+        print("  example c20-22 :", [round(v, 3) for v in example[30:42]])
 
     print(f"\ntextures: {len(texs)}")
     for t in texs[:20]:

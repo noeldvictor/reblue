@@ -26,6 +26,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
+#include "gpu/scene/host_draw.h"
 #include "gpu/shaders/shader_constants.h"
 
 namespace {
@@ -307,14 +308,28 @@ void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
     mark;                                                                      \
   }
 
-REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantFN,
-                           bd::gpu::Video::MarkVSConstantsDirty())
+// The float setters also tell the host-issued node draw which registers a
+// node's interpreter run writes: (device, start register, data, count).
+REX_EXTERN(__imp__D3DDevice_SetVertexShaderConstantFN);
+REX_HOOK_RAW(D3DDevice_SetVertexShaderConstantFN) {
+  const u32 start = ctx.r4.u32;
+  const u32 count = ctx.r6.u32;
+  __imp__D3DDevice_SetVertexShaderConstantFN(ctx, base);
+  bd::gpu::Video::MarkVSConstantsDirty();
+  bd::gpu::scene::NoteConstantsSet(true, start, count);
+}
+REX_EXTERN(__imp__D3DDevice_SetPixelShaderConstantFN);
+REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantFN) {
+  const u32 start = ctx.r4.u32;
+  const u32 count = ctx.r6.u32;
+  __imp__D3DDevice_SetPixelShaderConstantFN(ctx, base);
+  bd::gpu::Video::MarkPSConstantsDirty();
+  bd::gpu::scene::NoteConstantsSet(false, start, count);
+}
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantI,
                            bd::gpu::Video::MarkVSConstantsDirty())
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantB,
                            bd::gpu::Video::MarkVSConstantsDirty())
-REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantFN,
-                           bd::gpu::Video::MarkPSConstantsDirty())
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantI,
                            bd::gpu::Video::MarkPSConstantsDirty())
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantB,

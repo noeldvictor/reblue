@@ -424,6 +424,25 @@ REXCVAR_DEFINE_INT32(bd_scene_record_frames, 8, kCvarGroup,
 // The scene tree walk on the host (gpu/scene/host_walk.cpp): the traversal,
 // the cull and the draw hand-off are host code; the per-node interpreter is
 // still the guest's. Bit-identical to the guest walk by construction.
+// One-shot diagnostic: which constant registers bdSceneNodeDrawSingle writes
+// per node draw, printed once after 4000 draws. The host-issued node draw
+// (stage 2b) has to reproduce exactly these.
+REXCVAR_DEFINE_BOOL(bd_node_write_diag, false, kCvarGroup,
+                    "Print which constant registers the per-node interpreter "
+                    "writes, once.");
+
+// Host-issued node draws (gpu/scene/host_draw.cpp): a node whose draw the
+// interpreter has produced once is drawn by the host from that template for
+// the next bd_host_draw_refresh frames, world rebuilt from the palette slot;
+// then the interpreter runs once and refreshes it. Skinned nodes, foliage
+// (c57) and animated materials keep the interpreter.
+REXCVAR_DEFINE_BOOL(bd_host_draw, true, kCvarGroup,
+                    "Issue scene node draws from host templates, skipping the "
+                    "guest's per-node interpreter.");
+REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
+                     "Frames a host node draw template is used before the "
+                     "interpreter refreshes it.");
+
 REXCVAR_DEFINE_BOOL(bd_host_walk, true, kCvarGroup,
                     "Walk the scene tree on the host instead of in the guest.");
 

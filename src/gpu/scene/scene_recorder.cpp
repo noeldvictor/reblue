@@ -153,6 +153,16 @@ bool RecordingArmed() {
   return state().armed.load(std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<u32> g_device_va{0};
+} // namespace
+
+u32 LastGuestDeviceVa() { return g_device_va.load(std::memory_order_relaxed); }
+void NoteGuestDeviceVa(u32 device_guest) {
+  if (device_guest)
+    g_device_va.store(device_guest, std::memory_order_relaxed);
+}
+
 void OnFrameEnd() {
   auto &r = state();
   if (r.done)
@@ -317,6 +327,17 @@ void OnQueuedDraw(const VideoState &s, const QueuedDraw &q, u32 device_guest) {
   n.mesh_key = m.mesh_key;
   n.material_key = mat.material_key;
   n.depth_sq = static_cast<float>(bd::engine::LastNodeViewDistanceSq());
+  {
+    const float *vs_regs = nullptr;
+    if (q.record_index != ~0u) {
+      if (const auto *rec = StagedInstanceRecord(q.record_index))
+        vs_regs = rec->regs;
+    } else if (const u8 *b = ConstantBlockBytes(q.constant_offsets[0])) {
+      vs_regs = reinterpret_cast<const float *>(b);
+    }
+    if (vs_regs)
+      std::memcpy(n.vs_c20, vs_regs + 20 * 4, sizeof(n.vs_c20));
+  }
   r.nodes.push_back(n);
 }
 

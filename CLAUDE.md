@@ -304,6 +304,18 @@ Stages, each shipping working:
    `bd_host_walk` (default on) replaces `bdSceneNodeCullTraverse` with a host walk over the
    guest's draw nodes - same cull hooks, the guest's own visibility test, identical draw count
    and frame. Culling, LOD and the host-issued draw (2b) attach there now.
+   **Stage 2b shipped 2026-09-02 evening**: `bd_host_draw` (default on) issues a node's draws
+   from a host template instead of running the 1,935-instruction interpreter, for nodes whose
+   vertex shader reads neither the foliage collision vector (c57) nor a bone palette. The
+   template holds each sub-draw's host state and the registers the interpreter SETS (the
+   setter hooks, not a value diff - a same-value write is still a write); a register that
+   moves between frames is taken from the latest interpreted node of the same visual in the
+   same frame, and one node per visual per frame is interpreted to keep those fresh. The
+   world rows c20-c23 are rebuilt from the palette slot (transposed, translation in .w,
+   verified over 3728 draws). Village: 111 of 420 node draws a frame host-issued, 0 volatile
+   templates, frame identical. `[node] host-issued N of M` is the number. The rest is the
+   foliage and skinned nodes (stage 6, animation on the host) and the per-visual lighting
+   and camera registers (VS c0-c4, PS c0-c13), which the host should compute itself.
 1. **Record the guest's scene walk.** A recorder on the `bdSceneNodeDrawSingle` seam writes
    what each node draw is (mesh, material pipeline, textures, transform, bone palette) and
    which guest structures it came from. This is how the host learns the scene tree; the host

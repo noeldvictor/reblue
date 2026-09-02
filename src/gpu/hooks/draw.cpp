@@ -37,7 +37,9 @@
 #include "gpu/gpu_timing.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
+#include "gpu/hooks/draw_dispatch.h"
 #include "gpu/post_chain.h"
+#include "gpu/scene/host_draw.h"
 #include "gpu/scene/scene_recorder.h"
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/shaders/shader_constants.h"
@@ -133,6 +135,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // GPU number in the capture. Coarse GPU cost comes from the per-frame zones.
   BD_CPU_ZONE_DYN(zone_name);
 #endif
+  bd::gpu::scene::NoteGuestDeviceVa(device_guest);
   bd::gpu::NoteDraw();
   bd::gpu::NoteDrawVertices(args.vertexOrIndexCount);
   // bd_dump_post_draws: name every post-effect draw of the next N frames by
@@ -500,6 +503,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // window is open.
     if (bd::gpu::scene::RecordingArmed())
       bd::gpu::scene::OnQueuedDraw(s, q, device_guest);
+    // The host-issued draw's template: what the interpreter produced for
+    // this node, kept so the next frames skip the interpreter.
+    if (!eye_vp && bd::gpu::scene::HostDrawEnabled())
+      bd::gpu::scene::HostDrawCapture(s, q, device_guest, primitive_type);
     bd::gpu::DrawQueuePush(q);
   };
   const auto finish_deferred = [&]() {
@@ -1145,6 +1152,22 @@ u32 D3DDevice_DrawVertices_hook(u32 device_guest, u32 primitiveType,
 }
 
 } // namespace
+
+namespace bd::gpu::hooks {
+void DispatchHostNodeDraw(u32 device_guest, u32 primitive_type, bool indexed,
+                          u32 count, u32 start_index, i32 base_vertex,
+                          u32 start_vertex) {
+  DrawArgs args{};
+  args.indexed = indexed;
+  args.vertexOrIndexCount = count;
+  args.startIndex = start_index;
+  args.baseVertexIndex = base_vertex;
+  args.startVertex = start_vertex;
+  bd::gpu::NoteDrawKind(indexed ? 0 : 1);
+  DispatchDraw(device_guest, primitive_type,
+               indexed ? "DrawIndexedVertices" : "DrawVertices", args);
+}
+} // namespace bd::gpu::hooks
 
 REX_HOOK(D3DDevice_DrawVertices, D3DDevice_DrawVertices_hook);
 REX_HOOK(D3DDevice_DrawVerticesUP, D3DDevice_DrawVerticesUP_hook);

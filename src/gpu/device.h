@@ -319,6 +319,8 @@ u32 CurrentRenderPassId();
 // hides the swap hook stall. One would block on the GPU between every frame.
 constexpr u32 kNumFrames = 2;
 
+struct MaterialOverride;
+
 struct VideoState {
   // True while the draw being recorded is scene geometry rather than a
   // full-screen post pass. Set per draw before the constants are flushed,
@@ -475,6 +477,12 @@ struct VideoState {
 
   bool deferring_draw = false;
   QueuedDraw pending{};
+
+  // A host-issued node draw (gpu/scene/host_draw.cpp) supplies its constant
+  // sources from a template instead of the guest device: the vertex and
+  // pixel blocks (host byte order), the 32 fetch constants and the 8 bool
+  // words. Null for every guest draw. The uploads read through this.
+  const MaterialOverride *material_override = nullptr;
 
   // Surfaces currently in a write layout, so they can all be flipped to
   // SHADER_READ in one batch when the render target changes. See
@@ -673,6 +681,14 @@ u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex);
 void WriteTextureDescriptor(VideoState &s, u32 slot,
                             plume::RenderTexture *texture,
                             plume::RenderTextureView *view);
+
+// See VideoState::material_override.
+struct MaterialOverride {
+  const u8 *vs = nullptr;
+  const u8 *ps = nullptr;
+  const u32 (*fetch)[6] = nullptr;
+  const u32 *bools = nullptr;
+};
 
 // Points an allocated bindless slot at an arbitrary view, with the renderer
 // lock already held. The multiview resolve needs this: it rebuilds its per-eye
