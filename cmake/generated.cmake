@@ -19,10 +19,15 @@ foreach(shader IN ITEMS copy_vs bd_2d_blit_vs imgui_vs)
 endforeach()
 foreach(shader IN ITEMS
         gamma_correction_ps cel_ps pfx_occlusion_count_ps
-        bd_2d_blit_ps imgui_ps
+        bd_2d_blit_ps imgui_ps)
+    reblue_host_shader(${shader} ps_6_0)
+endforeach()
+# 6.1: the MSAA resolves read SV_ViewID to pick the right eye's slice view of
+# a two-layer multisampled scene - without it they flattened the stereo pair.
+foreach(shader IN ITEMS
         resolve_msaa_color_2x resolve_msaa_color_4x resolve_msaa_color_8x
         resolve_msaa_depth_2x resolve_msaa_depth_4x resolve_msaa_depth_8x)
-    reblue_host_shader(${shader} ps_6_0)
+    reblue_host_shader(${shader} ps_6_1)
 endforeach()
 # 6.1: copy_color_ps reads SV_ViewID so the guest's EDRAM resolve copies each
 # eye's own layer instead of flattening the pair to layer 0.

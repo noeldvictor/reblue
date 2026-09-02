@@ -492,6 +492,13 @@ REXCVAR_DEFINE_BOOL(bd_barrier_hoist, false, kCvarGroup,
 REXCVAR_DEFINE_STRING(bd_vulkan_icd, "", kCvarGroup,
                       "Vulkan ICD to load directly: \"turnip\" or a path. "
                       "Empty uses the platform loader.");
+// Probe: bindless sets without update-after-bind. Formally invalid (the
+// renderer writes descriptors while command buffers using them are pending),
+// so a render-stage trace only - it asks whether update-after-bind is what
+// keeps Adreno from binning the guest draws.
+REXCVAR_DEFINE_BOOL(bd_debug_no_uab, false, kCvarGroup,
+                    "Probe: create the bindless sets without "
+                    "update-after-bind (invalid on purpose).");
 REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
                     "Probe: strip stencil and depth bias from every pipeline "
                     "(renders wrongly on purpose).");

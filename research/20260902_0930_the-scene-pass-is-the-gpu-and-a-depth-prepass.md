@@ -423,3 +423,26 @@ dt 49.87 | gpu_total 40.43 | elsewhere 12-13 ms    (unchanged)
 
 The runtime now dispatches through the `vkGetInstanceProcAddr` we pass, which
 is the precondition for driving the headset with a directly loaded ICD.
+
+## Update-after-bind is not the trigger (2026-09-02 10:05)
+
+`bd_debug_no_uab=true` creates the bindless texture and sampler sets without
+`UPDATE_AFTER_BIND` on the bindings, the layout and the pool (plume
+`VulkanInterfaceOptions::noUpdateAfterBind`; partially-bound and the variable
+count stay). The log confirmed it took (`[vk] bd_debug_no_uab: bindless sets
+without update-after-bind`, `[config]` audit live=true), the frame rendered
+(30.0 fps in the light stretch, `gpu_total_ms` 38.5, 557 draws), and the
+render-stage trace is unchanged: the 1376x720 c64 d32 scene pass is
+`Direct, bins=1`, Render 20.4 ms, Preempt 5.0 ms, in both windows. The same
+trace still shows the 1920x3664 c32 pass in `HwBinning bins=25`, so the driver
+is choosing per pass, not per process. Descriptor-set flags eliminated.
+
+Remaining suspects, in the order they will be probed: the recompiled vertex
+shaders (Adreno builds a position-only binning variant; if the position
+depends on the whole fetch-constant/skinning body, the driver may judge the
+visibility pass dearer than direct rendering), the 16-stream vertex input, and
+per-draw dynamic offsets. Turnip through `XR_KHR_vulkan_enable2` remains the
+only route to an authoritative reason, and it stalls at
+`xrCreateVulkanInstanceKHR` = `XR_ERROR_VALIDATION_FAILURE`; the next step there
+is a logging `vkGetInstanceProcAddr` trampoline that prints what the runtime
+asks of the ICD.

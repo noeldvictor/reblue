@@ -203,8 +203,9 @@ and the distance to the next boundary, never fps.
    surface must stop saying `Mode: 0 (Direct)` and start showing tens of bins. **Eliminated by
    one trace each (2026-09-02):** in-pass timestamps, side-by-side's doubled draws and per-draw
    viewports (mono is direct too), blending on depth writers, the seed copy, the vertex-stage
-   `SV_ViewID`, the draw count per pass instance, alpha-test discard. The vendor profiler gives
-   no reason. **Next: `XR_KHR_vulkan_enable2`**, so the runtime creates the instance and device
+   `SV_ViewID`, the draw count per pass instance, alpha-test discard, and (10:05) update-after-bind
+   on the bindless sets (`bd_debug_no_uab`, invalid on purpose, trace only). The vendor profiler
+   gives no reason. The same trace bins a 1920x3664 pass 25 ways, so the choice is per pass. **Next: `XR_KHR_vulkan_enable2`**, so the runtime creates the instance and device
    through a `vkGetInstanceProcAddr` we choose - which lets Mesa's Turnip (`bd_vulkan_icd=turnip`,
    packaged with `EXTRA_LIBS=out/turnip/libvulkan_freedreno.so`, loaded through its HAL `HMI`)
    run the headset path and say in its own log why a pass is not binned. The flat path cannot

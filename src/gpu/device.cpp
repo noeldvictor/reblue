@@ -44,6 +44,7 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 #include "xr/xr_session.h"
 REXCVAR_DECLARE(bool, bd_vr_enabled);
 REXCVAR_DECLARE(std::string, bd_vulkan_icd);
+REXCVAR_DECLARE(bool, bd_debug_no_uab);
 #endif
 
 #include "core/logging.h"
@@ -415,6 +416,9 @@ bool Video::CreateHostDevice(rex::ui::Window *window) {
                 icd, path);
       }
     }
+    xr_options.noUpdateAfterBind = REXCVAR_GET(bd_debug_no_uab);
+    if (xr_options.noUpdateAfterBind)
+      BD_INFO("[vk] bd_debug_no_uab: bindless sets without update-after-bind");
     s.render_iface = plume::CreateVulkanInterface(&xr_options);
 #else
     s.render_iface = plume::CreateVulkanInterface();
