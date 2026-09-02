@@ -19,6 +19,7 @@
 REXCVAR_DECLARE(bool, bd_draw_defer);
 REXCVAR_DECLARE(bool, bd_draw_sort);
 REXCVAR_DECLARE(bool, bd_draw_eye_major);
+REXCVAR_DECLARE(i32, bd_pass_split_draws);
 
 namespace bd::gpu {
 
@@ -308,11 +309,23 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     }
   }
 
+  // Probe: end and reopen the render pass every N draws. Adreno runs the
+  // 500-draw scene pass in direct (non-tiled) mode while a small pass on the
+  // same kind of surface bins; if the trigger is the size of the pass, the
+  // chunks will bin, at a tile load and store per split (~1 ms at 1376x720).
+  const i32 split_every = REXCVAR_GET(bd_pass_split_draws);
+  u32 since_split = 0;
   for (const QueuedDraw &q : g_queue) {
     const bool two_pass = q.prepass_pipeline && q.color_pipeline;
     QueuedDraw d = q;
     if (two_pass)
       d.pipeline = q.color_pipeline;
+    if (split_every > 0 && since_split >= static_cast<u32>(split_every)) {
+      cmd->setFramebuffer(nullptr);
+      st.framebuffer = nullptr;
+      since_split = 0;
+    }
+    ++since_split;
     if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
     if (!d.blended) {
       ++opaque;

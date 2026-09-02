@@ -261,3 +261,22 @@ pass's draws may not is their shaders: every guest vertex shader declares
 `SV_ViewID` and reads it (`g_ViewIndex = iViewID`) whether or not the pass is
 multiview. A probe shader cache without it in vertex shaders
 (`XENOS_RECOMP_NO_VS_VIEWID=1` at cache generation) is being traced.
+
+| no `SV_ViewID` in vertex shaders (probe cache) | 20.5-21.6 ms | Direct |
+
+The vertex-stage ViewIndex is not it either. In the same frame a *small*
+1376x720 colour+depth pass bins into 16 tiles with full load/store stages at
+1.9 ms, so the surface type is fine and the driver's decision is about what
+the big pass contains or how much of it there is. Next split: the draw count
+and primitive count of the pass (cull distance 120), then the guest draws'
+state - bindless descriptor sets with update-after-bind, per-draw dynamic
+uniform offsets, 16-stream vertex input - against the host pipelines the
+small pass uses.
+
+| `bd_cull_distance=120` (fewer draws) | both windows at the title screen | - |
+
+Twice now a run with a tighter cull distance was not in a field scene at
+134 s (154 surfaces a window, all 3664x1920 present blits at 60 fps). The
+draw-count question is being asked a different way instead:
+`bd_pass_split_draws=100` ends and reopens the render pass every 100 draws
+inside the deferred flush, with the same cull and the same scene.

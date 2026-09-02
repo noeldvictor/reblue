@@ -387,6 +387,14 @@ REXCVAR_DEFINE_BOOL(bd_draw_eye_major, true, kCvarGroup,
                     "Emit deferred side-by-side draws eye-major rather than "
                     "alternating viewports per draw.");
 
+// Probe: end and reopen the deferred pass's render pass every N draws (0 =
+// never). Adreno runs the ~500-draw scene pass in direct mode while a small
+// pass on the same surface type bins; if the trigger is the size of the pass,
+// the chunks bin. Each split costs a tile load and store.
+REXCVAR_DEFINE_INT32(bd_pass_split_draws, 0, kCvarGroup,
+                     "Split a deferred render pass every N draws (probe).")
+    .range(0, 100000);
+
 // Per-segment and per-target GPU timestamps, written INSIDE render passes.
 // Off on Android: a timestamp inside a pass takes Adreno out of tiled
 // rendering for that pass, and the on-device render-stage trace showed every
