@@ -134,11 +134,12 @@ issue the layout barriers around every layered target. See the 2026-09-01 note.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
-- **Five driver threads at 55-75% of a core each are the Adreno shader compiler** (75% of their
-  samples in `libllvm-qgl.so`). The pipeline counter explains it: **1001 -> 1601 pipelines
-  created in 64 s of a steady field scene**, ~10 a second, minutes after load. Something in the
-  pipeline cache key churns; find it. `bd_thread_policy` mistakes these threads for guest
-  workers and pins them to the little cores.
+- **Five threads at 55-75% of a core each are our own PSO precache workers** running the
+  Adreno shader compiler (75% of their samples in `libllvm-qgl.so`): `pso_predictor` expands
+  every technique into cores x cull x spec x skinning, the desktop compiles the 5,000+ in
+  twenty seconds and Adreno takes minutes. `bd_pso_precache=false` measured an identical frame
+  (50.1 ms, GPU 39.1, CPU 16.5) with 41 lazy compiles, so it is not a lever either way.
+  `bd_thread_policy` counts these as guest workers and pins them to the little cores.
 - **The thread at 100% of a big core (`SDLThread`) is SDL's event pump spinning** -
   `SDL_PumpEvents`, joystick detection, `clock_gettime`, mutex churn - not guest code. The SDK's
   `RunMainMessageLoop` calls `SDL_WaitEvent`, which on Android should block; something keeps it
@@ -186,30 +187,26 @@ and the distance to the next boundary, never fps.
 
 ## Start here. Ordered.
 
-1. **Find what churns the pipeline cache.** ~10 pipelines a second are compiled in a steady field
-   scene and five cores' worth of driver threads pay for it. Log the cache key of each creation
-   after the first thousand and diff them; the varying field is the bug. This is also the likely
-   reason the frame's GPU time jitters between the 33.3 and 50 ms tiers.
-2. **Multiview's 277 ms on the Quest.** With `bd_mv_resolve` off, the scene pass alone is 75 ms
+1. **Multiview's 277 ms on the Quest.** With `bd_mv_resolve` off, the scene pass alone is 75 ms
    (census `1280x720x2L depth`). Run `bash tools/validate_quest.sh
    "bd_stereo=false,bd_stereo_multiview=true"` first - a layered image sampled in the wrong
    layout is exactly what validation names - then compare the census against a run with
    `bd_mv_resolve=true`.
-3. **Finish multiview's flatten bug** with `tools/rdc_layer_diff.py` (see Multiview below). The
+2. **Finish multiview's flatten bug** with `tools/rdc_layer_diff.py` (see Multiview below). The
    desktop loop verifies it in 90 seconds.
-4. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
+3. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
    `LOAD_OP_DONT_CARE` (`discardTexture` is in plume), MSAA is already off, then foveation.
-5. **Then the CPU work the owner has been asking for**, attached to the seams that exist:
+4. **Then the CPU work the owner has been asking for**, attached to the seams that exist:
    instancing (2083 `bdSceneNodeDrawSingle` calls a frame take only 1270 distinct first
    arguments), indirect draws off `bd_draw_defer`, and the SDK's vector-register codegen (VMX
    lives in memory: ~15 memory ops per useful arithmetic op in `libreblue.so`). The one negative
    result that shapes all of it: replacing `bdSetSamplerState` with host code measured *slower*,
    twice. Translating guest functions one-for-one is not the win. **Submitting less is.**
-6. **LRZ.** 64% of scene draws blend AND write depth, which forces low-resolution-Z invalidation
+5. **LRZ.** 64% of scene draws blend AND write depth, which forces low-resolution-Z invalidation
    on Adreno, and front-to-back sorting measured exactly zero because of it. Both naive fixes
    destroy the image (depth-of-field and fog sample the depth buffer). Needs a discriminator
    narrower than `alphaBlendEnable`.
-7. Foveation through `XR_FB_foveation`, which needs the scene rendered into the XR swapchain.
+6. Foveation through `XR_FB_foveation`, which needs the scene rendered into the XR swapchain.
 
 ## Multiview: where it is and what is left
 
@@ -275,6 +272,8 @@ Each was measured or proven; the note that closed it is in `research/`.
 - **`SSCALED` vertex formats**: Adreno does not expose them. Bind `SNORM` and multiply by 32767.
 - **Hoisting HLSL constant `#define`s to entry statics**: DXC already CSEs them; +0.2% SPIR-V.
 - **`bd_host_sincos`**: two-run pairs said -33% to -45%; the within-run A/B said +2.9%.
+- **`bd_pso_precache` on the Quest**: off measured an identical frame. The five background
+  compiler threads it runs for minutes are not what the frame waits on.
 - **`bd_shadows`, `bd_reflections` as fill levers**: measured "not a lever" - but through
   `args.txt` booleans, so the measurement is void (see the parser trap above). Unmeasured.
 - **The `bdPlayerField*` family** (`bdPlayerFieldMovementUpdate`, `bdPlayerFieldCheckEncounter`)

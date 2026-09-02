@@ -261,3 +261,17 @@ log, and the pipeline counter (now printing every 200th creation) reads:
 five driver threads at 60% each. Something in the pipeline cache key varies
 continuously; it is the next thing to find, and it is probably why the GPU
 time jitters across the 33.3 ms boundary.
+
+## The five compiler threads are our PSO precache, and they cost the frame nothing
+
+The threads at 55-75% each are `pso_precache` workers - `hardware_concurrency
+- 3` of them, demoted to background priority, which is why `top` shows them at
+nice 10 - and the ~10 pipelines a second are `pso_predictor` expanding every
+shader technique into cores x cull modes x spec constants x skinning. The
+desktop compiles the same 5,000+ in twenty seconds; Adreno takes minutes.
+
+`bd_pso_precache=false`, same run otherwise: `dt 50.08 | gpu_total 39.09 |
+elsewhere 16.5`, no compiler threads, and 41 pipelines compiled lazily over the
+whole run. Identical frame. So the precache neither helps nor hurts a 170 s
+run on this device; it stays on by default, and the thread policy's "13 guest
+workers" count is mostly these. Not a lever.
