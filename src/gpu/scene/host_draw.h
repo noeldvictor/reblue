@@ -25,6 +25,8 @@ namespace bd::gpu::scene {
 struct NodeTag;
 
 bool HostDrawEnabled();
+// True on this thread while a host-issued node draw is being dispatched.
+bool HostDrawReplaying();
 
 // From the DrawSingle hook, before the interpreter runs for a node: snapshots
 // the guest's register files and fetch constants so the capture can see what

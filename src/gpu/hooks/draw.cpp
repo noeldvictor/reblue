@@ -15,6 +15,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <string>
 
 #include <rex/graphics/xenos.h>
 #include <rex/cvar.h>
@@ -40,6 +41,7 @@
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/post_chain.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/shaders/shader_constants.h"
@@ -51,6 +53,7 @@ REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
+REXCVAR_DECLARE(i32, bd_node_diag_mesh);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
@@ -339,7 +342,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         // which is why the deferred path rendered a black scene target on the
         // Quest while the same code was correct with a flush after every draw.
         if (s.plume_framebuffer_bound)
-          bd::gpu::DrawQueueFlush(s.command_list);
+          bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
         bd::gpu::ResolveMultiviewSurfaceLocked(s, surf);
       }
     }
@@ -361,7 +364,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // order the guest submitted in is preserved exactly. Without this, an
   // immediate draw would land before draws the guest issued before it.
   if (!s.deferring_draw && s.plume_framebuffer_bound)
-    bd::gpu::DrawQueueFlush(s.command_list);
+    bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
   if (s.deferring_draw)
     s.pending = bd::gpu::QueuedDraw{};
 
@@ -507,6 +510,50 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // this node, kept so the next frames skip the interpreter.
     if (!eye_vp && bd::gpu::scene::HostDrawEnabled())
       bd::gpu::scene::HostDrawCapture(s, q, device_guest, primitive_type);
+    if (const u32 diag = static_cast<u32>(REXCVAR_GET(bd_node_diag_mesh));
+        diag && (diag < 4096 ? bd::gpu::scene::CurrentNodeTag().node_index == diag
+                             : bd::gpu::scene::CurrentNodeTag().mesh_va == diag)) {
+      const auto &tag = bd::gpu::scene::CurrentNodeTag();
+      // Frames in which this node's scene-pass draw never came: the
+      // intermittently vanishing rock, if the walk is what drops it.
+      {
+        static u32 last_frame = 0, seen = 0, frames = 0, missing = 0;
+        const u32 frame = bd::gpu::FrameStatFrameCount();
+        if (frame != last_frame) {
+          if (last_frame && seen == 0 && ++missing <= 8)
+            BD_INFO("[node-diag] frame {}: node {} had no view-3 draw",
+                    last_frame, diag);
+          if (++frames == 600)
+            BD_INFO("[node-diag] over {} frames node {} missed its view-3 draw "
+                    "in {}", frames, diag, missing);
+          last_frame = frame;
+          seen = 0;
+        }
+        if (tag.render_view == 3)
+          ++seen;
+      }
+      std::string tex;
+      for (u32 k = 0; k < 6; ++k)
+        tex += fmt::format(" {}:{:x}", k,
+                           s.textures[k] ? (s.textures[k]->contentHash & 0xFFFF)
+                                         : 0);
+      BD_INFO("[node-diag] {} node {} view {} pass {} fb {} rt {} pso {} inst {} "
+              "count {} start {} base {} co {}/{}/{} ib {}+{} vb0 {}+{} tex{} "
+              "alpha {:.3f} blended {} depth {:.0f}",
+              bd::gpu::scene::HostDrawReplaying() ? "REPLAY" : "interp",
+              tag.node_index, tag.render_view, bd::gpu::CurrentRenderPassId(),
+              static_cast<const void *>(q.framebuffer),
+              static_cast<const void *>(s.render_target),
+              static_cast<const void *>(q.pipeline),
+              static_cast<const void *>(q.instanced_pipeline), q.count,
+              q.start_index, q.base_vertex, q.constant_offsets[0],
+              q.constant_offsets[1], q.constant_offsets[2],
+              static_cast<const void *>(q.index_view.buffer.ref),
+              q.index_view.buffer.offset,
+              static_cast<const void *>(q.vertex_views[0].buffer.ref),
+              q.vertex_views[0].buffer.offset, tex,
+              bd::gpu::Video::AlphaThreshold(), q.blended ? 1 : 0, q.depth);
+    }
     bd::gpu::DrawQueuePush(q);
   };
   const auto finish_deferred = [&]() {
@@ -517,7 +564,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // ordering; if it is still black the capture itself is wrong. There is no
     // way to tell those apart from the batched result alone.
     if (REXCVAR_GET(bd_draw_defer_each))
-      bd::gpu::DrawQueueFlush(s.command_list);
+      bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
   };
 
   const auto emit = [&]() {

@@ -11,6 +11,7 @@
 #include <cstring>
 #include <vector>
 
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <xxhash.h>
 
@@ -18,6 +19,7 @@
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/device.h"
+#include "gpu/scene/host_draw.h"
 
 REXCVAR_DECLARE(bool, bd_draw_defer);
 REXCVAR_DECLARE(bool, bd_draw_sort);
@@ -241,6 +243,16 @@ void DrawQueueDiscardStragglers() {
              "ended somewhere that does not flush",
              g_queue.size());
   g_queue.clear();
+}
+
+void DrawQueueFlushAt(plume::RenderCommandList *cmd, const char *site) {
+  if (!g_queue.empty() && bd::gpu::scene::HostDrawReplaying()) {
+    static u32 told = 0;
+    if (told++ < 6)
+      BD_INFO("[draw-queue] flush of {} draws during a host-issued node draw, from {}",
+              g_queue.size(), site);
+  }
+  DrawQueueFlush(cmd);
 }
 
 void DrawQueueFlush(plume::RenderCommandList *cmd) {
@@ -479,6 +491,35 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
       records.clear();
       for (size_t k = i; k < j; ++k)
         records.push_back(g_queue[k].record_index);
+      // One-shot: a group whose members share a record index or whose
+      // records carry the same world rows draws one node twice and another
+      // not at all (the vanishing rock, 2026-09-02). Name the first few.
+      if (n > 1) {
+        static u32 told = 0;
+        bool dup_index = false, dup_world = false;
+        for (u32 a = 0; a < n && !dup_index; ++a)
+          for (u32 b = a + 1; b < n; ++b)
+            if (records[a] == records[b]) { dup_index = true; break; }
+        for (u32 a = 0; a < n && !dup_world; ++a) {
+          const InstanceRecord *ra = StagedInstanceRecord(records[a]);
+          for (u32 b = a + 1; ra && b < n; ++b) {
+            const InstanceRecord *rb = StagedInstanceRecord(records[b]);
+            if (rb && std::memcmp(ra->regs + 20 * 4, rb->regs + 20 * 4, 64) == 0) {
+              dup_world = true;
+              break;
+            }
+          }
+        }
+        if ((dup_index || dup_world) && told++ < 6) {
+          std::string idx;
+          for (u32 k = 0; k < n; ++k)
+            idx += fmt::format(" {}", records[k]);
+          BD_INFO("[draw-queue] group of {} with {}{}: records{} (seq {}..{})",
+                  n, dup_index ? "a shared record index" : "",
+                  dup_world ? " identical world rows" : "", idx,
+                  g_queue[i].sequence, g_queue[j - 1].sequence);
+        }
+      }
       const u32 first = CommitInstanceRecords(records.data(), n);
       if (first != ~0u) {
         QueuedDraw d = q;

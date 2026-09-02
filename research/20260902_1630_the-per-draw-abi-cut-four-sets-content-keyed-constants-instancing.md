@@ -237,3 +237,15 @@ on: **52.3 ms GPU** - the same as every "reorder off" run of the normal build. S
 - the gap between yesterday's 37.5 ms and today's 45 (instancing on) / 52 (off) is in none of
   the runtime switches measured so far. Left: the host walk (A/B running as the battery ends)
   and the descriptor layout, which needs a build to test.
+
+### The vanishing rock, as far as it got
+
+With `bd_host_draw` on, the big rock behind Shu is sometimes absent from the village frame.
+Established with `bd_node_diag_mesh=48` (the rock's node): its scene-pass run is never
+replayed (one of its three sub-draws keeps the interpreter), and all three sub-draws are issued
+in every one of 1549 frames - so nothing skips the rock; when it is invisible, another draw hides
+it. A replay of another node is the suspect (its surface texture slots now stay live, which
+was one real fault: a pooled shadow-map object went stale in the template). The desktop bisect
+(single captures of an intermittent fault, so weak evidence): reorder off or instancing off
+showed the rock, host draw off showed it, singles-on-plain off did not. `bd_host_draw` stays
+off by default; the queue's flush-site tags and the node diagnostic are in for the next look.

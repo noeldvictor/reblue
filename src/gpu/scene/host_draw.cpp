@@ -85,6 +85,13 @@ struct SubDraw {
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
   u32 tex_mask = 0; // slots SetTexture bound by this draw
+  // Of those, the slots holding a render surface rather than an asset (a
+  // shadow map, a reflection). A surface is pooled and re-pointed between
+  // frames, so the template's pointer goes stale; the replay keeps the live
+  // binding for these, which the pass set before any node ran. Binding the
+  // old object also flipped its layout mid-pass and flushed the queue in the
+  // middle of the node (the vanishing rock, 2026-09-02).
+  u32 surface_mask = 0;
   plume::RenderVertexBufferView vertex_views[16]{};
   plume::RenderInputSlot input_slots[16]{};
   u32 vertex_first = 0;
@@ -326,12 +333,13 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
       ++g_why[1];
       return false;
     }
-    if (x.tex_mask != y.tex_mask) {
+    if (x.tex_mask != y.tex_mask || x.surface_mask != y.surface_mask) {
       ++g_why[2];
       return false;
     }
     for (u32 k = 0; k < 16; ++k)
-      if ((x.tex_mask >> k) & 1u && x.textures[k] != y.textures[k]) {
+      if (((x.tex_mask & ~x.surface_mask) >> k) & 1u &&
+          x.textures[k] != y.textures[k]) {
         ++g_why[2];
         return false;
       }
@@ -407,6 +415,8 @@ void Tally(Store &st, bool replayed) {
 } // namespace
 
 bool HostDrawEnabled() { return REXCVAR_GET(bd_host_draw); }
+
+bool HostDrawReplaying() { return t_replaying; }
 
 void NoteTextureSet(u32 index) {
   auto &p = t_pending;
@@ -548,8 +558,13 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   }
   d.pipelineState = s.pipelineState;
   d.tex_mask = p.set_mask;
-  for (u32 i = 0; i < 16; ++i)
+  d.surface_mask = 0;
+  for (u32 i = 0; i < 16; ++i) {
     d.textures[i] = s.textures[i];
+    if (((d.tex_mask >> i) & 1u) && s.textures[i] &&
+        s.textures[i]->contentHash == 0)
+      d.surface_mask |= 1u << i;
+  }
   for (u32 i = 0; i < 16; ++i) {
     d.vertex_views[i] = q.vertex_views[i];
     d.input_slots[i] = q.input_slots[i];
@@ -778,7 +793,7 @@ bool HostDrawReplay(const NodeTag &tag) {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;
       for (u32 k = 0; k < 16; ++k)
-        if ((d.tex_mask >> k) & 1u)
+        if (((d.tex_mask & ~d.surface_mask) >> k) & 1u)
           s.textures[k] = d.textures[k];
       std::memcpy(s.vertex_views, d.vertex_views, sizeof(s.vertex_views));
       std::memcpy(s.input_slots, d.input_slots, sizeof(s.input_slots));

@@ -457,6 +457,11 @@ REXCVAR_DEFINE_BOOL(bd_node_write_diag, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_draw, false, kCvarGroup,
                     "Issue scene node draws from host templates, skipping the "
                     "guest's per-node interpreter.");
+// Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
+// when the interpreter issues them and when the host replays them, so the
+// two can be diffed.
+REXCVAR_DEFINE_INT32(bd_node_diag_mesh, 0, kCvarGroup,
+                     "Log every queued draw of this mesh VA (0 = off).");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
                      "Frames a host node draw template is used before the "
                      "interpreter refreshes it.");

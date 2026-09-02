@@ -120,6 +120,12 @@ void DrawQueuePush(const QueuedDraw &draw);
 // Emit everything recorded, sorted, and clear. Called where a render pass ends:
 // a framebuffer change, a barrier, or present. Safe to call when empty.
 void DrawQueueFlush(plume::RenderCommandList *cmd);
+// The same, naming the caller for the diagnostic that asks who flushed a
+// pass in the middle of a host-issued node draw.
+void DrawQueueFlushAt(plume::RenderCommandList *cmd, const char *site);
+#define BD_STR2(x) #x
+#define BD_STR(x) BD_STR2(x)
+#define BD_FLUSH_SITE __FILE__ ":" BD_STR(__LINE__)
 
 // Draws currently held, for the per-frame counters.
 u32 DrawQueueDepth();

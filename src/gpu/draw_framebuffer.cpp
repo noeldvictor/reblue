@@ -245,7 +245,7 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
   // or it would be emitted against a pass that no longer exists. Same
   // null-framebuffer guard as above.
   if (s.plume_framebuffer_bound)
-    bd::gpu::DrawQueueFlush(s.command_list);
+    bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, sampled,
                            sampled_count);
   NoteBarrierCall(sampled_count, BarrierSite::DrawFb);
@@ -428,7 +428,7 @@ bool Video::BindDrawFramebufferLocked() {
   // already in SHADER_READ, and the flip's barrier made plume run the held
   // shadow clear as a zero-draw pass ahead of them (traced 2026-09-02).
   if (s.plume_framebuffer_bound)
-    bd::gpu::DrawQueueFlush(s.command_list);
+    bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
   // The pass is about to end regardless, so any barrier issued here is free.
   if (REXCVAR_GET(bd_barrier_hoist))
     FlushWriteLayoutToRead(s, rt, ds);
@@ -512,7 +512,7 @@ bool Video::BindDrawFramebufferLocked() {
   // Anything queued was recorded against the outgoing framebuffer, so it leaves
   // here - but the queue rebinds its own framebuffer per draw, so this needs no
   // guard and cannot land on the wrong target.
-  bd::gpu::DrawQueueFlush(s.command_list);
+  bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
 
   s.command_list->setFramebuffer(fb);
   s.plume_framebuffer_bound = (fb != nullptr);
