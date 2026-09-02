@@ -108,9 +108,11 @@ def analyse(controller):
 
 try:
     say("capture: " + path)
-    if ui is not None:
-        ui.Replay().BlockInvoke(analyse)
-    else:
+    # Always open the capture ourselves, even inside qrenderdoc: under
+    # `--python` the script starts while the UI is still loading the capture,
+    # GetCaptureFilename() is empty, and Replay().BlockInvoke() waits for a
+    # replay that never arrives. That is how three launches hung silently.
+    if True:
         cap = rd.OpenCaptureFile()
         res = cap.OpenFile(path, "", None)
         if res != rd.ResultCode.Succeeded:
@@ -131,5 +133,6 @@ finally:
         # Headless use: close the UI once the report is written.
         try:
             ui.CloseCapture()
+            ui.Quit()
         except Exception:
             pass
