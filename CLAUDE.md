@@ -233,12 +233,14 @@ sampling view. That was a real bug and is fixed (2026-09-01, `gpu/hooks/resource
 was not the cause**: the desktop still presents two byte-identical halves with it in, with the
 obsolete slice views gone, and with `bd_mv_layered_textures=true`.
 
-**Stop reading views and descriptors; read the pixels.** `tools/rdc_layer_diff.py`, run under
-RenderDoc's own interpreter (`qrenderdoc.exe --python`), replays a capture and reads both array
-layers of every two-layer target back after every pass. The first target whose layers come out
-identical after a source that differed is the pass that flattens the pair, whatever its view,
-descriptor and pipeline say. A pipeline, a view and a descriptor can all be correct while the
-shader still reads one layer.
+**Stop reading views and descriptors; read the pixels.** `tools/rdc_layer_diff.py` is written
+to replay a capture under RenderDoc's interpreter and read both array layers of every two-layer
+target back after every pass: the first target whose layers come out identical after a source
+that differed is the pass that flattens the pair, whatever its view, descriptor and pipeline
+say. **It has not yet run**: three launches through `qrenderdoc.exe --python` produced no output
+at all (a GUI app swallows stdout and exceptions, and the first version wrote a relative path
+into Program Files). Getting it to execute - probably via RenderDoc 1.46's reworked scripting
+entry point, or `renderdoccmd` built with python - is the next step on the flatten bug.
 
 Two settings are still needed together for a multiview run, and the log says whether they took:
 

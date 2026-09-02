@@ -32,13 +32,20 @@ import renderdoc as rd
 # line and exposes it as `pyrenderdoc`; standalone (renderdoccmd's python or a
 # matching CPython) we open it ourselves.
 ui = globals().get("pyrenderdoc")
-if ui is not None:
-    path = ui.GetCaptureFilename()
-else:
-    path = os.path.abspath(sys.argv[-1])
-
-out_path = path + ".layers.txt"
-out = open(out_path, "w")
+# Log to a fixed absolute location first, before anything that can fail: the
+# capture may not be open yet when the script starts under the UI.
+out = open(os.path.join(os.path.expanduser("~"), "rdc_layer_diff.log"), "w")
+try:
+    if ui is not None:
+        path = ui.GetCaptureFilename()
+    else:
+        path = os.path.abspath(sys.argv[-1])
+except Exception:
+    path = ""
+if not path:
+    path = os.path.abspath(sys.argv[-1]) if len(sys.argv) > 1 else ""
+out.write("argv=%r ui=%r path=%r\n" % (sys.argv, ui is not None, path))
+out.flush()
 
 
 def say(s):
