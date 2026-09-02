@@ -93,6 +93,9 @@ void ResetFrame(u32 slot);
 // behind the screen.
 //
 // Both zero leaves the block exactly as the guest wrote it.
+//
+// Both return size == 0 when the block is byte-identical to the one already
+// bound on this command list, and the caller keeps the bound offset.
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
                                                float eye_skew = 0.0f,
                                                float eye_shift = 0.0f);
@@ -107,8 +110,9 @@ ConstantAllocation UploadHostConstants(const void *data, u32 size);
 // and the caller can skip the upload + root rebind.
 ConstantAllocation UploadSharedConstants(u32 device_guest);
 
-// Root bindings do not survive begin(), so this drops the 'shared CB still
-// bound' reuse gate. Call on every command list reset.
+// Root bindings do not survive begin(), so this drops the 'block still bound'
+// reuse gates of the shared, vertex and pixel uploads. Call on every command
+// list reset.
 void InvalidateSharedBinding();
 
 // alignment defaults to 4 (the upload buffer is WRITE_COMBINE), and CBV callers

@@ -98,6 +98,10 @@ enum class BarrierSite : u8 { DrawFb, TexUpload, Resolve, Occlusion };
 void NoteBarrierCall(u32 barrier_count, BarrierSite site);
 void NoteFbBind();
 void NotePSOSwitch();
+// A vertex (or pixel) constant block was uploaded, or skipped because the
+// bound one was byte-identical. Reported per frame in the [perf] line: the
+// number of uploads is the number of times the dynamic offset moved.
+void NoteConstantUpload(bool vertex, bool uploaded);
 
 enum class ResolveOp : u8 {
   EagerCopy,   // non-aliasable resolve, copied at Resolve time

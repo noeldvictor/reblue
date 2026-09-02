@@ -44,6 +44,8 @@ std::atomic<u64> g_vert_count{0};
 // every note in this repo has been ignoring. `draws` alone cannot say where.
 // Order: DrawIndexedVertices, DrawVertices, DrawVerticesUP, BeginVertices.
 std::atomic<u32> g_draw_kind[4]{};
+// [0] VS uploaded, [1] VS skipped, [2] PS uploaded, [3] PS skipped.
+std::atomic<u32> g_const_upload[4]{};
 
 std::atomic<u64> g_ph_lock{0};
 std::atomic<u64> g_ph_fb{0};
@@ -183,6 +185,16 @@ void UpdateFrameStats() {
               acc_d ? double(acc_v) / double(acc_d) : 0.0,
               double(lk) / 1e6 / ticks, double(fb) / 1e6 / ticks,
               double(st) / 1e6 / ticks);
+      {
+        const u32 vu = g_const_upload[0].exchange(0, std::memory_order_relaxed);
+        const u32 vk = g_const_upload[1].exchange(0, std::memory_order_relaxed);
+        const u32 pu = g_const_upload[2].exchange(0, std::memory_order_relaxed);
+        const u32 pk = g_const_upload[3].exchange(0, std::memory_order_relaxed);
+        BD_INFO("[perf]   constants per frame: VS uploaded {:.1f} skipped "
+                "{:.1f}, PS uploaded {:.1f} skipped {:.1f}",
+                double(vu) / ticks, double(vk) / ticks, double(pu) / ticks,
+                double(pk) / ticks);
+      }
       {
         // Sorted by pixel volume, because the question is which surface is
         // eating the fill rate, not which is drawn to most often.
@@ -377,6 +389,11 @@ void NoteBarrierCall(u32 barrier_count, BarrierSite site) {
 }
 
 void NoteFbBind() { g_fb_bind_count.fetch_add(1, std::memory_order_relaxed); }
+
+void NoteConstantUpload(bool vertex, bool uploaded) {
+  g_const_upload[(vertex ? 0 : 2) + (uploaded ? 0 : 1)].fetch_add(
+      1, std::memory_order_relaxed);
+}
 
 void NotePSOSwitch() {
   g_pso_switch_count.fetch_add(1, std::memory_order_relaxed);

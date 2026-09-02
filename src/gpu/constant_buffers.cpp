@@ -31,6 +31,7 @@
 #include "core/profiling.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/frame_stats.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
 #include "gpu/settings.h"
@@ -99,6 +100,19 @@ struct UploadState {
   UploadChunk buffer;
   SharedConstants shared{};
   SharedConstants lastUploaded{};
+  // The vertex and pixel blocks as last uploaded on this command list, and
+  // whether that upload is still bound. The guest dirties these blocks on
+  // every Set*ShaderConstant call, not on a change of value, and a scene walk
+  // re-sets a material's registers for every node that wears it - so the
+  // dirty flag alone re-uploads and re-binds ~535 4 KB blocks a frame whose
+  // bytes did not move. A content gate, like the shared block's, keeps the
+  // dynamic offset still and the driver's per-draw constant reload with it
+  // (2026-09-02). Swapped into scratch first, so a hit costs no ring space.
+  alignas(16) u8 lastVS[kConstantBlockBytes]{};
+  alignas(16) u8 lastPS[kConstantBlockBytes]{};
+  alignas(16) u8 scratch[kConstantBlockBytes]{};
+  bool vsBound = false;
+  bool psBound = false;
   // Which texture slots were non-default last call. The slot loop used to
   // rewrite all 64 index entries every draw - 16 slots x 4 arrays, ~2000 draws
   // a frame - when Blue Dragon binds only a handful. Clearing just what was
@@ -376,6 +390,8 @@ bool TryInit() {
   // Same reason as the initialiser: after a reset every slot must be rewritten.
   s.populatedSlots = 0xFFFFu;
   s.sharedBound = false;
+  s.vsBound = false;
+  s.psBound = false;
   RecomputeShadowPcfScale(s);
   s.ready = true;
   return true;
@@ -391,7 +407,12 @@ void ResetFrame(u32 slot) {
   RecomputeShadowPcfScale(s);
 }
 
-void InvalidateSharedBinding() { upload_state().sharedBound = false; }
+void InvalidateSharedBinding() {
+  auto &s = upload_state();
+  s.sharedBound = false;
+  s.vsBound = false;
+  s.psBound = false;
+}
 
 // c50.xy is BD's NDC->UV half-scale (0.5 on hw). bd_blur_ps reconstructs its
 // sample UV as uv = c50.xy*(ndc+1), so it MUST be 0.5. The guest derives it
@@ -425,10 +446,8 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
   auto &s = upload_state();
   if (!device_guest)
     return {};
-  auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
-  if (!alloc.memory)
-    return {};
-  CopyByteSwap32FlushNaN(alloc.memory,
+  u8 *block = s.scratch;
+  CopyByteSwap32FlushNaN(block,
                          device_guest + offsetof(D3DDevice, vsFloatConstants),
                          kConstantBlockBytes);
   if (eye_skew != 0.0f || eye_shift != 0.0f) {
@@ -456,11 +475,23 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
     //
     // Convergence is unchanged and was always right: shift * clip.w moves the
     // projection centre, setting the distance at which parallax is zero.
-    auto *m = reinterpret_cast<float *>(alloc.memory) + kViewProjRegister * 4;
+    auto *m = reinterpret_cast<float *>(block) + kViewProjRegister * 4;
     m[0] += eye_skew;
     for (int i = 0; i < 4; ++i)
       m[i] += eye_shift * m[12 + i];
   }
+  // Byte-identical to the block still bound on this command list: keep it.
+  if (s.vsBound && std::memcmp(block, s.lastVS, kConstantBlockBytes) == 0) {
+    NoteConstantUpload(true, false);
+    return {};
+  }
+  auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
+  if (!alloc.memory)
+    return {};
+  std::memcpy(alloc.memory, block, kConstantBlockBytes);
+  std::memcpy(s.lastVS, block, kConstantBlockBytes);
+  s.vsBound = true;
+  NoteConstantUpload(true, true);
   return alloc;
 }
 
@@ -469,13 +500,22 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   auto &s = upload_state();
   if (!device_guest)
     return {};
+  u8 *block = s.scratch;
+  CopyByteSwap32FlushNaN(block,
+                         device_guest + offsetof(D3DDevice, psFloatConstants),
+                         kConstantBlockBytes);
+  PinScreenUVScaleReg(block);
+  if (s.psBound && std::memcmp(block, s.lastPS, kConstantBlockBytes) == 0) {
+    NoteConstantUpload(false, false);
+    return {};
+  }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
     return {};
-  CopyByteSwap32FlushNaN(alloc.memory,
-                         device_guest + offsetof(D3DDevice, psFloatConstants),
-                         kConstantBlockBytes);
-  PinScreenUVScaleReg(alloc.memory);
+  std::memcpy(alloc.memory, block, kConstantBlockBytes);
+  std::memcpy(s.lastPS, block, kConstantBlockBytes);
+  s.psBound = true;
+  NoteConstantUpload(false, true);
   return alloc;
 }
 
