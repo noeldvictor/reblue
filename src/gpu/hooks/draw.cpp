@@ -162,6 +162,15 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     for (const auto &e : kPostShaders)
       if (e.hash == ps_hash)
         post_name = e.name;
+    // Any other quad-sized draw into a full-screen target is a composite,
+    // overlay or copy the guest makes after the chain; name it by hash.
+    char other_name[24];
+    if (!post_name && args.vertexOrIndexCount <= 6 && vs.render_target &&
+        vs.render_target->width >= 640) {
+      std::snprintf(other_name, sizeof(other_name), "quad_%08llX",
+                    static_cast<unsigned long long>(ps_hash & 0xFFFFFFFFull));
+      post_name = other_name;
+    }
     // vs.frame is the ring slot, not a counter: frames are counted here by
     // slot changes, and the window opens after enough draws to be deep in a
     // field scene (a menu frame is ~20 draws, a field frame ~550).

@@ -748,3 +748,9 @@ at twice the width (`bd_host_post_blur=2`) the far buildings and cliffs blur
 as the guest's did, the character stays sharp (`frame_1788369916.png`). Nine
 host passes replace fifteen guest quads, two of them full resolution, and
 every resolve between them.
+
+Quest, side-by-side defaults, folded composite: `gpu_total_ms` **37.6** (37.5
+before the host chain, 38.0 with the first form); the capture is a correct
+stereo pair. The post chain's GPU share on the Quest was small all along; the
+rewrite removes the Xbox 360 tile-and-resolve structure and fifteen guest
+draws, and buys no frame time there. The frame is the scene pass.
