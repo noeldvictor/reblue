@@ -370,6 +370,32 @@ GuestTexture *Build2DMirror(const MirrorLayout &L, const u8 *src,
   UntileFace(L, src, staging.data(), L.pack_off_x, L.pack_off_y);
 
   GuestTexture *tex = BuildMippedMirror(L, fetch, staging);
+
+  // How many of the guest's textures come with a mip chain at all. The Quest's
+  // GPU profiler read 99% of texture fetches from the base level, 25% L1
+  // misses and the texture pipes 66% busy in a field scene - a scene sampling
+  // mip 0 everywhere. Whether that is the fetch constants (mip_max_level 0,
+  // or a base-map filter) or the mirror path is what this histogram says.
+  {
+    static std::atomic<u32> total{0}, mipped{0}, no_chain_requested{0},
+        base_map_filter{0}, mip_point{0};
+    const u32 n = total.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (tex)
+      mipped.fetch_add(1, std::memory_order_relaxed);
+    if (fetch.mip_max_level == 0u)
+      no_chain_requested.fetch_add(1, std::memory_order_relaxed);
+    if (fetch.mip_filter == xe::TextureFilter::kBaseMap)
+      base_map_filter.fetch_add(1, std::memory_order_relaxed);
+    if (fetch.mip_filter == xe::TextureFilter::kPoint)
+      mip_point.fetch_add(1, std::memory_order_relaxed);
+    if (n == 64 || n == 512 || n == 2048)
+      BD_INFO("[mips] {} 2D mirrors: {} with a mip chain, {} with "
+              "mip_max_level=0, {} mip_filter=baseMap, {} mip_filter=point "
+              "(this one {}x{} mip_max_level={} filter={})",
+              n, mipped.load(), no_chain_requested.load(),
+              base_map_filter.load(), mip_point.load(), L.width, L.height,
+              u32(fetch.mip_max_level), u32(fetch.mip_filter));
+  }
   if (!tex) {
     tex = BuildBCMirrorTexture(L.width, L.height, u32(L.format),
                                       staging.data(), staging.size(),
