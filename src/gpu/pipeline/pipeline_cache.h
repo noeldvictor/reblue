@@ -38,4 +38,9 @@ plume::RenderPipeline *GetOrCreatePipeline(const PipelineState &state,
 
 size_t PipelineCacheSize();
 
+// The cached pipeline for 'state' (Sanitize first), or nullptr when it has
+// not been built - never builds. For a variant the draw can do without: the
+// instanced twin, which must not compile on the render thread.
+plume::RenderPipeline *FindPipeline(const PipelineState &state);
+
 } // namespace bd::gpu

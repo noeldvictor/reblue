@@ -25,6 +25,7 @@
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
 #include "gpu/pipeline/pipeline_cache.h"
+#include "gpu/pipeline/pso_precache.h"
 #include "gpu/pipeline/pso_recorder.h"
 
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
@@ -410,7 +411,13 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
       PipelineState inst = lookup;
       inst.specConstants |= kSpecConstantInstanced;
       SanitizePipelineState(inst);
-      s.current_instanced_pso = GetOrCreatePipeline(inst, nullptr);
+      // Never built here: a twin the precache has not reached yet would
+      // compile on the render thread (tens of milliseconds on Adreno, and the
+      // Quest's frame breakdown showed the compiler inside the measurement
+      // window). Ask the precache for it and draw plain until it exists.
+      s.current_instanced_pso = FindPipeline(inst);
+      if (!s.current_instanced_pso)
+        EnqueuePipelinePriority(inst);
     }
   } else if (!s.current_pso) {
     // Clean dirty bits but no PSO bound: the first draw after a command list

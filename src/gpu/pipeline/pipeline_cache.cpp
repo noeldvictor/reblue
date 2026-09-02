@@ -373,4 +373,11 @@ size_t PipelineCacheSize() {
   return g_pipelines.size();
 }
 
+plume::RenderPipeline *FindPipeline(const PipelineState &state) {
+  const u64 key = HashPipelineState(state);
+  std::lock_guard lock(g_mutex);
+  auto it = g_pipelines.find(key);
+  return it != g_pipelines.end() ? it->second.get() : nullptr;
+}
+
 } // namespace bd::gpu
