@@ -302,10 +302,11 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
     auto &slot = inputSlots[idx - 1];
     slot.index = elem.slotIndex;
     slot.stride = state.vertexStrides[elem.slotIndex];
-    slot.classification =
-        (state.instancing && elem.slotIndex != 0 && elem.slotIndex != 15)
-            ? plume::RenderInputSlotClassification::PER_INSTANCE_DATA
-            : plume::RenderInputSlotClassification::PER_VERTEX_DATA;
+    // Always per vertex. Instancing here carries its per-instance data in a
+    // structured buffer indexed by SV_InstanceID (constant_buffers.h), not in
+    // a vertex stream; the PER_INSTANCE branch that used to sit here was the
+    // Unleashed convention and nothing set state.instancing.
+    slot.classification = plume::RenderInputSlotClassification::PER_VERTEX_DATA;
   }
   desc.inputSlots = inputSlots;
   desc.inputSlotsCount = inputSlotCount;

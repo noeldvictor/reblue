@@ -12,15 +12,19 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <xxhash.h>
 
 #include "core/logging.h"
 #include "gpu/backend.h"
+#include "gpu/constant_buffers.h"
 #include "gpu/device.h"
 
 REXCVAR_DECLARE(bool, bd_draw_defer);
 REXCVAR_DECLARE(bool, bd_draw_sort);
 REXCVAR_DECLARE(bool, bd_draw_eye_major);
 REXCVAR_DECLARE(i32, bd_pass_split_draws);
+REXCVAR_DECLARE(bool, bd_draw_instancing);
+REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
 
 namespace bd::gpu {
 
@@ -46,8 +50,10 @@ struct EmitState {
   bool any = false;
 };
 
+// instance_count / first_instance: the instanced group this draw stands for
+// (1 and 0 for a plain draw). d.pipeline is whichever variant the caller chose.
 void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
-             EmitState &st) {
+             EmitState &st, u32 instance_count = 1, u32 first_instance = 0) {
   // Its own framebuffer, always. Whatever is bound at flush time is not
   // necessarily what this draw was recorded against, and may be nothing at all.
   if (!d.framebuffer) {
@@ -134,9 +140,77 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
   st.any = true;
 
   if (d.indexed)
-    cmd->drawIndexedInstanced(d.count, 1, d.start_index, d.base_vertex, 0);
+    cmd->drawIndexedInstanced(d.count, instance_count, d.start_index,
+                              d.base_vertex, first_instance);
   else
-    cmd->drawInstanced(d.count, 1, d.start_vertex, 0);
+    cmd->drawInstanced(d.count, instance_count, d.start_vertex,
+                       first_instance);
+}
+
+// Everything two draws must share to be one instanced draw. The vertex
+// constant offset is not in it: an instanced draw reads its whole vertex
+// block from its record. The pixel and shared offsets are, and equal offsets
+// mean equal content (constant_buffers.cpp keys every upload by content).
+u64 GroupKey(const QueuedDraw &d) {
+  struct Blob {
+    const void *pipeline;
+    const void *framebuffer;
+    float viewport[6];
+    i32 scissor[4];
+    const void *index_ref;
+    u64 index_offset;
+    u32 index_size;
+    u32 index_format;
+    u32 constant_offsets[3];
+    u32 indexed, count, start_index, start_vertex;
+    i32 base_vertex;
+    u32 vertex_first, vertex_count;
+    struct {
+      const void *ref;
+      u64 offset;
+      u32 size;
+      u32 stride;
+    } streams[16];
+  } b;
+  std::memset(&b, 0, sizeof(b));
+  b.pipeline = d.instanced_pipeline;
+  b.framebuffer = d.framebuffer;
+  if (d.has_viewport) {
+    b.viewport[0] = d.viewport.x;
+    b.viewport[1] = d.viewport.y;
+    b.viewport[2] = d.viewport.width;
+    b.viewport[3] = d.viewport.height;
+    b.viewport[4] = d.viewport.minDepth;
+    b.viewport[5] = d.viewport.maxDepth;
+    b.scissor[0] = d.scissor.left;
+    b.scissor[1] = d.scissor.top;
+    b.scissor[2] = d.scissor.right;
+    b.scissor[3] = d.scissor.bottom;
+  }
+  if (d.has_index_buffer) {
+    b.index_ref = d.index_view.buffer.ref;
+    b.index_offset = d.index_view.buffer.offset;
+    b.index_size = d.index_view.size;
+    b.index_format = static_cast<u32>(d.index_view.format);
+  }
+  b.constant_offsets[0] = 0;
+  b.constant_offsets[1] = d.constant_offsets[1];
+  b.constant_offsets[2] = d.constant_offsets[2];
+  b.indexed = d.indexed;
+  b.count = d.count;
+  b.start_index = d.start_index;
+  b.start_vertex = d.start_vertex;
+  b.base_vertex = d.base_vertex;
+  b.vertex_first = d.vertex_first;
+  b.vertex_count = d.vertex_count;
+  const u32 end = std::min<u32>(d.vertex_first + d.vertex_count, 16u);
+  for (u32 i = d.vertex_first; i < end; ++i) {
+    b.streams[i].ref = d.vertex_views[i].buffer.ref;
+    b.streams[i].offset = d.vertex_views[i].buffer.offset;
+    b.streams[i].size = d.vertex_views[i].size;
+    b.streams[i].stride = d.input_slots[i].stride;
+  }
+  return XXH3_64bits(&b, sizeof(b));
 }
 
 } // namespace
@@ -147,7 +221,12 @@ void DrawQueuePush(const QueuedDraw &draw) {
   if (g_queue.capacity() == 0)
     g_queue.reserve(4096);
   g_queue.push_back(draw);
-  g_queue.back().sequence = g_sequence++;
+  QueuedDraw &q = g_queue.back();
+  q.sequence = g_sequence++;
+  // Computed here, after the caller filled in the draw parameters and the
+  // eye viewport, and once rather than per comparison in the flush.
+  q.group_key = (q.instanced_pipeline && q.record_index != ~0u) ? GroupKey(q)
+                                                                : 0;
 }
 
 u32 DrawQueueDepth() { return static_cast<u32>(g_queue.size()); }
@@ -311,23 +390,100 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     }
   }
 
+  // Instancing: inside every run of consecutive order-independent draws,
+  // bring the draws that can share an instanced draw together - by
+  // pipeline, then group key, then submission order. A draw that has to keep
+  // its place (blended, depth test off, stencil) bounds the runs, so nothing
+  // is ever moved across it. The merge below only joins *consecutive* equal
+  // keys, so this is what turns "same mesh, ten nodes apart" into one draw.
+  const bool instancing = REXCVAR_GET(bd_draw_instancing);
+  if (instancing && REXCVAR_GET(bd_draw_instancing_reorder)) {
+    size_t i = 0;
+    while (i < g_queue.size()) {
+      if (!g_queue[i].reorderable) {
+        ++i;
+        continue;
+      }
+      size_t j = i + 1;
+      while (j < g_queue.size() && g_queue[j].reorderable)
+        ++j;
+      if (j - i > 1) {
+        std::stable_sort(
+            g_queue.begin() + i, g_queue.begin() + j,
+            [](const QueuedDraw &a, const QueuedDraw &b) {
+              const void *pa = a.instanced_pipeline ? a.instanced_pipeline
+                                                    : a.pipeline;
+              const void *pb = b.instanced_pipeline ? b.instanced_pipeline
+                                                    : b.pipeline;
+              if (pa != pb)
+                return pa < pb;
+              if (a.group_key != b.group_key)
+                return a.group_key < b.group_key;
+              return a.sequence < b.sequence;
+            });
+      }
+      i = j;
+    }
+  }
+
   // Probe: end and reopen the render pass every N draws. Adreno runs the
   // 500-draw scene pass in direct (non-tiled) mode while a small pass on the
   // same kind of surface bins; if the trigger is the size of the pass, the
   // chunks will bin, at a tile load and store per split (~1 ms at 1376x720).
   const i32 split_every = REXCVAR_GET(bd_pass_split_draws);
   u32 since_split = 0;
-  for (const QueuedDraw &q : g_queue) {
-    const bool two_pass = q.prepass_pipeline && q.color_pipeline;
-    QueuedDraw d = q;
-    if (two_pass)
-      d.pipeline = q.color_pipeline;
+  u32 groups = 0, grouped_draws = 0, emitted = 0;
+  static std::vector<u32> records;
+  for (size_t i = 0; i < g_queue.size();) {
+    const QueuedDraw &q = g_queue[i];
     if (split_every > 0 && since_split >= static_cast<u32>(split_every)) {
       cmd->setFramebuffer(nullptr);
       st.framebuffer = nullptr;
       since_split = 0;
     }
     ++since_split;
+
+    // A run of consecutive draws sharing this one's group key becomes one
+    // instanced draw; its records are committed to the GPU contiguously, in
+    // this order, so firstInstance + SV_InstanceID walks them.
+    if (instancing && q.instanced_pipeline && q.record_index != ~0u) {
+      size_t j = i + 1;
+      while (j < g_queue.size() && g_queue[j].instanced_pipeline &&
+             g_queue[j].record_index != ~0u &&
+             g_queue[j].group_key == q.group_key)
+        ++j;
+      const u32 n = static_cast<u32>(j - i);
+      records.clear();
+      for (size_t k = i; k < j; ++k)
+        records.push_back(g_queue[k].record_index);
+      const u32 first = CommitInstanceRecords(records.data(), n);
+      if (first != ~0u) {
+        QueuedDraw d = q;
+        d.pipeline = q.instanced_pipeline;
+        if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
+        if (!d.blended) {
+          opaque += n;
+          if (d.depth < dmin) dmin = d.depth;
+          if (d.depth > dmax) dmax = d.depth;
+        }
+        EmitOne(cmd, d, st, n, first);
+        ++emitted;
+        if (n > 1) {
+          ++groups;
+          grouped_draws += n;
+        }
+        i = j;
+        continue;
+      }
+      // Out of GPU records (CommitInstanceRecords said so): the plain
+      // pipeline below reads whatever the uniform block holds, which for a
+      // draw that expected the record may be another node's transform.
+    }
+
+    const bool two_pass = q.prepass_pipeline && q.color_pipeline;
+    QueuedDraw d = q;
+    if (two_pass)
+      d.pipeline = q.color_pipeline;
     if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
     if (!d.blended) {
       ++opaque;
@@ -335,12 +491,116 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
       if (d.depth > dmax) dmax = d.depth;
     }
     EmitOne(cmd, d, st);
+    ++emitted;
+    ++i;
   }
   if (report) {
     ++sort_told;
     BD_INFO("[draw-queue] {} draws, {} opaque, {} pipeline binds, depth {:.0f}"
             "..{:.0f}", g_queue.size(), opaque, pipeline_binds,
             opaque ? dmin : 0.0f, opaque ? dmax : 0.0f);
+  }
+  // Which key component keeps draws apart. Once, on a scene-sized flush:
+  // distinct values of the mesh alone, then with the pipeline, the material
+  // offsets, the vertex offset and the viewport added in turn. The first
+  // count that jumps is the component that is not shared between nodes.
+  {
+    static u32 told = 0, since = 400;
+    ++since;
+    if (instancing && told < 3 && since >= 400 && g_queue.size() > 200) {
+      ++told;
+      since = 0;
+      auto mesh_key = [](const QueuedDraw &d) {
+        struct M { const void *ib; u64 ib_off; u32 ib_size; u32 count, start; i32 base;
+                   const void *vb[16]; u64 vb_off[16]; u32 vb_size[16]; } m;
+        std::memset(&m, 0, sizeof(m));
+        m.ib = d.index_view.buffer.ref; m.ib_off = d.index_view.buffer.offset;
+        m.ib_size = d.index_view.size; m.count = d.count; m.start = d.start_index;
+        m.base = d.base_vertex;
+        const u32 end = std::min<u32>(d.vertex_first + d.vertex_count, 16u);
+        for (u32 i = d.vertex_first; i < end; ++i) {
+          m.vb[i] = d.vertex_views[i].buffer.ref; m.vb_off[i] = d.vertex_views[i].buffer.offset;
+          m.vb_size[i] = d.vertex_views[i].size;
+        }
+        return XXH3_64bits(&m, sizeof(m));
+      };
+      std::vector<u64> k0, k1, k2, k3, k4, k5;
+      u32 eligible = 0, reorder = 0;
+      for (const QueuedDraw &d : g_queue) {
+        if (d.reorderable) ++reorder;
+        if (!(d.instanced_pipeline && d.record_index != ~0u)) continue;
+        ++eligible;
+        const u64 m = mesh_key(d);
+        k0.push_back(m);
+        k1.push_back(m ^ (u64(uintptr_t(d.instanced_pipeline)) * 0x9E3779B97F4A7C15ull));
+        k2.push_back(k1.back() ^ (u64(d.constant_offsets[2]) * 0xC2B2AE3D27D4EB4Full));
+        k3.push_back(k2.back() ^ (u64(d.constant_offsets[1]) * 0x165667B19E3779F9ull));
+        k4.push_back(k3.back() ^ (u64(d.constant_offsets[0]) * 0x27D4EB2F165667C5ull));
+        k5.push_back(d.group_key);
+      }
+      auto distinct = [](std::vector<u64> v) {
+        std::sort(v.begin(), v.end());
+        return static_cast<u32>(std::unique(v.begin(), v.end()) - v.begin());
+      };
+      BD_INFO("[draw-queue] instancing diag: {} draws, {} eligible, {} "
+              "reorderable; distinct mesh {}, +pipeline {}, +shared {}, +ps {}, "
+              "+vs {}, full key {}",
+              g_queue.size(), eligible, reorder, distinct(k0), distinct(k1),
+              distinct(k2), distinct(k3), distinct(k4), distinct(k5));
+      // Which vertex registers keep same-mesh, same-material draws apart:
+      // for every pair that shares everything but the vertex offset, count
+      // the registers whose 16 bytes differ between the two blocks.
+      {
+        std::vector<std::pair<u64, const QueuedDraw *>> by_mat;
+        for (const QueuedDraw &d : g_queue) {
+          if (!(d.instanced_pipeline && d.record_index != ~0u)) continue;
+          u64 k = mesh_key(d) ^ (u64(uintptr_t(d.instanced_pipeline)) * 0x9E3779B97F4A7C15ull);
+          k ^= u64(d.constant_offsets[2]) * 0xC2B2AE3D27D4EB4Full;
+          k ^= u64(d.constant_offsets[1]) * 0x165667B19E3779F9ull;
+          by_mat.emplace_back(k, &d);
+        }
+        std::sort(by_mat.begin(), by_mat.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        u32 hist[256] = {};
+        u32 pairs = 0;
+        for (size_t a = 0; a + 1 < by_mat.size(); ++a) {
+          if (by_mat[a].first != by_mat[a + 1].first) continue;
+          const QueuedDraw *x = by_mat[a].second, *y = by_mat[a + 1].second;
+          if (x->constant_offsets[0] == y->constant_offsets[0]) continue;
+          const u8 *bx = ConstantBlockBytes(x->constant_offsets[0]);
+          const u8 *by = ConstantBlockBytes(y->constant_offsets[0]);
+          if (!bx || !by) continue;
+          ++pairs;
+          for (u32 r = 0; r < 256; ++r)
+            if (std::memcmp(bx + r * 16, by + r * 16, 16) != 0) ++hist[r];
+        }
+        std::string regs;
+        for (u32 r = 0; r < 256; ++r)
+          if (hist[r]) regs += " c" + std::to_string(r) + ":" + std::to_string(hist[r]);
+        BD_INFO("[draw-queue] instancing diag: {} same-mesh-and-material pairs "
+                "with different vertex blocks; differing registers:{}",
+                pairs, regs.empty() ? " none" : regs);
+      }
+    }
+  }
+  // The instancing tally, averaged over ~5 s of scene-sized flushes: how
+  // many draws the queue took in, how many it issued, and how many of those
+  // issues carried more than one node.
+  if (instancing && g_queue.size() > 100) {
+    static u32 n_flush = 0, acc_in = 0, acc_out = 0, acc_groups = 0,
+               acc_grouped = 0;
+    ++n_flush;
+    acc_in += static_cast<u32>(g_queue.size());
+    acc_out += emitted;
+    acc_groups += groups;
+    acc_grouped += grouped_draws;
+    if (n_flush == 300) {
+      BD_INFO("[draw-queue] instancing: {} draws in -> {} issued per flush; "
+              "{} groups of >1 covering {} draws",
+              acc_in / n_flush, acc_out / n_flush, acc_groups / n_flush,
+              acc_grouped / n_flush);
+      n_flush = acc_in = acc_out = acc_groups = acc_grouped = 0;
+    }
   }
   g_queue.clear();
 }

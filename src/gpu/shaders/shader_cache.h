@@ -27,6 +27,9 @@ struct ShaderCacheEntry {
   const uint32_t spirvOffset;
   const uint32_t spirvSize;
   const uint32_t specConstantsMask;
+  // Bit r set: the shader declares float4 constant register r. The guest
+  // constant uploads compare and hash a block over these registers only.
+  const uint32_t constantRegisterMask[8];
   bd::gpu::GuestShader *guestShader;
 };
 

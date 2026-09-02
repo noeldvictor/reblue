@@ -12,10 +12,14 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstring>
 #include <memory>
+#include <unordered_map>
 #include <vector>
+
+#include <xxhash.h>
 
 #include <plume_render_interface_builders.h>
 #include <rex/cvar.h>
@@ -79,7 +83,13 @@ struct FrameUpload {
   u32 chunkOffset = 0;
   u32 peakOffset = 0;
   bool overflowed = false;
+  // Instance records committed into this slot's region so far.
+  u32 recordsCommitted = 0;
+  bool recordsOverflowed = false;
 };
+
+// The GPU region per frame slot, in records.
+constexpr u32 kInstanceRecordsPerSlot = 2 * kInstanceRecordsPerFrame;
 
 // DecodeFromFetch + ResolveSlotLocked (mutex + hash lookup) run per bound slot
 // on EVERY draw, and the fetch constants almost never change between draws, so
@@ -110,9 +120,43 @@ struct UploadState {
   // (2026-09-02). Swapped into scratch first, so a hit costs no ring space.
   alignas(16) u8 lastVS[kConstantBlockBytes]{};
   alignas(16) u8 lastPS[kConstantBlockBytes]{};
-  alignas(16) u8 scratch[kConstantBlockBytes]{};
+  // scratchVS also holds this draw's vertex block for StageInstanceRecord,
+  // uploaded or not, so the two stages keep separate scratch.
+  alignas(16) u8 scratchVS[kConstantBlockBytes]{};
+  alignas(16) u8 scratchPS[kConstantBlockBytes]{};
   bool vsBound = false;
   bool psBound = false;
+  // The dynamic offset each bound block sits at (valid with the flag), and
+  // whether lastVS holds the bound allocation's exact bytes or only its rest
+  // (after a rest-keyed hit the node ranges in the allocation are another
+  // node's, so the exact fast path must not trust lastVS).
+  u32 boundVS = ~0u;
+  u32 boundPS = ~0u;
+  u32 boundShared = ~0u;
+  bool lastVSExact = true;
+  // Content -> dynamic offset for every block uploaded in the current frame
+  // slot. The last-block compare above catches a run of one material; these
+  // catch A-B-A-B, which the guest's scene walk produces constantly, and they
+  // are what makes "equal offsets" mean "equal content" for the draw queue's
+  // instancing key. Cleared with the slot. The vertex block has two: keyed by
+  // the whole block for plain draws, and by everything outside the node
+  // ranges for draws whose node constants travel in an instance record.
+  // The vertex map names an allocation and its CPU shadow (the bytes the
+  // ring holds there), so a masked compare can look at the allocation.
+  struct VSAllocation {
+    u32 offset;
+    u32 shadow;
+  };
+  std::unordered_map<u64, VSAllocation> vsOffsets;
+  std::vector<std::array<u8, kConstantBlockBytes>> vsShadow;
+  u32 boundVSShadow = 0;
+  std::unordered_map<u64, u32> psOffsets;
+  std::unordered_map<u64, u32> sharedOffsets;
+  // Instance records: staged on the CPU per draw, committed to the GPU by
+  // the draw queue in emit order. See constant_buffers.h.
+  UploadChunk instances;
+  bool instancesTried = false;
+  std::vector<InstanceRecord> staged;
   // Which texture slots were non-default last call. The slot loop used to
   // rewrite all 64 index entries every draw - 16 slots x 4 arrays, ~2000 draws
   // a frame - when Blue Dragon binds only a handful. Clearing just what was
@@ -216,6 +260,114 @@ bool CreateChunk(UploadChunk &chunk) {
   }
   return true;
 }
+
+// The instance record buffer: one storage buffer, kNumFrames regions of
+// kInstanceRecordsPerSlot records, bound once at binding 3 of the constant
+// set. Host-visible like the constant chunk and for the same reason; the
+// vertex stage reads a 3.2 KB record per draw, which stays in cache.
+bool CreateInstanceChunk(UploadState &s) {
+  if (s.instancesTried)
+    return s.instances.buffer != nullptr;
+  s.instancesTried = true;
+  auto *device = bd::gpu::Video::HostDevice();
+  if (!device)
+    return false;
+  const u64 bytes =
+      u64(kNumFrames) * kInstanceRecordsPerSlot * sizeof(InstanceRecord);
+  auto desc = plume::RenderBufferDesc::UploadBuffer(
+      bytes, plume::RenderBufferFlag::STORAGE);
+  const bool want_gpu_heap = REXCVAR_GET(bd_constants_gpu_upload) &&
+                             device->getCapabilities().gpuUploadHeap;
+  if (want_gpu_heap)
+    desc.heapType = plume::RenderHeapType::GPU_UPLOAD;
+  s.instances.buffer =
+      bd::gpu::CreateHostBuffer(device, desc, "instance-records");
+  if (!s.instances.buffer && want_gpu_heap) {
+    desc.heapType = plume::RenderHeapType::UPLOAD;
+    s.instances.buffer =
+        bd::gpu::CreateHostBuffer(device, desc, "instance-records");
+  }
+  if (!s.instances.buffer) {
+    BD_ERROR("constant_buffers: createBuffer({} MiB instance records) failed; "
+             "nothing will be instanced",
+             bytes / (1024 * 1024));
+    return false;
+  }
+  s.instances.mapped = reinterpret_cast<u8 *>(s.instances.buffer->map());
+  if (!s.instances.mapped) {
+    BD_ERROR("constant_buffers: instance record map() returned null");
+    s.instances.buffer.reset();
+    return false;
+  }
+  if (!bd::gpu::Video::BindInstanceRecordBuffer(s.instances.buffer.get(),
+                                                sizeof(InstanceRecord), bytes)) {
+    BD_ERROR("constant_buffers: could not bind the instance record buffer; "
+             "nothing will be instanced");
+    s.instances.buffer.reset();
+    s.instances.mapped = nullptr;
+    return false;
+  }
+  s.staged.reserve(kInstanceRecordsPerFrame);
+  BD_INFO("constant_buffers: instance records {} x {} per slot, {} MiB",
+          kNumFrames, kInstanceRecordsPerSlot, bytes / (1024 * 1024));
+  return true;
+}
+
+// The registers a vertex block compare covers: the shader's declared set.
+struct RegisterMask {
+  u32 bits[8];
+};
+
+RegisterMask VertexMask(const u32 *register_mask) {
+  RegisterMask m;
+  for (u32 i = 0; i < 8; ++i)
+    m.bits[i] = register_mask ? register_mask[i] : 0xFFFFFFFFu;
+  return m;
+}
+
+bool MaskedEqual(const u8 *a, const u8 *b, const RegisterMask &m) {
+  for (u32 w = 0; w < 8; ++w) {
+    u32 bits = m.bits[w];
+    while (bits) {
+      const u32 bit = __builtin_ctz(bits);
+      bits &= bits - 1;
+      const u32 off = (w * 32 + bit) * 16;
+      if (std::memcmp(a + off, b + off, 16) != 0)
+        return false;
+    }
+  }
+  return true;
+}
+
+// The mask itself is part of the key, so blocks hashed under different
+// shaders never collide into one allocation.
+u64 MaskedHash(const u8 *a, const RegisterMask &m) {
+  alignas(16) u8 tmp[sizeof(m) + kConstantBlockBytes];
+  std::memcpy(tmp, &m, sizeof(m));
+  u32 n = sizeof(m);
+  for (u32 w = 0; w < 8; ++w) {
+    u32 bits = m.bits[w];
+    while (bits) {
+      const u32 bit = __builtin_ctz(bits);
+      bits &= bits - 1;
+      std::memcpy(tmp + n, a + (w * 32 + bit) * 16, 16);
+      n += 16;
+    }
+  }
+  return XXH3_64bits(tmp, n);
+}
+
+// An allocation already in the ring, for a content hit: the caller binds it.
+ConstantAllocation AllocationAt(UploadState &s, u32 offset, u32 size) {
+  ConstantAllocation a;
+  a.memory = s.buffer.mapped + offset;
+  a.ref = plume::RenderBufferReference(s.buffer.buffer.get(), offset);
+  a.gpuAddress = s.buffer.gpuBase + offset;
+  a.dynamicOffset = offset;
+  a.size = size;
+  return a;
+}
+
 
 ConstantAllocation Allocate(UploadState &s, u32 size, u32 alignment) {
   if (!s.ready)
@@ -404,7 +556,74 @@ void ResetFrame(u32 slot) {
   s.cursor = slot;
   FrameUpload &up = s.frames[slot];
   up.chunkOffset = 0;
+  up.recordsCommitted = 0;
+  s.staged.clear();
+  // The offset caches name allocations in the slot being rewound.
+  s.vsOffsets.clear();
+  s.vsShadow.clear();
+  s.psOffsets.clear();
+  s.sharedOffsets.clear();
+  s.vsBound = false;
+  s.psBound = false;
+  s.sharedBound = false;
+  s.lastVSExact = true;
   RecomputeShadowPcfScale(s);
+}
+
+bool InstanceRecordsReady() {
+  auto &s = upload_state();
+  if (!s.ready)
+    return false;
+  return CreateInstanceChunk(s);
+}
+
+bool InstanceRecordsRoom() {
+  auto &s = upload_state();
+  return s.instances.buffer && s.staged.size() < kInstanceRecordsPerFrame;
+}
+
+u32 StageInstanceRecord() {
+  auto &s = upload_state();
+  if (!s.instances.buffer || s.staged.size() >= kInstanceRecordsPerFrame)
+    return ~0u;
+  s.staged.emplace_back();
+  std::memcpy(s.staged.back().regs, s.scratchVS, sizeof(InstanceRecord));
+  return static_cast<u32>(s.staged.size() - 1);
+}
+
+const u8 *ConstantBlockBytes(u32 dynamic_offset) {
+  auto &s = upload_state();
+  if (!s.buffer.mapped)
+    return nullptr;
+  return s.buffer.mapped + dynamic_offset;
+}
+
+u32 CommitInstanceRecords(const u32 *staged, u32 n) {
+  auto &s = upload_state();
+  if (!s.instances.mapped || n == 0)
+    return ~0u;
+  FrameUpload &up = s.frames[s.cursor];
+  if (up.recordsCommitted + n > kInstanceRecordsPerSlot) {
+    if (!up.recordsOverflowed) {
+      up.recordsOverflowed = true;
+      BD_ERROR("constant_buffers: slot {} out of instance records at {} + {} "
+               "of {}; those draws render with stale transforms. Raise "
+               "kInstanceRecordsPerFrame.",
+               s.cursor, up.recordsCommitted, n, kInstanceRecordsPerSlot);
+    }
+    return ~0u;
+  }
+  const u32 first = s.cursor * kInstanceRecordsPerSlot + up.recordsCommitted;
+  auto *dst = reinterpret_cast<InstanceRecord *>(s.instances.mapped) + first;
+  for (u32 i = 0; i < n; ++i) {
+    const u32 idx = staged[i];
+    if (idx < s.staged.size())
+      dst[i] = s.staged[idx];
+    else
+      std::memset(&dst[i], 0, sizeof(InstanceRecord));
+  }
+  up.recordsCommitted += n;
+  return first;
 }
 
 void InvalidateSharedBinding() {
@@ -439,14 +658,24 @@ void PinScreenUVScaleReg(u8 *block) {
   }
 }
 
+void SnapshotVertexShaderConstants(u32 device_guest) {
+  auto &s = upload_state();
+  if (!device_guest)
+    return;
+  CopyByteSwap32FlushNaN(s.scratchVS,
+                         device_guest + offsetof(D3DDevice, vsFloatConstants),
+                         kConstantBlockBytes);
+}
+
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
                                                float eye_skew,
-                                               float eye_shift) {
+                                               float eye_shift,
+                                               const u32 *register_mask) {
   BD_CPU_ZONE("UploadVSConstants");
   auto &s = upload_state();
   if (!device_guest)
     return {};
-  u8 *block = s.scratch;
+  u8 *block = s.scratchVS;
   CopyByteSwap32FlushNaN(block,
                          device_guest + offsetof(D3DDevice, vsFloatConstants),
                          kConstantBlockBytes);
@@ -480,17 +709,40 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
     for (int i = 0; i < 4; ++i)
       m[i] += eye_shift * m[12 + i];
   }
-  // Byte-identical to the block still bound on this command list: keep it.
-  if (s.vsBound && std::memcmp(block, s.lastVS, kConstantBlockBytes) == 0) {
+  // Equal, in every register this shader reads, to the allocation still
+  // bound on this command list: keep it. The compare is against the
+  // ALLOCATION's bytes (a CPU shadow of every block uploaded this frame),
+  // never against the previous draw's block: a hit binds an allocation that
+  // may differ from that draw's block outside its mask, and the next shader
+  // may read exactly there.
+  const RegisterMask mask = VertexMask(register_mask);
+  if (s.vsBound && MaskedEqual(block, s.vsShadow[s.boundVSShadow].data(), mask)) {
     NoteConstantUpload(true, false);
     return {};
+  }
+  // Uploaded earlier this frame, equal in the masked registers: bind that
+  // allocation again.
+  const u64 h = MaskedHash(block, mask);
+  if (auto it = s.vsOffsets.find(h); it != s.vsOffsets.end()) {
+    const u32 off = it->second.offset;
+    NoteConstantUpload(true, false);
+    if (s.vsBound && s.boundVS == off)
+      return {};
+    s.vsBound = true;
+    s.boundVS = off;
+    s.boundVSShadow = it->second.shadow;
+    return AllocationAt(s, off, kConstantBlockBytes);
   }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
     return {};
   std::memcpy(alloc.memory, block, kConstantBlockBytes);
-  std::memcpy(s.lastVS, block, kConstantBlockBytes);
+  s.vsShadow.emplace_back();
+  std::memcpy(s.vsShadow.back().data(), block, kConstantBlockBytes);
   s.vsBound = true;
+  s.boundVS = alloc.dynamicOffset;
+  s.boundVSShadow = static_cast<u32>(s.vsShadow.size() - 1);
+  s.vsOffsets.emplace(h, UploadState::VSAllocation{alloc.dynamicOffset, s.boundVSShadow});
   NoteConstantUpload(true, true);
   return alloc;
 }
@@ -500,7 +752,7 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   auto &s = upload_state();
   if (!device_guest)
     return {};
-  u8 *block = s.scratch;
+  u8 *block = s.scratchPS;
   CopyByteSwap32FlushNaN(block,
                          device_guest + offsetof(D3DDevice, psFloatConstants),
                          kConstantBlockBytes);
@@ -509,12 +761,25 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
     NoteConstantUpload(false, false);
     return {};
   }
+  const u64 h = XXH3_64bits(block, kConstantBlockBytes);
+  if (auto it = s.psOffsets.find(h); it != s.psOffsets.end()) {
+    const u32 off = it->second;
+    std::memcpy(s.lastPS, block, kConstantBlockBytes);
+    NoteConstantUpload(false, false);
+    if (s.psBound && s.boundPS == off)
+      return {};
+    s.psBound = true;
+    s.boundPS = off;
+    return AllocationAt(s, off, kConstantBlockBytes);
+  }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
     return {};
   std::memcpy(alloc.memory, block, kConstantBlockBytes);
   std::memcpy(s.lastPS, block, kConstantBlockBytes);
   s.psBound = true;
+  s.boundPS = alloc.dynamicOffset;
+  s.psOffsets.emplace(h, alloc.dynamicOffset);
   NoteConstantUpload(false, true);
   return alloc;
 }
@@ -750,6 +1015,16 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       std::memcmp(&s.shared, &s.lastUploaded, sizeof(SharedConstants)) == 0) {
     return {};
   }
+  const u64 h = XXH3_64bits(&s.shared, sizeof(SharedConstants));
+  if (auto it = s.sharedOffsets.find(h); it != s.sharedOffsets.end()) {
+    const u32 off = it->second;
+    s.lastUploaded = s.shared;
+    if (s.sharedBound && s.boundShared == off)
+      return {};
+    s.sharedBound = true;
+    s.boundShared = off;
+    return AllocationAt(s, off, sizeof(SharedConstants));
+  }
 
   auto alloc = Allocate(s, sizeof(SharedConstants), kCBVAlignment);
   if (!alloc.memory)
@@ -757,6 +1032,8 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   std::memcpy(alloc.memory, &s.shared, sizeof(SharedConstants));
   s.lastUploaded = s.shared;
   s.sharedBound = true;
+  s.boundShared = alloc.dynamicOffset;
+  s.sharedOffsets.emplace(h, alloc.dynamicOffset);
   return alloc;
 }
 

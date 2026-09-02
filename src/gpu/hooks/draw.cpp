@@ -47,6 +47,7 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
+REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
@@ -454,6 +455,24 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // in the framebuffer, so it keeps submission order when the queue sorts.
     q.blended = !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
                   s.pipelineState.destBlend == plume::RenderBlend::ZERO);
+    // Order-independent: depth-tested LESS/LEQUAL, no stencil, and either
+    // opaque or (bd_draw_instancing_reorder_blended) blended with depth
+    // writes on - which in this scene is nearly every draw, because the
+    // guest leaves blending enabled on opaque and cut-out materials, and a
+    // real transparency does not write depth. Two such draws commute up to
+    // coplanar ties and to blended overlap between two depth-writers, both
+    // accepted (approximate visuals, owner 2026-09-02). Anything else - a
+    // depth test off or ALWAYS, stencil, blending without a depth write -
+    // depends on what came before and keeps its place; the queue reorders
+    // only inside runs of reorderable draws, so a run never crosses one.
+    const bool depth_tested =
+        s.pipelineState.zEnable && !s.pipelineState.stencilEnable &&
+        (s.pipelineState.zFunc == plume::RenderComparisonFunction::LESS ||
+         s.pipelineState.zFunc == plume::RenderComparisonFunction::LESS_EQUAL);
+    q.reorderable =
+        depth_tested &&
+        (!q.blended || (s.pipelineState.zWriteEnable &&
+                        REXCVAR_GET(bd_draw_instancing_reorder_blended)));
     // Front-to-back key: the view-space distance of the scene node the guest's
     // cull traverse last visited, which is the node these draws belong to. The
     // guest computes it anyway for its own culling, so this costs a load.
@@ -465,6 +484,15 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       q.scissor = *eye_rc;
       q.has_viewport = true;
       q.constant_offsets[0] = s.constant_dyn_offsets[0];
+      // The eye skew rewrote the vertex block; a record staged before it
+      // holds the unskewed one, so this eye takes a record of its own. Out
+      // of records, the plain pipeline reads the skewed window the eye bind
+      // just uploaded, which is exact.
+      if (q.record_index != ~0u) {
+        q.record_index = bd::gpu::StageInstanceRecord();
+        if (q.record_index == ~0u)
+          q.instanced_pipeline = nullptr;
+      }
     }
     bd::gpu::DrawQueuePush(q);
   };

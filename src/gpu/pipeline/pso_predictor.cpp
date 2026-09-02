@@ -271,6 +271,17 @@ size_t EmitTechDeclLocked(u32 tech, const DeclRecord &d) {
             SanitizePipelineState(p);
             EnqueuePipeline(p);
             ++emitted;
+            // The instanced twin, for a vertex shader carrying the record
+            // redirect (draw.cpp builds it on demand otherwise).
+            if (slot.vs->shaderCacheEntry &&
+                (slot.vs->shaderCacheEntry->specConstantsMask &
+                 kSpecConstantInstanced)) {
+              PipelineState inst = p;
+              inst.specConstants |= kSpecConstantInstanced;
+              SanitizePipelineState(inst);
+              EnqueuePipeline(inst);
+              ++emitted;
+            }
             // The templates carry sampleCount=COUNT_1 (config-independent), but
             // under bd_msaa the scene pass draws at the cvar count and its PSO
             // key includes sampleCount, so the COUNT_1 entry misses and every

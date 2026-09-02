@@ -389,6 +389,32 @@ REXCVAR_DEFINE_BOOL(bd_draw_defer_each, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_draw_sort, false, kCvarGroup,
                     "Sort deferred draws by pipeline and depth.");
 
+// Instancing on the deferred draw queue. A scene node draw whose vertex
+// shader carries the record redirect stages its per-node constants (world,
+// previous world, bone palettes) into an InstanceRecord; the queue merges
+// consecutive draws that share the pipeline, the mesh (vertex and index
+// views), the material (pixel and shared constant offsets) and the rest of
+// the vertex block into one drawIndexedInstanced. Every merged draw is a
+// whole per-draw cost saved - ~36 us of GPU on a Quest 2 - and even a group
+// of one stops the vertex constant window from moving per node.
+REXCVAR_DEFINE_BOOL(bd_draw_instancing, true, kCvarGroup,
+                    "Merge scene draws that share a mesh and material into "
+                    "instanced draws (deferred queue only).");
+// Bring equal draws together inside each run of order-independent draws
+// (opaque, depth-tested, no stencil) so more of them are consecutive. Never
+// moves a draw across one that has to keep its place.
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder, true, kCvarGroup,
+                    "Reorder order-independent scene draws so instances "
+                    "become consecutive.");
+// Blended draws that write depth count as order-independent for the reorder
+// above. The guest leaves blending on for most opaque and cut-out materials
+// (64% of scene draws blend and write depth), so without this almost nothing
+// in a field scene may move. A real transparency does not write depth and
+// keeps its place either way.
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder_blended, true, kCvarGroup,
+                    "Let blended depth-writing draws be reordered for "
+                    "instancing (approximate where they overlap).");
+
 // Side-by-side stereo: emit every left-eye draw, then every right-eye draw,
 // instead of alternating the viewport on every draw. Image-identical; removes
 // ~1000 viewport/scissor changes from the scene pass, which is one candidate

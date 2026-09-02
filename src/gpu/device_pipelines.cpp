@@ -267,11 +267,15 @@ bool BuildPipelineLayout(VideoState &s) {
   // copies three descriptors and not a heap. It is also what the spec
   // requires - a set with an update-after-bind binding may not hold a
   // dynamic buffer (VUID 03001), and both heaps are update-after-bind.
+  //
+  // Binding 3 is the instance record buffer (constant_buffers.h), static:
+  // one buffer for the life of the device, indexed by SV_InstanceID.
   plume::RenderDescriptorSetBuilder constant_set_builder;
   constant_set_builder.begin();
   constant_set_builder.addConstantBufferDynamic(0);
   constant_set_builder.addConstantBufferDynamic(1);
   constant_set_builder.addConstantBufferDynamic(2);
+  constant_set_builder.addStructuredBuffer(3);
   constant_set_builder.end();
   s.constant_descriptor_set = constant_set_builder.create(s.device.get());
   if (!s.constant_descriptor_set) {

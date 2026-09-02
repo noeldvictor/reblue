@@ -95,6 +95,19 @@ struct QueuedDraw {
   // this scene's blended depth-writing draws keep switching off.
   plume::RenderPipeline *prepass_pipeline = nullptr;
   plume::RenderPipeline *color_pipeline = nullptr;
+
+  // Instancing. When `instanced_pipeline` is set and `record_index` is valid,
+  // this draw's per-node vertex constants sit in a staged InstanceRecord
+  // (constant_buffers.h) and the draw can be emitted through the instanced
+  // twin with any number of consecutive draws that share `group_key` - the
+  // pipeline, framebuffer, viewport, mesh (vertex and index views), and the
+  // pixel, shared and vertex-rest constant offsets. `reorderable` marks a
+  // draw that commutes with its neighbours (opaque, depth-tested, no stencil),
+  // so the flush may sort a run of them to bring equal keys together.
+  plume::RenderPipeline *instanced_pipeline = nullptr;
+  u32 record_index = ~0u;
+  u64 group_key = 0;
+  bool reorderable = false;
 };
 
 // Recording. Returns false when deferral is off, in which case the caller

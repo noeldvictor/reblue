@@ -96,10 +96,52 @@ void ResetFrame(u32 slot);
 //
 // Both return size == 0 when the block is byte-identical to the one already
 // bound on this command list, and the caller keeps the bound offset.
+//
+// register_mask: the 256-bit set of float4 registers the bound vertex shader
+// declares (ShaderCacheEntry::constantRegisterMask); the compare and the
+// content hash cover only those, so registers the guest writes and no shader
+// reads do not keep the window moving. Null means every register.
 ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
                                                float eye_skew = 0.0f,
-                                               float eye_shift = 0.0f);
+                                               float eye_shift = 0.0f,
+                                               const u32 *register_mask = nullptr);
+// Byte-swaps the guest's vertex block into the scratch StageInstanceRecord
+// reads, without uploading it: a draw whose vertex shader reads the instance
+// record never touches the uniform window, so the window is left where it is
+// and the guest's dirty flag survives for the next plain draw.
+void SnapshotVertexShaderConstants(u32 device_guest);
 ConstantAllocation UploadPixelShaderConstants(u32 device_guest);
+
+// One scene node's whole vertex constant block, as the instanced vertex
+// shader variant reads it (shader_common.h BDInstanceRecord, bit-exact with
+// the uniform window). Staged per draw from the block the guest wrote,
+// committed to the GPU in emit order by the draw queue so that every
+// instanced group's records are contiguous.
+struct InstanceRecord {
+  float regs[256 * 4];
+};
+static_assert(sizeof(InstanceRecord) == 4096);
+// Records staged per frame. The GPU region is twice this per frame slot,
+// because the side-by-side path pushes one draw per eye off one record.
+constexpr u32 kInstanceRecordsPerFrame = 2048;
+
+// The instance record buffer exists and is bound (binding 3 of the constant
+// set). False on D3D12 and when its creation failed; nothing is instanced then.
+bool InstanceRecordsReady();
+// Room for one more staged record this frame. Checked BEFORE the vertex
+// upload decides to leave the node ranges to the record, so a draw is never
+// left with neither.
+bool InstanceRecordsRoom();
+// Copies the node ranges of the vertex block this draw uploaded (or kept) into
+// the frame's staging list; the index, or ~0u when the frame is out of room.
+u32 StageInstanceRecord();
+// Copies n staged records contiguously into the GPU buffer; the first
+// instance index to draw with, or ~0u when the slot's region is exhausted.
+u32 CommitInstanceRecords(const u32 *staged, u32 n);
+
+// Diagnostic: the host-visible bytes of a constant block by its dynamic
+// offset (the ring is mapped for the life of the device). Null when unmapped.
+const u8 *ConstantBlockBytes(u32 dynamic_offset);
 // A host-filled block in the same ring, for host passes that read parameters
 // through the pixel constant binding (the host post chain's composite).
 ConstantAllocation UploadHostConstants(const void *data, u32 size);

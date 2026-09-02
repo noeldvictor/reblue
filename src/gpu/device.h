@@ -205,6 +205,11 @@ public:
   static bool BindGuestConstantBuffer(plume::RenderBuffer *buffer,
                                       u64 vertex_bytes, u64 pixel_bytes,
                                       u64 shared_bytes);
+  // The instance record buffer at binding 3 of the constant set, once for the
+  // life of the device (constant_buffers.h InstanceRecord). Same backend rule
+  // as above; a no-op on D3D12, where nothing is instanced yet.
+  static bool BindInstanceRecordBuffer(plume::RenderBuffer *buffer, u32 stride,
+                                       u64 bytes);
 
   // Allocate a bindless slot for host-owned 'tex' and bind its SHADER_READ
   // view. UINT32_MAX if full. Re-allocates only when descriptorIndex is still
@@ -503,6 +508,10 @@ struct VideoState {
   // and the draw is emitted once, unchanged.
   plume::RenderPipeline *current_prepass_pso = nullptr;
   plume::RenderPipeline *current_color_pso = nullptr;
+  // The instanced twin of current_pso (spec constant kSpecConstantInstanced),
+  // built when the vertex shader carries the redirect and bd_draw_instancing
+  // is on. Null otherwise. Exclusive with the prepass pair.
+  plume::RenderPipeline *current_instanced_pso = nullptr;
 
   // The colour target whose guest clear plume is holding for its next pass
   // (RequestClear clears through a colour-only framebuffer and unbinds; plume

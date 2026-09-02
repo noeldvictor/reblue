@@ -1073,6 +1073,25 @@ bool Video::BindGuestConstantBuffer(plume::RenderBuffer *buffer,
 #endif
 }
 
+bool Video::BindInstanceRecordBuffer(plume::RenderBuffer *buffer, u32 stride,
+                                     u64 bytes) {
+#if defined(REBLUE_D3D12)
+  (void)buffer;
+  (void)stride;
+  (void)bytes;
+  return false;
+#else
+  auto *set = state().constant_descriptor_set.get();
+  if (!set || !buffer)
+    return false;
+  const plume::RenderBufferStructuredView view(stride, 0);
+  set->setBuffer(3, buffer, bytes, &view);
+  BD_INFO("[constants] bound instance record buffer {} stride {} bytes {}",
+          static_cast<const void *>(buffer), stride, bytes);
+  return true;
+#endif
+}
+
 u32 CurrentRenderPassId() {
   // g_currentRenderPassId (guest global, big-endian). Always-mapped XEX data,
   // but guard the translate anyway.

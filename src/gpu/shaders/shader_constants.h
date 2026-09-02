@@ -16,8 +16,13 @@
 #include <shader_common.h>
 
 namespace bd::gpu {
-// The only two the REBLUE_RECOMP recompiler emits, the rest are Unleashed's.
+// The three the REBLUE_RECOMP recompiler emits, the rest are Unleashed's.
 inline constexpr u32 kSpecConstantR11G11B10Normal =
     SPEC_CONSTANT_R11G11B10_NORMAL;
 inline constexpr u32 kSpecConstantAlphaTest = SPEC_CONSTANT_ALPHA_TEST;
+// The vertex shader reads its per-node constants from the instance record
+// (constant_buffers.h InstanceRecord) instead of the uniform block. Only a
+// vertex shader whose cache entry carries this bit in specConstantsMask has
+// the redirect; the host builds that shader's instanced twin by setting it.
+inline constexpr u32 kSpecConstantInstanced = SPEC_CONSTANT_INSTANCED;
 } // namespace bd::gpu

@@ -21,6 +21,7 @@
 #include "core/profiling.h"
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
+#include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
 #include "gpu/pipeline/pipeline_cache.h"
@@ -28,6 +29,7 @@
 
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
 REXCVAR_DECLARE(bool, bd_depth_prepass);
+REXCVAR_DECLARE(bool, bd_draw_instancing);
 REXCVAR_DECLARE(bool, bd_blend_off_when_opaque);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
 
@@ -224,7 +226,13 @@ void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
   auto &s = state();
   if (!device_guest || !s.command_list)
     return;
-  auto alloc = UploadVertexShaderConstants(device_guest, eye_skew, eye_shift);
+  const u32 *mask =
+      (s.pipelineState.vertexShader &&
+       s.pipelineState.vertexShader->shaderCacheEntry)
+          ? s.pipelineState.vertexShader->shaderCacheEntry->constantRegisterMask
+          : nullptr;
+  auto alloc =
+      UploadVertexShaderConstants(device_guest, eye_skew, eye_shift, mask);
   if (!alloc.size)
     return;
 #if defined(REBLUE_D3D12)
@@ -386,6 +394,24 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
         s.current_color_pso = col_pso;
       }
     }
+
+    // The instanced twin: the same state with the vertex shader's node
+    // constants redirected into the instance record (kSpecConstantInstanced),
+    // for vertex shaders the recompiler marked as carrying the redirect.
+    // Built whether or not this particular draw defers, so a later deferred
+    // draw on a clean pipeline state still has it. The draw queue merges
+    // draws that share it, a mesh and a material into one instanced draw.
+    s.current_instanced_pso = nullptr;
+    if (REXCVAR_GET(bd_draw_instancing) && !s.current_prepass_pso &&
+        lookup.vertexShader && lookup.vertexShader->shaderCacheEntry &&
+        (lookup.vertexShader->shaderCacheEntry->specConstantsMask &
+         kSpecConstantInstanced) &&
+        InstanceRecordsReady()) {
+      PipelineState inst = lookup;
+      inst.specConstants |= kSpecConstantInstanced;
+      SanitizePipelineState(inst);
+      s.current_instanced_pso = GetOrCreatePipeline(inst, nullptr);
+    }
   } else if (!s.current_pso) {
     // Clean dirty bits but no PSO bound: the first draw after a command list
     // reset that lost the force-dirty.
@@ -396,9 +422,31 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   // constants are still live and the 4 KiB byte swap upload can be skipped.
   // Vulkan push offsets 0/8/16 follow the guest PushConstants member order
   // emitted by the recompiler.
+  // Whether this draw's vertex constants travel in an instance record: only
+  // a deferred draw with the instanced twin, and only while the frame has
+  // room for the record. Such a draw never reads the uniform window, so the
+  // window is left where it is and the guest's dirty flag is kept for the
+  // next plain draw (below).
+  const bool constants_in_record = s.deferring_draw &&
+                                   s.current_instanced_pso != nullptr &&
+                                   InstanceRecordsRoom();
+  u32 record_index = ~0u;
+  bool vs_upload_kept = false;
   if (device_guest) {
-    if (s.dirtyStates.vertexShaderConstants) {
-      auto vs_alloc = UploadVertexShaderConstants(device_guest);
+    if (constants_in_record) {
+      if (s.dirtyStates.vertexShaderConstants) {
+        SnapshotVertexShaderConstants(device_guest);
+        vs_upload_kept = true;
+      }
+    } else if (s.dirtyStates.vertexShaderConstants) {
+      const u32 *mask =
+          (s.pipelineState.vertexShader &&
+           s.pipelineState.vertexShader->shaderCacheEntry)
+              ? s.pipelineState.vertexShader->shaderCacheEntry
+                    ->constantRegisterMask
+              : nullptr;
+      auto vs_alloc =
+          UploadVertexShaderConstants(device_guest, 0.0f, 0.0f, mask);
       if (vs_alloc.size) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(vs_alloc.ref, 0);
@@ -431,6 +479,10 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
       s.constant_dyn_offsets[2] = sc_alloc.dynamicOffset;
 #endif
     }
+    // After the snapshot, which is what puts this draw's block in the
+    // scratch the record is copied from.
+    if (constants_in_record)
+      record_index = StageInstanceRecord();
     // One bind carries all three blocks, after every upload that could have
     // moved one. The VS and PS uploads are dirty-gated, so their offsets often
     // carry over unchanged from the previous draw.
@@ -497,6 +549,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     s.pending.pipeline = s.current_pso;
     s.pending.prepass_pipeline = s.current_prepass_pso;
     s.pending.color_pipeline = s.current_color_pso;
+    s.pending.instanced_pipeline =
+        record_index != ~0u ? s.current_instanced_pso : nullptr;
+    s.pending.record_index = record_index;
     const u32 first = s.bound_vertex_first;
     const u32 count = s.bound_vertex_count;
     for (u32 i = first; i < first + count && i < 16u; ++i) {
@@ -508,6 +563,10 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   }
 
   s.dirtyStates = DirtyStates(false);
+  // The record took this draw's vertex block; the uniform window still holds
+  // an older one, and the next plain draw has to upload.
+  if (vs_upload_kept)
+    s.dirtyStates.vertexShaderConstants = true;
   return true;
 }
 
