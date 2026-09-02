@@ -455,14 +455,21 @@ REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,
                     "Under multiview, give two layers only to surfaces at or "
                     "above half the design canvas.");
 
-// Off: the bindless heap is Texture2DArray now, so every reader samples the
-// layer it wants and present flattens the pair itself. The resolve chain was
-// five full-resolution passes a frame that existed only because a Texture2D
-// heap could not read an array - and could never work, being such a read
-// itself. Kept as a probe of the old path, not as a candidate.
-REXCVAR_DEFINE_BOOL(bd_mv_resolve, false, kCvarGroup,
+// ON, and only because of a Quest measurement nobody can yet explain. The
+// bindless heap is Texture2DArray now, so every reader samples the layer it
+// wants and present flattens the pair itself; this chain - five full-resolution
+// passes a frame - exists only because a Texture2D heap could not read an
+// array. But on a Quest 2 (2026-09-01) multiview reads 59 ms of GPU with it on
+// and **277 ms** with it off, every pass ~4.5x slower, and a run with the chain
+// on but its companion never sampled (bd_mv_redirect_srv=false) still reads 59.
+// So it is not the array sampling and not the companion; it is something the
+// resolve pass does to the frame - its barriers, or its breaking of the render
+// pass - that Adreno needs. Until that is named, the chain stays on for the
+// headset. The desktop does not care either way.
+REXCVAR_DEFINE_BOOL(bd_mv_resolve, true, kCvarGroup,
                     "Run the multiview resolve pass that flattens the two "
-                    "layers into one side-by-side image (obsolete).");
+                    "layers into one side-by-side image (off is 4.5x slower "
+                    "on Adreno, unexplained).");
 
 // Capture the layered array itself, both slices, rather than the resolved
 // companion. Diagnostic: it answers whether the array has content at all.

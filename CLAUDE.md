@@ -127,10 +127,9 @@ What moved the CPU from 44 to 13 ms in one day, both found with the per-thread p
   the first time on a headset (the `args.txt` trap below). Those two passes are **CPU** levers on
   the side-by-side path, because every draw of theirs is submitted twice.
 
-**`bd_stereo_multiview` is broken on the Quest right now**: with the resolve chain off by default
-it measures **277 ms GPU**, 2.7 fps, 75 ms of it on the scene pass alone, against 60.8 ms with
-the chain on the day before. Unexplained; the likeliest cause is that the resolve pass used to
-issue the layout barriers around every layered target. See the 2026-09-01 note.
+**`bd_stereo_multiview` on the Quest: 59 ms GPU, 13.5 ms CPU, 15 fps** with the resolve pass
+on (its default again), and **277 ms** without it - see "Start here" item 1. Its CPU is now the
+same as side-by-side's, so once its GPU comes down it is the faster path by construction.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
@@ -187,11 +186,14 @@ and the distance to the next boundary, never fps.
 
 ## Start here. Ordered.
 
-1. **Multiview's 277 ms on the Quest.** With `bd_mv_resolve` off, the scene pass alone is 75 ms
-   (census `1280x720x2L depth`). Run `bash tools/validate_quest.sh
-   "bd_stereo=false,bd_stereo_multiview=true"` first - a layered image sampled in the wrong
-   layout is exactly what validation names - then compare the census against a run with
-   `bd_mv_resolve=true`.
+1. **Multiview's 277 ms on the Quest without the resolve pass.** Measured three ways on
+   2026-09-01: resolve off 277 ms GPU; resolve on 59 ms; resolve on with its companion never
+   sampled (`bd_mv_redirect_srv=false`) **59 ms**. So the array heap's sampling is free and
+   something the resolve pass does to the frame - its barriers, or ending the guest's render
+   pass and rebinding - is what Adreno needs; without it every pass runs ~4.5x slower. Validation
+   under the layer never reached a field scene. Next: a probe that issues the resolve's barriers
+   without its draws, or a GPU-side view (`ovrgpuprofiler`, RenderDoc's Meta fork). Until then
+   `bd_mv_resolve` defaults **on**.
 2. **Finish multiview's flatten bug** with `tools/rdc_layer_diff.py` (see Multiview below). The
    desktop loop verifies it in 90 seconds.
 3. **GPU levers, now that the GPU is the wall at ~39 ms and the 30 fps boundary is 33.3.**
@@ -213,8 +215,9 @@ and the distance to the next boundary, never fps.
 The array bindless heap landed 2026-08-31 (`Texture2DArray`, every 2D read carries
 `SV_ViewID` as the layer, pixel shaders at `ps_6_1`). Multiview present went from black to
 95.7% non-black, and the five full-resolution resolve passes that flattened the pair - 79.5 MB
-of tile traffic a frame - are dead: `bd_mv_resolve` and `bd_mv_redirect_srv` default off and the
-companion surfaces are no longer created.
+of tile traffic a frame - are no longer needed for correctness. They are still **on by default**
+(`bd_mv_resolve`), because on the Quest their absence makes every pass ~4.5x slower for a reason
+not yet named (item 1 above); `bd_mv_redirect_srv` is off, so nothing samples the companion.
 
 **The remaining bug: present shows two identical halves while the scene array holds correct
 stereo** (`far -4, near -26`). Everything upstream is eliminated and written down in
@@ -246,6 +249,13 @@ Two settings are still needed together for a multiview run, and the log says whe
 ```
 
 `layers=1` or `0` two-layer targets means the run is not testing multiview.
+
+**One known spec violation in the descriptor layout**, reported by the validation layer as
+`VUID-VkDescriptorSetLayoutCreateInfo-descriptorType-03001`: a set with an update-after-bind
+binding may not also hold dynamic uniform buffers, and the sampler set does (the texture set did
+before, identically). Adreno's four-set limit forces the sharing; the driver accepts it. The
+honest fix is collapsing HLSL spaces 0/1/2 into one physical set with three bindings, which
+frees a slot for a constants-only set and for the dropped sun-occlusion set at once.
 
 `bd_mv_layered_textures` (two-layer guest render-target textures, so the EDRAM resolve has a
 layered destination) is architecturally required and defaults off only until the fix above is

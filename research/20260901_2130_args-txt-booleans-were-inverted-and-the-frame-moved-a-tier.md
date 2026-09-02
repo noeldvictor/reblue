@@ -275,3 +275,67 @@ elsewhere 16.5`, no compiler threads, and 41 pipelines compiled lazily over the
 whole run. Identical frame. So the precache neither helps nor hurts a 170 s
 run on this device; it stays on by default, and the thread policy's "13 guest
 workers" count is mostly these. Not a lever.
+
+## Validation on the Quest: one layout violation, no per-frame errors, no frame
+
+`tools/validate_quest.sh` with multiview on reported exactly one thing, twice
+(once per pipeline layout - the renderer's and imgui's):
+
+```
+VUID-VkDescriptorSetLayoutCreateInfo-descriptorType-03001
+vkCreateDescriptorSetLayout(): pBindings[3] has VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT flag, but ...
+```
+
+03001 says a set layout with any update-after-bind binding may not also hold a
+dynamic uniform buffer. The sampler set now does (constants at 0-2, the
+update-after-bind sampler array at 3) - and the texture set did before today,
+for the same reason, so this is not new; it is the shape Adreno's four-set
+limit forced and the driver has accepted throughout. It is still a spec
+violation and the honest fix is a set without update-after-bind for the
+constants, which needs a free slot: collapsing spaces 0/1/2 into one physical
+set with three bindings, the same work the sun-occlusion set has been waiting
+on.
+
+The run itself never printed an `[xr]` frame line or a `[perf]` census: under
+the layer the app did not reach a field scene in 160 s, so validation says
+nothing yet about the 277 ms multiview frame. The next probe is cheaper:
+multiview with `bd_mv_resolve=true` again on today's build, which restores the
+barriers the resolve issued. If the GPU returns to ~60 ms the regression is the
+resolve's side effects.
+
+## The 277 ms is the resolve chain's absence, not the array heap's presence
+
+Multiview with `bd_mv_resolve=true, bd_mv_redirect_srv=true` on today's build
+(constants in the sampler set): `dt 66.8 | gpu_total 59.3 | elsewhere 13.5`,
+the same 59-60 ms GPU as yesterday, 15 fps. So the chain's side effects are
+load-bearing on Adreno, and multiview's CPU is now 13.5 ms - the same as
+side-by-side's, because the descriptor copy was the cost of a second
+submission and it is gone.
+
+Two things the resolve does that the array-heap path does not: it issues
+`SHADER_READ` / `COLOR_WRITE` barriers around every layered target, and it
+points every downstream read at a single-layer companion instead of the
+two-layer array. A run with `bd_mv_resolve=true, bd_mv_redirect_srv=false`
+keeps the barriers and samples the array, and separates them.
+
+## Separated: it is not the array sampling
+
+`bd_mv_resolve=true, bd_mv_redirect_srv=false` - the resolve pass runs and
+issues its barriers, but nothing ever samples the companion; the post chain
+reads the two-layer array directly through the array heap:
+
+| | `gpu_total` | `dt` | `elsewhere` |
+| --- | --- | --- | --- |
+| resolve off | 277 | 277 | 38-40 |
+| resolve on, companion sampled | 59.3 | 66.8 | 13.5 |
+| **resolve on, array sampled** | **59.2** | 66.8 | 14.5 |
+
+Sampling the array costs nothing. Whatever the resolve pass does *besides*
+providing a companion - the `SHADER_READ` / `COLOR_WRITE` barriers around each
+layered target, or simply ending the guest's render pass and forcing a
+framebuffer rebind - is what Adreno needs, and without it every pass in the
+frame runs ~4.5x slower, which looks like the GPU leaving its tiled path
+altogether. `bd_mv_resolve` defaults back to **true** for now: the five extra
+passes cost less than what their absence costs. Naming the mechanism needs a
+GPU-side view (ovrgpuprofiler or RenderDoc's Meta fork), or a probe that
+issues the resolve's barriers without its draws.
