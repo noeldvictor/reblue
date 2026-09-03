@@ -58,3 +58,17 @@ verdict is still open (the desktop pair is unmistakably stereo with the same cod
 Where multiview's 9 ms over side-by-side come from: each layer is the full 1376x720, so a
 multiview frame shades twice the pixels per eye that the side-by-side frame does (688x720 an
 eye). The per-eye size is the next knob, and the target is 1440x1584 an eye either way.
+
+## Later, with the headset offline (01:00-01:40, desktop only)
+
+The Quest dropped off adb after the half-width multiview run started (the script sat in
+adb for an hour; killed). Two desktop-only pieces followed:
+
+- **Cel shading on the characters** (`a89cbfe`, XenosRecomp `b03821d`): `SPEC_CONSTANT_CEL`
+  makes every recompiled pixel shader band its lit colour before export; the host sets the
+  bit on skinned draws under `bd_cel_characters`. The character is banded, the world is not
+  (`out/shot_cel.png`). Four bands, no outline, no options-menu switch yet.
+- **Host-built render-list entries** (`1da7457`): the interpreter runs that only built
+  entries (274 a frame) are replaced by re-emitting recorded entry images through the
+  guest's own allocator with a fresh matrix and palette. 564 of 639 node runs a frame are
+  the host's now. CPU effect unmeasured until the headset is back.
