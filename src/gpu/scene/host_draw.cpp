@@ -138,6 +138,15 @@ struct VisualRegs {
   u32 vs[256][4] = {};
   u32 ps[256][4] = {};
   u32 fetch[32][6] = {};
+  // The render-target slots the interpreted node bound this frame: a pooled
+  // surface changes pointer every frame, so a replay cannot keep the
+  // capture's pointer, and inheriting whatever the previous host-ordered
+  // draw left in the slot painted the ground around the village rock with
+  // the reflection map in 186 of 300 frames (tools/capture_cyan.py,
+  // 2026-09-03). The visual's own interpreted node in the same pass is the
+  // binding the guest meant.
+  GuestTexture *tex[16] = {};
+  u32 tex_frame[16] = {};
 };
 
 struct Store {
@@ -152,7 +161,10 @@ struct Store {
   // Why a replay was refused, per frame: no template yet, refresh due,
   // volatile, never-replayable shader (from the hook's gate).
   u32 why_none = 0, why_refresh = 0, why_volatile = 0, why_never = 0;
+  // Render-target slots a replay had to inherit (no fresh binding this frame).
+  u32 surface_inherited = 0;
   u32 acc_none = 0, acc_refresh = 0, acc_volatile = 0, acc_never = 0;
+  u32 acc_surface_inherited = 0;
   u32 acc_replayed = 0, acc_interpreted = 0, acc_frames = 0, acc_stale = 0;
   u32 last_frame = 0;
   // Per key: runs that issued no draw at all, runs that issued some. A key
@@ -521,6 +533,7 @@ void Tally(Store &st, bool replayed, bool from_list) {
     st.acc_none += st.why_none;
     st.acc_refresh += st.why_refresh;
     st.acc_volatile += st.why_volatile;
+    st.acc_surface_inherited += st.surface_inherited;
     st.acc_never += st.why_never;
     st.acc_untagged += st.untagged;
     st.untagged = 0;
@@ -533,6 +546,7 @@ void Tally(Store &st, bool replayed, bool from_list) {
     ++st.acc_frames;
     st.replayed = st.interpreted = st.stale_bail = 0;
     st.why_none = st.why_refresh = st.why_volatile = st.why_never = 0;
+    st.surface_inherited = 0;
     st.last_frame = frame;
     if (st.acc_frames == 300) {
       std::string why;
@@ -834,6 +848,12 @@ void HostDrawCommit(const NodeTag &tag) {
         v.fetch_frame[f.slot] = frame;
         std::memcpy(v.fetch[f.slot], f.dword, sizeof(f.dword));
       }
+      for (u32 k = 0; k < 16; ++k) {
+        if (((d.tex_mask & d.surface_mask) >> k) & 1u) {
+          v.tex[k] = d.textures[k];
+          v.tex_frame[k] = frame;
+        }
+      }
     }
   }
 
@@ -1133,9 +1153,18 @@ bool HostDrawReplay(const NodeTag &tag) {
     {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;
-      for (u32 k = 0; k < 16; ++k)
-        if (((d.tex_mask & ~d.surface_mask) >> k) & 1u)
+      for (u32 k = 0; k < 16; ++k) {
+        if (((d.tex_mask & ~d.surface_mask) >> k) & 1u) {
           s.textures[k] = d.textures[k];
+        } else if (((d.tex_mask & d.surface_mask) >> k) & 1u) {
+          // A render-target slot: this frame's binding by the visual's
+          // interpreted node in this pass, never the capture's pointer.
+          if (v && v->tex_frame[k] == frame && v->tex[k])
+            s.textures[k] = v->tex[k];
+          else
+            ++st.surface_inherited;
+        }
+      }
       std::memcpy(s.vertex_views, d.vertex_views, sizeof(s.vertex_views));
       std::memcpy(s.input_slots, d.input_slots, sizeof(s.input_slots));
       s.bound_vertex_first = d.vertex_first;

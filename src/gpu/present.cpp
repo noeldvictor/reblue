@@ -52,6 +52,7 @@ REXCVAR_DECLARE(bool, bd_mv_capture_array);
 REXCVAR_DECLARE(bool, bd_mv_capture_resolved);
 REXCVAR_DECLARE(double, bd_capture_after_s);
 REXCVAR_DECLARE(i32, bd_capture_min_draws);
+REXCVAR_DECLARE(i32, bd_capture_frames);
 REXCVAR_DECLARE(bool, bd_debug_present_clear);
 REXCVAR_DECLARE(bool, bd_mv_debug_layer_diff);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
@@ -655,10 +656,20 @@ bool EnsureOffscreen(VideoState &s, u32 width, u32 height,
 
 
 // True exactly once, on the first frame at or after bd_capture_after_s.
+// bd_capture_frames consecutive frames from the first one the time and
+// draw-count gates admit: an artefact that lasts a few frames shows up as a
+// jump between neighbours (tools/capture_seq.py).
+u32 g_capture_seq = 0;
+
 bool CaptureDue() {
-  static bool fired = false;
-  if (fired)
+  static u32 fired = 0;
+  const u32 frames = std::max<u32>(1u, u32(REXCVAR_GET(bd_capture_frames)));
+  if (fired >= frames)
     return false;
+  if (fired > 0) {
+    ++fired;
+    return true;
+  }
   const double after = REXCVAR_GET(bd_capture_after_s);
   if (after <= 0.0)
     return false;
@@ -690,7 +701,7 @@ bool CaptureDue() {
     }
   }
 
-  fired = true;
+  fired = 1;
   return true;
 }
 
@@ -820,7 +831,7 @@ void ResolveCapture(bool bgra) {
                                        std::chrono::system_clock::now()
                                            .time_since_epoch())
                                            .count()) +
-             ".raw");
+             "_" + std::to_string(g_capture_seq++) + ".raw");
 
   std::ofstream out(path, std::ios::binary);
   if (out) {

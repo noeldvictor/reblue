@@ -590,6 +590,11 @@ REXCVAR_DEFINE_BOOL(bd_blend_off_when_opaque, false, kCvarGroup,
                     "Clear alphaBlendEnable on blended draws that write depth, "
                     "to test whether those blends do anything at all.");
 
+// Consecutive frames to capture once the gates admit one: a few-frame
+// artefact is a jump between neighbours (tools/capture_seq.py).
+REXCVAR_DEFINE_INT32(bd_capture_frames, 1, kCvarGroup,
+                     "Consecutive frames to capture from the first admitted.")
+    .range(1, 600);
 REXCVAR_DEFINE_INT32(bd_capture_min_draws, 0, kCvarGroup,
                      "Delay bd_capture_after_s until a frame has this many "
                      "draws, so the capture lands on a scene not a menu.")
