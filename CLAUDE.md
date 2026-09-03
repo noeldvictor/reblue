@@ -98,7 +98,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | SDK cross-built for android-arm64, APK, VFS over full game data, Vulkan, OpenXR session, Touch controllers as a pad, head pose driving the view | works |
 | `bd_stereo` (side-by-side, submits every draw twice) | **works, correct crossed depth**, the shipping stereo route |
 | `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | **works, correct crossed stereo on the desktop (2026-09-02)**; on the Quest 59 ms GPU with the obsolete resolve chain on, 277 ms off - the tiling question |
-| Field-scene frame rate | **20 fps** (3 slots at 60 Hz), 37.5 ms GPU, on side-by-side (2026-09-02); target 72 fps, see "The direction" |
+| Field-scene frame rate | **60 fps, vsync-locked** (98% of field frames in one 60 Hz slot, `gpu_total_ms` 15.8, `other_ms` 16.3, 2026-09-02 21:05) on side-by-side with shadows and reflections off, in a lighter scene than the 2026-09-01 one (20 fps then); target 72 fps, see "The direction" |
 | Character-anchored camera modes, diorama in battle | composed and unit-tested; tuning against a capture still wanted |
 | Tourist mode | HP/MP top-up works (desktop); encounter suppression never fires (`bdPlayerField*` family is dead, see closed doors) |
 | Post chain (bloom, depth of field) | **host-owned since 2026-09-02** (`gpu/post_chain.cpp`, `bd_host_post`): the guest's 15 tile-and-resolve quads a frame are replaced by host passes into the guest's own textures; image verified on desktop and Quest captures. The composites moved to the host next (one full-res pass); measure that once. |
@@ -265,8 +265,11 @@ the uploads and Present, and a quarter of its samples were the SDK heap's recurs
 (now behind a per-thread page cache, `memory_helpers.cpp`). SDLThread was SDL3's Android
 `SDL_WaitEvent` spinning (no blocking wait on Android) - 100% of a big core, pinned there as
 "guest main" by `threading.cpp` for a week; the SDK fork's loop polls and sleeps now, and the
-policy gives the big cluster to the Draw Thread. Numbers before those fixes: `other_ms` 18.2,
-`gpu_total_ms` 16.9 at 474 draws, 90% of field frames in one 60 Hz slot.
+policy gives the big cluster to the Draw Thread. Before those fixes: `other_ms` 18.2,
+`gpu_total_ms` 16.9 at 474 draws, 90% of field frames in one 60 Hz slot. **After (21:05):
+`other_ms` 16.3, `gpu_total_ms` 15.8 at 477 draws, 98% of field frames in one slot - a
+vsync-locked 60 fps in that scene**, side-by-side, shadows and reflections off. The next
+boundary is 72 Hz at 13.9 ms, on both CPU and GPU.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`, 2026-09-01; the
 SDLThread paragraph below is superseded by the profile above):

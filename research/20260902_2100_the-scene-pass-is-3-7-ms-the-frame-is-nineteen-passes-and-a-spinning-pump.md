@@ -89,3 +89,13 @@ fixes; the pass count is the GPU work.
 - `out/rexglue-src/thirdparty/sdl3/src/events/SDL_events.c` (`SDL_WaitEventTimeoutNS`, the Android branch)
 - `out/rexglue-src/src/system/xmemory.cpp` (`BaseHeap::QueryProtect`)
 - `/tmp/hang_cdb.txt` (the hung process's stacks)
+
+## After the CPU fixes (21:05, `reblue_cpu.apk`)
+
+```
+8860 of 9719 frames field; other_ms 16.3, gpu_total_ms 15.8, draws 477, dt 16.75
+dt slots: 8699 x 1, 148 x 2 - vsync-locked 60 fps
+per-thread at 150 s: Audio Worker 78%, Draw Thread 52%, five precache workers 33-52%;
+no SDLThread in the list
+[node] host-issued 144 of 253 node draws a frame (0 never)
+```
