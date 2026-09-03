@@ -31,6 +31,11 @@ public:
   static GuestTexture *Acquire(u32 width, u32 height, u32 guest_format,
                                u32 sample_count);
 
+  // A fresh surface outside the pool, for the host-owned targets
+  // (gpu/host_targets.h): same construction as a pool miss, never parked.
+  static GuestTexture *CreateUnpooled(u32 width, u32 height, u32 guest_format,
+                                      u32 sample_count);
+
   // Offer a released RT/DS surface back. true => parked (caller must NOT free
   // it), false => rejected, caller frees it. Call only after
   // NotifyTextureDestroyed + fence.

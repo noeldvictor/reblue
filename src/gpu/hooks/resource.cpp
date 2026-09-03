@@ -29,6 +29,7 @@
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/surface_pool.h"
+#include "gpu/host_targets.h"
 #include "gpu/texture_upload.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -61,10 +62,16 @@ bd::gpu::GuestTexture *D3DDevice_CreateSurface_hook(u32 width, u32 height,
           ? bd::gpu::Video::CvarMSAASampleCount()
           : plume::RenderSampleCount::COUNT_1;
 
+  // The shadow map and the scene pair are the host's (gpu/host_targets.h):
+  // one persistent surface per class, handed back every frame.
+  bd::gpu::GuestTexture *surface = bd::gpu::HostTargetAcquire(
+      bd::gpu::ClassifyHostTarget(width, height, format, multi_sample != 0),
+      width, height, format, static_cast<u32>(msaa_count));
   // Pooled reuse of the same-dim scratch surfaces the engine recreates every
   // frame, fresh committed alloc on miss. Reuse is fence-gated, so GPU-safe.
-  bd::gpu::GuestTexture *surface = bd::gpu::SurfacePool::Acquire(
-      width, height, format, static_cast<u32>(msaa_count));
+  if (!surface)
+    surface = bd::gpu::SurfacePool::Acquire(width, height, format,
+                                            static_cast<u32>(msaa_count));
   // PLUME_FB_TRACE: the guest surface behind a plume texture pointer, so a
   // barrier in the trace can be read back to what the guest created.
   if (surface && surface->texture) {
@@ -450,6 +457,20 @@ u32 D3DResource_Release_hook(rex::MappedPtr<bd::gpu::D3DResource> res) {
   const u32 next = prev - 1;
   res->ReferenceCount = next;
   if (next == 0) {
+    // A host-owned target (gpu/host_targets.h) is released here and now, not
+    // through the fenced destroy queue: that queue drains one or two frames
+    // later, and the guest's next CreateSurface for the class comes before
+    // it, so the target was handed out only every other frame (2026-09-03).
+    // Nothing is freed; the surface persists and the handle is free again.
+    if (type == bd::gpu::ResourceType::RenderTarget ||
+        type == bd::gpu::ResourceType::DepthStencil) {
+      auto *tex = bd::gpu::HostResourceHeap::FromGuest<bd::gpu::GuestTexture>(
+          res.guest_address());
+      if (tex && tex->hostOwned) {
+        bd::gpu::HostTargetReleased(tex);
+        return next;
+      }
+    }
     bd::gpu::Video::QueueResourceDestroy(res.guest_address(), type);
   }
   return next;

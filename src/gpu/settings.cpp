@@ -248,6 +248,10 @@ REXCVAR_DEFINE_DOUBLE(bd_renderdoc_after_s, 0.0, kCvarGroup,
                       "bd_renderdoc.")
     .range(0.0, 100000.0);
 
+REXCVAR_DEFINE_INT32(bd_renderdoc_frames, 1, kCvarGroup,
+                     "Consecutive frames the RenderDoc trigger captures.")
+    .range(1, 16);
+
 // Mirror the VR image into the desktop window.
 //
 // Off on Android and it must stay that way: presenting the Android surface in
@@ -465,6 +469,19 @@ REXCVAR_DEFINE_INT32(bd_node_diag_mesh, 0, kCvarGroup,
 // Whether a host-issued node draw may stage an instance record (and so join
 // an instancing group). Off: the two configurations in which the village's
 // rock vanished both had replayed draws on the record path.
+// Diagnostic: every node the replay would issue is composed by the replay
+// and then interpreted, and the interpreter's draws are diffed against the
+// replay's composition ([verify] lines). The frame stays correct.
+REXCVAR_DEFINE_BOOL(bd_host_draw_verify, false, kCvarGroup,
+                    "Diff the host replay against the interpreter per draw "
+                    "(the interpreter draws).");
+// Diagnostic: 1 = the record mask as designed, 2 = the group's window is
+// rebound but every mask is all ones, 3 = the masks are computed but the
+// window is not rebound (2026-09-03, the cyan skirt).
+REXCVAR_DEFINE_INT32(bd_record_mask_mode, 1, kCvarGroup,
+                     "Record mask diagnostic mode (1 normal, 2 rebind only, "
+                     "3 masks only).")
+    .range(1, 3);
 REXCVAR_DEFINE_BOOL(bd_host_draw_records, true, kCvarGroup,
                     "Let host-issued node draws use instance records.");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
@@ -763,6 +780,13 @@ REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
 // EDRAM tile. Removes the two chain seed copies of the frame's tail; the
 // image the next pass samples is materialised from the head first, which is
 // the resolve the guest asked for (2026-09-03).
+// Stage 4 (2026-09-03): the shadow map and the scene colour and depth are
+// persistent host surfaces (gpu/host_targets.h) rather than pooled scratch
+// the guest recreates every frame; their clears are the host's and their
+// resolves never copy.
+REXCVAR_DEFINE_BOOL(bd_host_targets, true, kCvarGroup,
+                    "The shadow map and the scene pair are host-owned "
+                    "persistent targets (stage 4).");
 REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
                     "Alias a fresh full-screen surface to the chain head's "
                     "texture instead of seeding it with a copy.");
@@ -788,7 +812,14 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // Instance records carry a per-register mask of what differs from the
 // group's uniform block, and the shader reads only those from the record
 // (constant_buffers.h). Off writes all-ones masks: the old whole-record read.
-REXCVAR_DEFINE_BOOL(bd_record_mask, true, kCvarGroup,
+// Off by default since 2026-09-03 evening: with the mask on, a group of
+// replayed ground pieces at the village rock renders one piece as the clear
+// colour in about half the frames (the "cyan skirt"); the producer, the
+// consumer and the ring bytes all check out on the CPU, and the cause is
+// still open (research/20260903_1900_...). Costs Quest GPU time when it
+// comes back on (the whole-record read measured 28 ms against 19.5 with every
+// scene draw on records, 2026-09-02); singles are not affected.
+REXCVAR_DEFINE_BOOL(bd_record_mask, false, kCvarGroup,
                     "Instance records mask the registers that differ from "
                     "the group's uniform block.");
 REXCVAR_DEFINE_BOOL(bd_draw_indirect, true, kCvarGroup,

@@ -25,6 +25,7 @@
 #include "gpu/frame.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/surface_pool.h"
+#include "gpu/host_targets.h"
 
 namespace bd::gpu {
 
@@ -63,6 +64,12 @@ void DestroyResourceNow(u32 guest_va, ResourceType type) {
     auto *tex = static_cast<GuestTexture *>(host);
     const bool is_surface = (type == ResourceType::RenderTarget ||
                              type == ResourceType::DepthStencil);
+    // A host-owned target outlives the guest's handle: nothing is copied out,
+    // nothing is parked, and CreateSurface hands the same surface back.
+    if (is_surface && tex->hostOwned) {
+      HostTargetReleased(tex);
+      break;
+    }
     // A pooled surface keeps its framebuffers and bindless slot: the same
     // pairs re-form on reacquire.
     Video::NotifyTextureDestroyed(tex, /*retire_bindings=*/!is_surface);

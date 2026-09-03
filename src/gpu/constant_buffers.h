@@ -195,4 +195,9 @@ ConstantAllocation UploadHostBytes(const void *host_data, u32 size,
 // data that is fixed up on the host before it is uploaded.
 void ByteSwap32ToHost(u8 *dst, const u8 *src, u32 size);
 
+// The host-endian vertex and pixel constant blocks staged for the draw
+// being dispatched (diagnostics only; the upload ring itself is never read).
+const float *StagedVertexBlock();
+const float *StagedPixelBlock();
+
 } // namespace bd::gpu

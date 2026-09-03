@@ -11,6 +11,7 @@
  */
 #include "gpu/draw_queue.h"
 #include "gpu/frame.h"
+#include "gpu/host_targets.h"
 
 #include <algorithm>
 #include <atomic>
@@ -508,6 +509,30 @@ void Video::RequestClear(u32 flags, u32 color_argb, float depth, u32 stencil) {
   // would float to an unrelated RT, so between passes with a real color target
   // clear now. The deferred path still covers depth, stencil and mid-pass.
   GuestTexture *rt = s.render_target;
+  // A host-owned target keeps its own clear until its pass binds
+  // (HostTargetApplyClears), so no framebuffer is touched here: the colour
+  // path below switched plume's framebuffer to clear the scene, which pushed
+  // the shadow map's deferred clear out of plume's hold and made it a
+  // zero-draw pass of its own (a framebuffer trace, 2026-09-03). The links
+  // out of the target are dropped, not copied: every reader of its previous
+  // content has run by the time the guest clears it again.
+  if (s.command_list_open && !s.draw_framebuffer_bound) {
+    if ((flags & 0x30u) != 0) {
+      if (GuestTexture *ds = s.depth_stencil; ds && ds->hostOwned) {
+        HostTargetDropLinks(s, ds);
+        HostTargetRequestClear(ds, flags & 0x30u, color_argb, depth, stencil);
+        s.clear_flags &= ~0x30u;
+      }
+    }
+    if ((flags & 0x1u) != 0 && rt && rt->hostOwned) {
+      HostTargetDropLinks(s, rt);
+      HostTargetRequestClear(rt, 0x1u, color_argb, depth, stencil);
+      s.clear_flags &= ~0x1u;
+    }
+    if (s.clear_flags == 0)
+      s.clear_pending = false;
+    flags = s.clear_flags;
+  }
   // The depth clear is deferred to the target's next pass (plume holds it as
   // that pass's load op). A resolve still pending out of the depth surface
   // has to read the surface before the clear, not after: left to the next

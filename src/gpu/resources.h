@@ -164,6 +164,17 @@ struct GuestTexture {
   // reuse resets it). A drawn-into bound surface is the EDRAM occupant a
   // Resolve reads. A fresh one still holds its predecessor's content.
   bool surfaceDrawn = false;
+  // Host-owned target (gpu/host_targets.h): a persistent surface the guest's
+  // CreateSurface hands back every frame. Its Release frees nothing, its
+  // clears wait here until its pass binds, and its resolve links are dropped
+  // without a copy when it is redrawn.
+  bool hostOwned = false;
+  bool hostTargetLive = false; // the guest holds the handle now
+  u8 hostTargetClass = 0;
+  u32 hostClearFlags = 0; // X360 D3DCLEAR bits: 0x1 colour, 0x10 z, 0x20 stencil
+  u32 hostClearColor = 0xFF000000;
+  float hostClearDepth = 1.0f;
+  u32 hostClearStencil = 0;
   // Set for every texture in the current DrainSlot batch before teardown, so
   // a materialize during teardown cannot copy into a texture freed later
   // in the same batch.

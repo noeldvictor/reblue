@@ -14,6 +14,7 @@
 #include "gpu/format.h"
 #include "gpu/occlusion_cull.h"
 #include "gpu/frame.h"
+#include "gpu/host_targets.h"
 
 #include <mutex>
 #include <utility>
@@ -228,8 +229,15 @@ void FlushWriteLayoutToRead(VideoState &s, const GuestTexture *rt,
   MarkInter(s.command_list);
 }
 
+// skip_bound: leave the targets of the framebuffer still bound alone. The
+// draws recorded against that framebuffer are queued, not emitted, and a
+// flip of their target to a read layout ahead of them made plume run the
+// target's held clear as a zero-draw pass and the real pass LOAD (the shadow
+// map, every frame, in a framebuffer trace of 2026-09-03). The caller runs
+// this again after the queue has flushed, with the pass ended, where the
+// same barrier costs nothing.
 void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
-                                     const GuestTexture *ds) {
+                              const GuestTexture *ds, bool skip_bound) {
   plume::RenderTextureBarrier sampled[16];
   u32 sampled_count = 0;
   for (GuestTexture *t : s.textures) {
@@ -237,6 +245,10 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
     if (!src || src == t || !src->texture)
       continue;
     if (src == rt || src == ds)
+      continue;
+    // Not gated on plume_framebuffer_bound: RequestClear's colour path
+    // clears that flag while the outgoing pass's draws are still queued.
+    if (skip_bound && (src == s.bound_fb_rt || src == s.bound_fb_ds))
       continue;
     // An alias of the bound target shares its texture: flipping it to a read
     // layout would read the image being drawn. The alias materialised every
@@ -313,7 +325,7 @@ void TransitionTargetsToWrite(VideoState &s, GuestTexture *rt, GuestTexture *ds,
 // drawing over it" well defined. Replaces SeedFreshColorTarget for the
 // full-screen chain; the copy path stays for everything else (2026-09-03).
 bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
-  if (!rt || !rt->texture || rt->aliasOf || rt->aliasedBy)
+  if (!rt || !rt->texture || rt->aliasOf || rt->aliasedBy || rt->hostOwned)
     return false;
   if (rt->layout != plume::RenderTextureLayout::UNKNOWN)
     return false; // not fresh: it holds its own content
@@ -341,8 +353,9 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
     root = next;
     chain[chain_len++] = next;
   }
-  if (!root->texture || root == rt || root == s.back_buffer_surface)
-    return false;
+  if (!root->texture || root == rt || root == s.back_buffer_surface ||
+      root->hostOwned)
+    return false; // a host target is nobody's tile
   if (!FullscreenChainClassLocked(s, head))
     return false;
   // The format may differ (an 8-bit surface after a 16-bit head): the
@@ -554,6 +567,14 @@ bool Video::BindDrawFramebufferLocked() {
   for (GuestTexture *t : {rt, ds}) {
     if (!t)
       continue;
+    // A host-owned target is never a resolve destination. Its links were
+    // dropped at the guest's clear (RequestClear); one still here means the
+    // guest draws into the target again after resolving it, and only then
+    // does the resolve become a copy.
+    if (t->hostOwned) {
+      MaterializeOutboundLocked(s, t);
+      continue;
+    }
     // Inbound before outbound: a surface with both a stale inbound link and
     // outbound links must absorb its pending content before propagating.
     MaterializeInboundLocked(s, t);
@@ -572,7 +593,7 @@ bool Video::BindDrawFramebufferLocked() {
   // The 48 are genuine render-target ping-pong: draw into a surface, sample it,
   // draw into it again. Reducing them means changing that pattern, not gating
   // the scan.
-  TransitionResolveSources(s, rt, ds);
+  TransitionResolveSources(s, rt, ds, /*skip_bound=*/true);
 
   // The bound pair is compared, not just the flag: it resets on RT/DS pointer
   // changes, which pooled-surface reuse (same pointer, new role) does not make.
@@ -628,8 +649,9 @@ bool Video::BindDrawFramebufferLocked() {
     // single-sample dst) and does not need to be: the MSAA pass reaching here
     // is the scene, the chain source, which writes the whole tile fresh.
     s.command_list->discardTexture(rt->texture);
-  } else if (discard_rt && s.bind_overwrites) {
-    // The host composite writes the whole target; nothing to inherit.
+  } else if (discard_rt && (s.bind_overwrites || rt->hostOwned)) {
+    // The host composite writes the whole target; nothing to inherit. A
+    // host-owned target is fresh only once, before its first clear.
     s.command_list->discardTexture(rt->texture);
   } else if (discard_rt && REXCVAR_GET(bd_seed_targets) &&
              rt != s.held_clear_rt) {
@@ -686,6 +708,10 @@ bool Video::BindDrawFramebufferLocked() {
   // here - but the queue rebinds its own framebuffer per draw, so this needs no
   // guard and cannot land on the wrong target.
   bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
+  // The outgoing targets a bound texture links to, now that their draws are
+  // out (see TransitionResolveSources): the pass they were in has ended or
+  // ends here, so the barrier is at a boundary.
+  TransitionResolveSources(s, rt, ds, /*skip_bound=*/false);
 
   s.command_list->setFramebuffer(fb);
   s.plume_framebuffer_bound = (fb != nullptr);
@@ -759,6 +785,7 @@ bool Video::BindDrawFramebufferLocked() {
     s.command_list->clearColor(0, ArgbToRenderColor(0));
   }
   DrainPendingClear(s, rt, ds);
+  HostTargetApplyClears(s, rt, ds);
   s.draw_framebuffer_bound = true;
   s.bound_fb_rt = rt;
   s.bound_fb_ds = ds;

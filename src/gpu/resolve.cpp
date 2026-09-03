@@ -52,6 +52,16 @@ GuestTexture *ResolveSourceForFlagsLocked(VideoState &s, u32 flags,
       used_fallback = false;
       return s.depth_stencil;
     }
+    // A host-owned target (gpu/host_targets.h) holds the previous frame's
+    // image until its pass draws, which is what the guest's frame-start
+    // depth grab is after: a link, not a guessed source and a copy. The
+    // shadow map's square-and-undrawn clear-to-far is decided by the caller
+    // before this matters.
+    if (s.depth_stencil && s.depth_stencil->texture &&
+        s.depth_stencil->hostOwned) {
+      used_fallback = false;
+      return s.depth_stencil;
+    }
     if (s.last_drawn_ds[slot] && s.last_drawn_ds[slot]->texture) {
       u32 n;
       // Expected per-frame behavior (frame start history grab), so verbosity 1
@@ -70,7 +80,7 @@ GuestTexture *ResolveSourceForFlagsLocked(VideoState &s, u32 flags,
     return s.depth_stencil;
   }
   if (s.render_target && s.render_target->texture &&
-      s.render_target->surfaceDrawn) {
+      (s.render_target->surfaceDrawn || s.render_target->hostOwned)) {
     used_fallback = false;
     return s.render_target;
   }
@@ -555,6 +565,19 @@ bool MaterializeOutboundLocked(VideoState &s, GuestTexture *source,
       NoteResolveOp(ResolveOp::Materialize);
       recorded = true;
       DetachSourceSurfaceLocked(s, dst);
+      // Named once in a field scene: each is a full copy the EDRAM model
+      // asked for (stage 4 verification, 2026-09-03).
+      static u32 listed = 0;
+      const u32 frame = FrameStatFrameCount();
+      if (frame > 3000 && listed < 12) {
+        ++listed;
+        BD_INFO("[materialize] frame {} outbound{}: {}x{} fmt {} s{} host {} "
+                "-> {}x{} fmt {} scale {:.3f}",
+                frame, aliasable_only ? " (destroy)" : "", source->width,
+                source->height, u32(source->format), u32(source->sampleCount),
+                source->hostOwned ? 1 : 0, dst->width, dst->height,
+                u32(dst->format), dst->resolveScale);
+      }
     }
   }
   return recorded;
@@ -567,6 +590,18 @@ void MaterializeInboundLocked(VideoState &s, GuestTexture *dst) {
     return;
   if (CopySurfaceToTextureLocked(s, dst->sourceSurface, dst, "Materialize")) {
     NoteResolveOp(ResolveOp::Materialize);
+    static u32 listed = 0;
+    const u32 frame = FrameStatFrameCount();
+    if (frame > 3000 && listed < 12) {
+      ++listed;
+      BD_INFO("[materialize] frame {} inbound: {}x{} fmt {} s{} host {} -> "
+              "{}x{} fmt {} scale {:.3f}",
+              frame, dst->sourceSurface->width, dst->sourceSurface->height,
+              u32(dst->sourceSurface->format),
+              u32(dst->sourceSurface->sampleCount),
+              dst->sourceSurface->hostOwned ? 1 : 0, dst->width, dst->height,
+              u32(dst->format), dst->resolveScale);
+    }
     DetachSourceSurfaceLocked(s, dst);
   }
 }

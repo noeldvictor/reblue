@@ -45,6 +45,7 @@
 
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 REXCVAR_DECLARE(bool, bd_record_mask);
+REXCVAR_DECLARE(i32, bd_record_mask_mode);
 
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -639,8 +640,37 @@ u32 UploadVertexBlockFromStaged(u32 index) {
   const u8 *block = reinterpret_cast<const u8 *>(s.staged[index].regs);
   const RegisterMask mask = VertexMask(nullptr);
   const u64 h = MaskedHash(block, mask);
-  if (auto it = s.vsOffsets.find(h); it != s.vsOffsets.end())
+  if (auto it = s.vsOffsets.find(h); it != s.vsOffsets.end()) {
+    // Diagnostic (2026-09-03): a hit must be byte-identical, or the group's
+    // masks (computed against this block) read the wrong window.
+    if (it->second.shadow < s.vsShadow.size() &&
+        std::memcmp(s.vsShadow[it->second.shadow].data(), block,
+                    kConstantBlockBytes) != 0) {
+      static u32 told = 0;
+      if (told++ < 8) {
+        u32 first_reg = 256;
+        for (u32 r = 0; r < 256 && first_reg == 256; ++r)
+          if (std::memcmp(s.vsShadow[it->second.shadow].data() + r * 16,
+                          block + r * 16, 16) != 0)
+            first_reg = r;
+        BD_WARN("[records] window hash hit differs from the block (first "
+                "register c{}); the masks would read the wrong window",
+                first_reg);
+      }
+    }
+    {
+      static u32 told = 0;
+      if (s.buffer.mapped &&
+          std::memcmp(s.buffer.mapped + it->second.offset, block,
+                      kConstantBlockBytes) != 0 && told++ < 8)
+        BD_WARN("[records] hit window at offset {} does not hold the block "
+                "in the ring (shadow agrees: {})", it->second.offset,
+                it->second.shadow < s.vsShadow.size() &&
+                    std::memcmp(s.vsShadow[it->second.shadow].data(), block,
+                                kConstantBlockBytes) == 0);
+    }
     return it->second.offset;
+  }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
     return ~0u;
@@ -651,6 +681,17 @@ u32 UploadVertexBlockFromStaged(u32 index) {
                              alloc.dynamicOffset,
                              static_cast<u32>(s.vsShadow.size() - 1)});
   NoteConstantUpload(true, true);
+  {
+    // Diagnostic (2026-09-03): the window as the ring holds it, read back
+    // (desktop only; write-combined memory, never in a shipping path).
+    static u32 checked = 0, told = 0;
+    if (checked++ < 20000 && s.buffer.mapped &&
+        std::memcmp(s.buffer.mapped + alloc.dynamicOffset, block,
+                    kConstantBlockBytes) != 0 && told++ < 8)
+      BD_WARN("[records] fresh window at offset {} does not hold the block "
+              "(chunk {} slot {})", alloc.dynamicOffset, alloc.dynamicOffset /
+              kConstantBlockBytes, s.cursor);
+  }
   return alloc.dynamicOffset;
 }
 
@@ -679,12 +720,21 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
   // The base: the first record's block, which the emitter binds as the
   // group's uniform window. Each record's mask marks the registers where it
   // differs, so the shader loads only those from the record.
-  const bool masked = REXCVAR_GET(bd_record_mask) && staged[0] < s.staged.size();
+  // bd_record_mask_mode 2: the window is rebound but the masks stay all
+  // ones (diagnostic, 2026-09-03).
+  const bool masked = REXCVAR_GET(bd_record_mask) &&
+                      REXCVAR_GET(bd_record_mask_mode) != 2 &&
+                      staged[0] < s.staged.size();
   const float *base = masked ? s.staged[staged[0]].regs : nullptr;
   for (u32 i = 0; i < n; ++i) {
     const u32 idx = staged[i];
     if (idx >= s.staged.size()) {
       std::memset(&dst[i], 0, sizeof(InstanceRecord));
+      static u32 told = 0;
+      if (told++ < 8)
+        BD_WARN("[records] record {} of {} refers past the staging list ({} "
+                "staged): a zero transform, an invisible draw", i, n,
+                s.staged.size());
       continue;
     }
     const InstanceRecord &r = s.staged[idx];
@@ -1209,6 +1259,13 @@ ConstantAllocation UploadHostBytes(const void *host_data, u32 size,
     return {};
   std::memcpy(alloc.memory, host_data, size);
   return alloc;
+}
+
+const float *StagedVertexBlock() {
+  return reinterpret_cast<const float *>(upload_state().scratchVS);
+}
+const float *StagedPixelBlock() {
+  return reinterpret_cast<const float *>(upload_state().scratchPS);
 }
 
 } // namespace bd::gpu

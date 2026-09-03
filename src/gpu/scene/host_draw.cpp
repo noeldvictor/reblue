@@ -65,6 +65,7 @@
 REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
+REXCVAR_DECLARE(bool, bd_host_draw_verify);
 
 namespace bd::gpu::scene {
 
@@ -154,10 +155,37 @@ struct VisualRegs {
   // binding the guest meant.
   GuestTexture *tex[16] = {};
   u32 tex_frame[16] = {};
+  // The bool constants the visual's interpreted node ran with: the guest
+  // toggles them between frames (VS bit 30, PS bit 5 in the verifier's
+  // count of 503 draws, 2026-09-03), so a template's frozen copy is stale.
+  u32 bools[8] = {};
+  u32 bools_frame = 0;
+};
+
+// The camera block of a render pass, VS c0-c4 and the eye at PS c1, as the
+// last interpreted draw of that view wrote it this frame. The render-list
+// loop writes the block on the first entry of a visual in a pass and not on
+// the next, so a template holds it from one sighting or not at all, and a
+// replayed entry composed it from the live block: in the reflection view
+// that was an eye at the origin, every reflected surface fully fogged, and
+// the puddle at the village rock reflected flat sky on the frames its
+// entries replayed (the "cyan skirt"; bd_host_draw_verify, 2026-09-03).
+// c0-c1 only: c2-c4 are the node's (the verifier read them per node once
+// they were taken from the pass, 3,352 draws).
+constexpr u32 kPassVsRegs = 2;
+constexpr u32 kPassPsRegs = 2; // c0, c1
+struct PassRegs {
+  u32 vs[kPassVsRegs][4] = {};
+  u32 vs_frame[kPassVsRegs] = {};
+  u32 ps[kPassPsRegs][4] = {};
+  u32 ps_frame[kPassPsRegs] = {};
 };
 
 struct Store {
   std::mutex mutex;
+  PassRegs pass_regs[16]; // by render view
+  u32 why_pass = 0;       // replays refused: the pass's camera not seen yet
+  u32 why_drift = 0;      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
   std::unordered_map<u64, u32> never; // keys that cannot replay: frame noted
   std::unordered_map<u64, VisualRegs> visuals;
@@ -220,6 +248,49 @@ thread_local Pending t_pending;
 thread_local bool t_replaying = false;
 alignas(16) thread_local u8 t_vs_block[kBlockBytes];
 alignas(16) thread_local u8 t_ps_block[kBlockBytes];
+
+// bd_host_draw_verify: a node the replay would issue is composed by the
+// replay exactly as it would be dispatched, kept here, and then the
+// interpreter runs the node anyway; each interpreted sub-draw is diffed
+// against the replay's composition at capture (VerifyAgainstReplay). The
+// frame stays the interpreter's; the log names what the replay would have
+// got wrong, register by register and slot by slot. Built 2026-09-03 for
+// the cyan skirt: a within-run A/B put it on the replay (38 of 120 frames
+// against 2), and the A/Bs of its sub-paths took two minutes a question.
+struct VerifyDraw {
+  alignas(16) u8 vs[kBlockBytes];
+  alignas(16) u8 ps[kBlockBytes];
+  u32 fetch[32][6];
+  u32 bools[8];
+  GuestTexture *textures[16];
+  PipelineState pipelineState;
+  plume::RenderVertexBufferView vertex_views[16];
+  plume::RenderInputSlot input_slots[16];
+  plume::RenderIndexBufferView index_view;
+  u32 vertex_first, vertex_count;
+  u32 count, start_index, start_vertex, primitive_type;
+  i32 base_vertex;
+  bool indexed;
+  float alpha;
+};
+struct Verify {
+  bool active = false;
+  u64 key = 0;
+  u32 next = 0;
+  std::vector<VerifyDraw> expected;
+  u32 nodes = 0, nodes_wrong = 0, draws = 0, draws_wrong = 0;
+  u32 wrong_vs = 0, wrong_ps = 0, wrong_fetch = 0, wrong_tex = 0,
+      wrong_state = 0, wrong_geom = 0, wrong_bools = 0, wrong_world = 0;
+  u32 wrong_at_node_start = 0;
+  u32 told = 0;
+  u32 told_regs = 0, told_bools = 0, told_texset = 0;
+  u32 tex_inherited = 0; // slots the node never set differ: noise, counted
+  u32 last_report_frame = 0;
+  // Which registers differ, over the run: the histogram names the culprit.
+  u32 vs_reg_hits[256] = {};
+  u32 ps_reg_hits[256] = {};
+};
+thread_local Verify t_verify;
 thread_local u32 t_fetch[32][6];
 
 u64 KeyOf(const NodeTag &tag) {
@@ -583,14 +654,16 @@ void Tally(Store &st, bool replayed, bool from_list) {
       st.acc_list_replayed = st.acc_list_interpreted = 0;
       st.acc_list_built = st.acc_list_built_runs = 0;
       BD_INFO("[node] host-issued {} of {} node draws a frame (refused: {} fresh "
-              "values, {} no template, {} refresh, {} volatile, {} never); {} "
-              "templates, {} volatile (why:{})",
+              "values, {} no template, {} refresh, {} volatile, {} never, {} "
+              "pass camera, {} drift); {} templates, {} volatile (why:{})",
               st.acc_replayed / st.acc_frames,
               (st.acc_replayed + st.acc_interpreted) / st.acc_frames,
               st.acc_stale / st.acc_frames, st.acc_none / st.acc_frames,
               st.acc_refresh / st.acc_frames, st.acc_volatile / st.acc_frames,
-              st.acc_never / st.acc_frames, st.templates.size(),
+              st.acc_never / st.acc_frames, st.why_pass / st.acc_frames,
+              st.why_drift / st.acc_frames, st.templates.size(),
               st.volatile_count, why.empty() ? " -" : why);
+      st.why_pass = st.why_drift = 0;
       st.acc_replayed = st.acc_interpreted = st.acc_frames = st.acc_stale = 0;
       st.acc_none = st.acc_refresh = st.acc_volatile = st.acc_never = 0;
     }
@@ -694,6 +767,157 @@ void HostDrawSnapshotBefore() {
   ReadFetch(dev, p.fetch);
   p.valid = true;
 }
+
+namespace {
+
+void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d, bool needs_bones) {
+  Verify &vf = t_verify;
+  const u32 idx = vf.next++;
+  ++vf.draws;
+  if (idx >= vf.expected.size()) {
+    if (vf.told++ < 24)
+      BD_INFO("[verify] node {:016X} sub {}: the interpreter issued more draws "
+              "than the replay has ({})", KeyOf(tag), idx, vf.expected.size());
+    ++vf.draws_wrong;
+    ++vf.wrong_geom;
+    return;
+  }
+  const VerifyDraw &e = vf.expected[idx];
+  std::string why;
+  u32 n_vs = 0, n_ps = 0, n_fetch = 0, n_tex = 0, n_world = 0;
+  auto f4 = [](const u8 *b, u32 r) {
+    float v[4];
+    std::memcpy(v, b + r * 16, 16);
+    return fmt::format("({:.3f} {:.3f} {:.3f} {:.3f})", v[0], v[1], v[2], v[3]);
+  };
+  for (u32 r = 0; r < 256; ++r) {
+    if (needs_bones && r >= kBoneBase && r < kBoneBase + kBoneRegs)
+      continue;
+    if (std::memcmp(t_vs_block + r * 16, e.vs + r * 16, 16) == 0)
+      continue;
+    const bool world = r >= 20 && r < 24;
+    if (world)
+      ++n_world;
+    else {
+      ++n_vs;
+      ++vf.vs_reg_hits[r];
+    }
+    if (n_vs + n_world <= 6)
+      why += fmt::format(" vs c{} interp {} replay {};", r, f4(t_vs_block, r),
+                         f4(e.vs, r));
+  }
+  for (u32 r = 0; r < 256; ++r) {
+    if (std::memcmp(t_ps_block + r * 16, e.ps + r * 16, 16) == 0)
+      continue;
+    ++n_ps;
+    ++vf.ps_reg_hits[r];
+    if (n_ps <= 6)
+      why += fmt::format(" ps c{} interp {} replay {};", r, f4(t_ps_block, r),
+                         f4(e.ps, r));
+  }
+  for (u32 k = 0; k < 32; ++k) {
+    if (std::memcmp(t_fetch[k], e.fetch[k], sizeof(e.fetch[k])) == 0)
+      continue;
+    ++n_fetch;
+    if (n_fetch <= 4)
+      why += fmt::format(" fetch{} interp {:08X}.. replay {:08X}..;", k,
+                         t_fetch[k][0], e.fetch[k][0]);
+  }
+  auto desc = [](const GuestTexture *t) {
+    return t ? fmt::format("va{:08X}/{}x{}/t{}", t->selfVa, t->width, t->height,
+                           u32(t->type))
+             : std::string("null");
+  };
+  for (u32 k = 0; k < 16; ++k) {
+    if (d.textures[k] == e.textures[k])
+      continue;
+    if (!((d.tex_mask >> k) & 1u)) {
+      ++vf.tex_inherited; // a slot this node never set; the guest's own
+      // order left something else there. Reported when the slot's fetch
+      // constant is configured (a sampler the shader may read) and the
+      // interpreter's binding is a real texture.
+      if (k < 32 && t_fetch[k][0] != 0 && d.textures[k]) {
+        ++n_tex;
+        if (n_tex <= 6)
+          why += fmt::format(" tex{}(inherited) interp {} replay {};", k,
+                             desc(d.textures[k]), desc(e.textures[k]));
+      }
+      continue;
+    }
+    ++n_tex;
+    if (n_tex <= 6)
+      why += fmt::format(" tex{}(set) interp {} replay {};", k,
+                         desc(d.textures[k]), desc(e.textures[k]));
+  }
+  const bool state_diff =
+      std::memcmp(&d.pipelineState, &e.pipelineState, sizeof(PipelineState)) != 0;
+  const bool geom_diff =
+      std::memcmp(d.vertex_views, e.vertex_views, sizeof(d.vertex_views)) != 0 ||
+      std::memcmp(d.input_slots, e.input_slots, sizeof(d.input_slots)) != 0 ||
+      std::memcmp(&d.index_view, &e.index_view, sizeof(d.index_view)) != 0 ||
+      d.vertex_first != e.vertex_first || d.vertex_count != e.vertex_count ||
+      d.count != e.count || d.start_index != e.start_index ||
+      d.base_vertex != e.base_vertex || d.start_vertex != e.start_vertex ||
+      d.indexed != e.indexed || d.primitive_type != e.primitive_type ||
+      d.alpha_threshold != e.alpha;
+  const bool bools_diff = std::memcmp(d.bools, e.bools, sizeof(d.bools)) != 0;
+  if (state_diff)
+    why += " pipelineState differs;";
+  if (geom_diff)
+    why += fmt::format(" geometry differs (count {}/{} start {}/{} base {}/{});",
+                       d.count, e.count, d.start_index, e.start_index,
+                       d.base_vertex, e.base_vertex);
+  if (bools_diff)
+    why += fmt::format(" bools interp {:08X}/{:08X} replay {:08X}/{:08X};",
+                       d.bools[0], d.bools[4], e.bools[0], e.bools[4]);
+  if (why.empty())
+    return;
+  ++vf.draws_wrong;
+  vf.wrong_vs += n_vs ? 1 : 0;
+  vf.wrong_world += n_world ? 1 : 0;
+  vf.wrong_ps += n_ps ? 1 : 0;
+  vf.wrong_fetch += n_fetch ? 1 : 0;
+  vf.wrong_tex += n_tex ? 1 : 0;
+  vf.wrong_state += state_diff ? 1 : 0;
+  vf.wrong_geom += geom_diff ? 1 : 0;
+  vf.wrong_bools += bools_diff ? 1 : 0;
+  // A dozen examples per kind, so a rare kind is not drowned by a common one.
+  bool tell = false;
+  if ((n_vs || n_ps || n_world || n_fetch) && vf.told_regs++ < 16)
+    tell = true;
+  if (bools_diff && !(n_vs || n_ps) && vf.told_bools++ < 12)
+    tell = true;
+  if (n_tex && vf.told_texset++ < 600)
+    tell = true;
+  if ((state_diff || geom_diff) && vf.told++ < 12)
+    tell = true;
+  if (tell)
+    BD_INFO("[verify] frame {} node {:016X} (visual {:08X} view {} list {}) "
+            "sub {}: vs {} world {} ps {} fetch {} tex {}:{}",
+            FrameStatFrameCount(), KeyOf(tag), tag.visual_va, tag.render_view,
+            tag.from_list ? 1 : 0, idx, n_vs, n_world, n_ps, n_fetch, n_tex,
+            why);
+}
+
+void VerifyReport(Verify &vf) {
+  std::string vs_hist, ps_hist;
+  for (u32 r = 0; r < 256; ++r) {
+    if (vf.vs_reg_hits[r])
+      vs_hist += fmt::format(" c{}:{}", r, vf.vs_reg_hits[r]);
+    if (vf.ps_reg_hits[r])
+      ps_hist += fmt::format(" c{}:{}", r, vf.ps_reg_hits[r]);
+  }
+  BD_INFO("[verify] {} nodes verified, {} wrong; {} draws, {} wrong: vs {} "
+          "world {} ps {} fetch {} tex(set) {} (inherited slots differ on {}) "
+          "state {} geometry {} bools {} | vs regs{} | ps regs{}",
+          vf.nodes, vf.nodes_wrong, vf.draws, vf.draws_wrong, vf.wrong_vs,
+          vf.wrong_world, vf.wrong_ps, vf.wrong_fetch, vf.wrong_tex,
+          vf.tex_inherited, vf.wrong_state, vf.wrong_geom, vf.wrong_bools,
+          vs_hist.empty() ? " none" : vs_hist.c_str(),
+          ps_hist.empty() ? " none" : ps_hist.c_str());
+}
+
+} // namespace
 
 void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
                      u32 primitive_type) {
@@ -804,10 +1028,28 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     d.bools[i] = static_cast<u32>(dev->vsBoolConstants[i]);
     d.bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
   }
+  if (t_verify.active && t_verify.key == KeyOf(tag))
+    VerifyAgainstReplay(tag, d, p.needs_bones);
   p.draws.push_back(std::move(d));
 }
 
 void HostDrawCommit(const NodeTag &tag) {
+  if (t_verify.active) {
+    Verify &vf = t_verify;
+    vf.active = false;
+    ++vf.nodes;
+    if (vf.next != vf.expected.size() && vf.told++ < 24)
+      BD_INFO("[verify] node {:016X}: interpreter issued {} draws, replay {}",
+              vf.key, vf.next, vf.expected.size());
+    if (vf.draws_wrong != vf.wrong_at_node_start)
+      ++vf.nodes_wrong;
+    vf.wrong_at_node_start = vf.draws_wrong;
+    const u32 frame = FrameStatFrameCount();
+    if (frame - vf.last_report_frame >= 300) {
+      vf.last_report_frame = frame;
+      VerifyReport(vf);
+    }
+  }
   auto &p = t_pending;
   auto &st = store();
   std::lock_guard lock(st.mutex);
@@ -867,6 +1109,21 @@ void HostDrawCommit(const NodeTag &tag) {
           v.tex[k] = d.textures[k];
           v.tex_frame[k] = frame;
         }
+      }
+      std::memcpy(v.bools, d.bools, sizeof(v.bools));
+      v.bools_frame = frame;
+      if (tag.render_view < 16) {
+        PassRegs &pr = st.pass_regs[tag.render_view];
+        for (const RegDelta &r : d.vs_delta)
+          if (r.reg < kPassVsRegs) {
+            std::memcpy(pr.vs[r.reg], r.value, 16);
+            pr.vs_frame[r.reg] = frame;
+          }
+        for (const RegDelta &r : d.ps_delta)
+          if (r.reg < kPassPsRegs) {
+            std::memcpy(pr.ps[r.reg], r.value, 16);
+            pr.ps_frame[r.reg] = frame;
+          }
       }
     }
   }
@@ -1052,17 +1309,46 @@ bool HostDrawReplay(const NodeTag &tag) {
     // this visual in this frame; otherwise this node is the one to interpret.
     auto vit = st.visuals.find(VisualKeyOf(tag));
     v = vit != st.visuals.end() ? &vit->second : nullptr;
+    // A stable register the visual's interpreted node wrote differently
+    // this frame: the template is out of date (a screen-size constant after
+    // a resolution change read 480x270 against 320x180 for 492 draws in the
+    // verifier), so it is recaptured on the next sighting.
+    auto drifted = [&](const RegDelta &r, bool vertex) {
+      if (!r.stable || !v)
+        return false;
+      const u32 *fresh = vertex ? v->vs[r.reg] : v->ps[r.reg];
+      const u32 seen = vertex ? v->vs_frame[r.reg] : v->ps_frame[r.reg];
+      return seen == frame && std::memcmp(fresh, r.value, 16) != 0;
+    };
+    const PassRegs *pr = tag.render_view < 16 ? &st.pass_regs[tag.render_view]
+                                              : nullptr;
     for (const SubDraw &d : t->draws) {
-      for (const RegDelta &r : d.vs_delta)
+      for (const RegDelta &r : d.vs_delta) {
+        if (r.reg < kPassVsRegs)
+          continue; // the pass camera: composed below
         if (!r.stable && (!v || v->vs_frame[r.reg] != frame)) {
           ++st.stale_bail;
           return false;
         }
-      for (const RegDelta &r : d.ps_delta)
+        if (drifted(r, true)) {
+          ++st.why_drift;
+          it->second.captured_frame = 0;
+          return false;
+        }
+      }
+      for (const RegDelta &r : d.ps_delta) {
+        if (r.reg < kPassPsRegs)
+          continue;
         if (!r.stable && (!v || v->ps_frame[r.reg] != frame)) {
           ++st.stale_bail;
           return false;
         }
+        if (drifted(r, false)) {
+          ++st.why_drift;
+          it->second.captured_frame = 0;
+          return false;
+        }
+      }
       for (const FetchDelta &f : d.fetch_delta)
         if (!f.stable && (!v || v->fetch_frame[f.slot] != frame)) {
           ++st.stale_bail;
@@ -1087,8 +1373,30 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
       }
     }
-    Tally(st, true, tag.from_list);
-    ++it->second.replays;
+    // The pass's camera block has to have been written this frame by an
+    // interpreted draw of this view; until then this draw interprets (and
+    // writes it, if it is the first entry of its visual).
+    for (u32 r = 0; r < kPassVsRegs; ++r)
+      if (!pr || pr->vs_frame[r] != frame) {
+        ++st.why_pass;
+        return false;
+      }
+    for (u32 r = 0; r < kPassPsRegs; ++r)
+      if (!pr || pr->ps_frame[r] != frame) {
+        ++st.why_pass;
+        return false;
+      }
+    if (!REXCVAR_GET(bd_host_draw_verify)) {
+      Tally(st, true, tag.from_list);
+      ++it->second.replays;
+    }
+  }
+  const bool verify = REXCVAR_GET(bd_host_draw_verify);
+  if (verify) {
+    t_verify.active = false;
+    t_verify.key = KeyOf(tag);
+    t_verify.next = 0;
+    t_verify.expected.clear();
   }
 
   // The foliage vector for this node, when its visual is foliage.
@@ -1162,10 +1470,20 @@ bool HostDrawReplay(const NodeTag &tag) {
       std::memcpy(t_vs_block + r.reg * 16, r.stable ? r.value : v->vs[r.reg], 16);
     for (const RegDelta &r : d.ps_delta)
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
+    // The pass camera, from this frame's interpreted draws of this view.
+    {
+      const PassRegs &pass = st.pass_regs[tag.render_view];
+      for (u32 r = 0; r < kPassVsRegs; ++r)
+        std::memcpy(t_vs_block + r * 16, pass.vs[r], 16);
+      for (u32 r = 0; r < kPassPsRegs; ++r)
+        std::memcpy(t_ps_block + r * 16, pass.ps[r], 16);
+    }
     std::memcpy(t_vs_block + 20 * 16, world_rows, sizeof(world_rows));
     if (!t->bone_slots.empty())
       GatherBones(tag, t->bone_slots, t_vs_block);
     u32 bools[8];
+    // The template's: the bools are the node's, not the visual's (taking the
+    // visual's interpreted node's put 118,737 draws wrong in the verifier).
     std::memcpy(bools, d.bools, sizeof(bools));
     if (has_foliage) {
       std::memcpy(t_vs_block + 57 * 16, foliage.v, sizeof(foliage.v));
@@ -1214,6 +1532,35 @@ bool HostDrawReplay(const NodeTag &tag) {
       mark_dirty();
       s.material_override = &ov;
     }
+    if (verify) {
+      // What the replay would dispatch, kept for the interpreter's draws
+      // to be checked against (VerifyAgainstReplay).
+      VerifyDraw e;
+      std::memcpy(e.vs, t_vs_block, kBlockBytes);
+      std::memcpy(e.ps, t_ps_block, kBlockBytes);
+      std::memcpy(e.fetch, t_fetch, sizeof(e.fetch));
+      std::memcpy(e.bools, bools, sizeof(e.bools));
+      {
+        std::lock_guard lock(s.mutex);
+        std::memcpy(e.textures, s.textures, sizeof(e.textures));
+        e.pipelineState = s.pipelineState;
+        std::memcpy(e.vertex_views, s.vertex_views, sizeof(e.vertex_views));
+        std::memcpy(e.input_slots, s.input_slots, sizeof(e.input_slots));
+        e.index_view = s.index_view;
+        e.vertex_first = s.bound_vertex_first;
+        e.vertex_count = s.bound_vertex_count;
+        e.alpha = Video::AlphaThreshold();
+        s.material_override = nullptr;
+      }
+      e.count = d.count;
+      e.start_index = d.start_index;
+      e.base_vertex = d.base_vertex;
+      e.start_vertex = d.start_vertex;
+      e.indexed = d.indexed;
+      e.primitive_type = d.primitive_type;
+      t_verify.expected.push_back(e);
+      continue;
+    }
     bd::gpu::hooks::DispatchHostNodeDraw(device_guest, d.primitive_type,
                                          d.indexed, d.count, d.start_index,
                                          d.base_vertex, d.start_vertex);
@@ -1231,6 +1578,11 @@ bool HostDrawReplay(const NodeTag &tag) {
     s.index_view = saved.index_view;
     Video::SetAlphaThreshold(saved.alpha);
     mark_dirty();
+  }
+  if (verify) {
+    // The interpreter runs this node now; its draws are checked at capture.
+    t_verify.active = true;
+    return false;
   }
   return true;
 }

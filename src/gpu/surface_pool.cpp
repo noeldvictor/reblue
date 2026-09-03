@@ -754,6 +754,12 @@ GuestTexture *SurfacePool::Acquire(u32 width, u32 height, u32 guest_format,
   return surface;
 }
 
+GuestTexture *SurfacePool::CreateUnpooled(u32 width, u32 height,
+                                          u32 guest_format, u32 sample_count) {
+  const plume::RenderFormat plume_format = ConvertGuestFormat(guest_format);
+  return CreateFresh(width, height, guest_format, plume_format, sample_count);
+}
+
 bool SurfacePool::Return(GuestTexture *surface) {
   if (!surface || !surface->texture)
     return false;

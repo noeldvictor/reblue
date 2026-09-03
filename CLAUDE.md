@@ -108,6 +108,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. **Vertex pulling and indirect draws shipped on the desktop 2026-09-03, on by default since 15:00** (`gpu/vertex_pull.*`, `bd_draw_pull`, `bd_draw_indirect`): every vertex shader can pull its attributes from the instance record's streams (`SPEC_CONSTANT_PULLED`, a block buffer heap at binding 3 of the texture set, a per-declaration attribute table, a per-record stream table), the pulled twin draws with no stream binds, batches of pulled draws sharing pipeline, material, index buffer and pass go out as one `drawIndexedIndirect` (plume fork), and the record carries a per-register mask so the shader reads storage only for what differs from the group's uniform block (`bd_record_mask`). With the replayed draws on records (`bd_host_draw_records`, default on since the render-target slot fault was fixed) and singles on the record path: **village 258 draws a flush in -> 240 issued -> 80 indirect calls, 235 pulled**; within-run A/Bs -2.9% (indirect) and -3.2% (the pulled path) CPU per draw on the desktop, GPU flat; 300-frame sequences with no artefact frame. `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md` |
 | Host-issued node draws (`bd_host_draw`) | **village: 580 of 659 node runs a frame are the host's, 43 templates volatile (2026-09-03, 02:40)** - the 36 texture-volatile ones are real: a slot the interpreter sets in one run and not in another holds whatever the previous node bound, so merging slot sets or reading the texture from the visual painted the rock with the reflection map (reverted, `6911572` undone): draws replayed from templates, skinned ones included, and **the render-list entries built by the host** (`bd_host_list_build`: 306 entries in 217 runs a frame from recorded entry images, the guest's own allocator, a fresh matrix and palette; the matrix source verified on 52,455 runs). Every draw of the scene pass carries a node tag (`config/hooks/render_list.toml`). Side-by-side runs on the Quest; the list build is desktop-verified only (headset offline): a desktop within-run A/B (`bd_ab_flag="bd_host_list_build"`, 03:30) reads **-8.8% CPU per draw** with it on |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
+| Host-owned targets (stage 4) | **shipped 2026-09-03 19:00** (`gpu/host_targets.*`, `bd_host_targets`): the shadow map, the scene colour+depth and the reflection pair are persistent host surfaces the guest's CreateSurface hands back every frame; clears are the host's (the pass's load op), resolves out of them are links that never copy, Release frees nothing. Desktop: 17 passes a frame (18), zero seeds (1), zero zero-draw clear passes (1, an ordering bug fixed for both arms), fb binds 9 (10), barrier calls 34 (37). `research/20260903_1900_...md` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
@@ -512,14 +513,11 @@ instrument for the rest: run the desktop with `PLUME_FB_TRACE=<path>` set, read 
 between two `1920x1080` present passes; `pass ended by barriers` lines name the texture,
 `host surface|texture guest .. plume ..` lines name the guest object behind it.
 
-1. **Stage 4, the host owns the targets.** Start in `gpu/draw_framebuffer.cpp` and
-   `gpu/resolve.cpp`: a host scene target per render view (colour+depth, two layers under
-   multiview) bound when the guest binds the scene surface; the guest's resolve of the scene
-   becomes "the destination is this texture" (alias always, no size or format gate, the
-   post chain already applies the resolve scale); `SeedFreshColorTarget`, the held clears,
-   the surface pool's EDRAM matching and `MaterializeInboundLocked` retire for the scene
-   chain. Verify: `[seed]` and `[resolve] eager` at zero for the scene chain,
-   `tools/rdc_outline.py` pass list, capture unchanged.
+1. **Stage 4, the host owns the targets - shipped 19:00** (the state table row). What is
+   left of the EDRAM model in a frame: the surface pool for the post chain's small targets
+   and the tail's full-screen surfaces (the chain alias), the desktop's two MSAA resolves,
+   and the two materialise blits of the 2D overlay (stage 2's input-attachment item). The
+   host does not yet choose the targets' size and layers; `Output::LatchedFit` still does.
 2. **The passes.** Composite with gamma folded in, into an 8-bit host target that the
    guest's 2D draws overlay, presented without the front copy; under XR straight into the
    layered swapchain (`XR_FB_foveation` attaches there later).
@@ -597,17 +595,27 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **The "cyan skirt" is the game's own streaming, not a host fault (17:10)**: the
-   draw ledger (`bd_draw_ledger`, `tools/ledger_diff.py`) diffed a hole frame against its
-   neighbour and found a visual whose draw count grows one or two nodes a frame from zero
-   to twenty-seven as the player arrives - and the guest-only path shows the same growth
-   for the same kind of visuals (1, 17, 77, 102 draws over forty frames). The flat colour
-   is the scene clear where a ground detail piece has not streamed in yet. The sequence
-   tool caught it because autoplay keeps walking into new ground. The three replay guards
-   written on the way (surfaces by resource type, textures by guest address, the captured
-   inherited slots re-bound) stay as hardening; the "real cause" claims of 14:50 and 16:40
-   were wrong, and the four clean sequences were timing. `tools/capture_cyan.py` counts
-   the colour in the lower part of the frame apart from the sky.
+   calls it. **The "cyan skirt" (2026-09-03 evening, `research/20260903_1900_...md`)**: the
+   17:10 "game streaming" verdict was wrong. A within-run A/B on `bd_host_draw` over a
+   240-frame sequence at the village rock: 38 of 120 frames with the patch on the replay
+   arm, 2 on the interpreter arm (both arm boundaries); the host walk and the list build
+   A/Bs showed it on both arms. The replay verifier (`bd_host_draw_verify`: the replay
+   composes the node, the interpreter draws it, every sub-draw is diffed register by
+   register and slot by slot) then found and fixed the reflection view's eye register
+   (VS/PS c1 zero on replayed render-list entries: the list loop writes the camera block
+   only on a visual's first entry; the pass camera is now recorded per view and applied to
+   every replay) and stale templates after a resolution change (`why_drift`), after which
+   the scene and reflection views compose identically and the patch remains. It needs the
+   replay, the record path and the **instance-record mask** together: `bd_record_mask =
+   false` reads 0 of 60 frames against 21-49 of 60; the mask's producer, the bound window
+   (read back from the ring) and the shader's decode all check out on the CPU, and the
+   cause is open. **The mask is off by default until it is named** (its Quest cost: the
+   whole-record read was 28 ms against 19.5 with every scene draw on records, 2026-09-02).
+   `tools/rdc_pixel_history.py` lists every event that wrote a pixel (a clean frame's
+   ground is an indirect instanced draw; RenderDoc's presence hides the patch);
+   `bd_renderdoc_frames` captures N consecutive frames. Read `tools/capture_cyan.py`
+   against the lower part of the frame and a look at the image: the intro cutscene and a
+   zenith view read as cyan over the whole frame.
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
@@ -764,6 +772,15 @@ files as that day's result. **Never run two device measurements at once.**
   read back (2026-09-03): **never read `alloc.memory` or the ring's mapped pointer** - it
   is host-visible GPU memory, write-combined BAR on a desktop and uncached on the Quest,
   and two four-vertex quads read from it cost 0.5 ms a frame.
+- **`bd_host_draw_verify`** composes every node the host replay would issue, lets the
+  interpreter draw it, and diffs the two per sub-draw (`[verify]` lines, a per-register
+  histogram every 300 frames). It named the reflection view's eye register in one run after
+  four A/B runs had only located "the replay". Its limit: it sees the composition, not what
+  the draw queue does with it (instancing groups, record masks, indirect batches).
+- **`tools/rdc_pixel_history.py`** (`RDC_CAPTURE`, `RDC_XY=x,y;x,y`, under qrenderdoc's
+  python) lists every event that touched a pixel of the scene target and of the presented
+  image, with the last writer's shaders and bound textures. `bd_renderdoc_frames` captures
+  N consecutive frames so a frame-alternating artefact can be caught.
 - **`bd_renderdoc` + `bd_renderdoc_after_s`** capture headlessly from inside the app;
   `renderdoccmd convert` then `python tools/rdc_outline.py` prints one line per render pass with
   its view mask. Read the view mask, not the layer count. It named the last two multiview bugs

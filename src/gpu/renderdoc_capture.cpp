@@ -30,6 +30,7 @@
 #include "core/logging.h"
 #include "core/settings.h"
 
+#include <algorithm>
 #include <renderdoc_app.h>
 
 #include <chrono>
@@ -46,6 +47,7 @@
 
 REXCVAR_DECLARE(bool, bd_renderdoc);
 REXCVAR_DECLARE(double, bd_renderdoc_after_s);
+REXCVAR_DECLARE(i32, bd_renderdoc_frames);
 
 namespace bd::gpu::renderdoc {
 
@@ -161,8 +163,16 @@ void TriggerIfDue() {
     return;
 
   g_fired = true;
-  g_api->TriggerCapture();
-  BD_INFO("[rdoc] capture triggered at {:.1f}s - covers the next frame", after);
+  // Several consecutive frames when asked: an artefact that alternates
+  // between frames needs the frame that carries it, and the companion
+  // bd_capture_frames sequence names it (2026-09-03).
+  const u32 frames = static_cast<u32>(std::max(1, REXCVAR_GET(bd_renderdoc_frames)));
+  if (frames > 1)
+    g_api->TriggerMultiFrameCapture(frames);
+  else
+    g_api->TriggerCapture();
+  BD_INFO("[rdoc] capture triggered at {:.1f}s - covers the next {} frame(s)",
+          after, frames);
 }
 
 bool CaptureWritten() {

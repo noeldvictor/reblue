@@ -34,6 +34,7 @@
 #include "engine/guest_census.h"
 #include "gpu/draw_queue.h"
 #include "gpu/constant_buffers.h"
+#include <xxhash.h>
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/format.h"
@@ -626,6 +627,28 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
               static_cast<const void *>(q.vertex_views[0].buffer.ref),
               q.vertex_views[0].buffer.offset, tex,
               bd::gpu::Video::AlphaThreshold(), q.blended ? 1 : 0, q.depth);
+      // The registers and slots that decide what the draw looks like, so a
+      // replayed draw can be diffed against the interpreted one.
+      const float *vs = bd::gpu::StagedVertexBlock();
+      const float *ps = bd::gpu::StagedPixelBlock();
+      std::string regs;
+      for (u32 r : {20u, 21u, 22u, 23u, 57u})
+        regs += fmt::format(" c{}=({:.3f} {:.3f} {:.3f} {:.3f})", r, vs[r * 4],
+                            vs[r * 4 + 1], vs[r * 4 + 2], vs[r * 4 + 3]);
+      std::string pregs;
+      for (u32 r = 0; r < 8; ++r)
+        pregs += fmt::format(" p{}=({:.3f} {:.3f} {:.3f} {:.3f})", r, ps[r * 4],
+                             ps[r * 4 + 1], ps[r * 4 + 2], ps[r * 4 + 3]);
+      std::string slots;
+      for (u32 k = 0; k < 8; ++k) {
+        const auto *t = s.textures[k];
+        if (!t)
+          continue;
+        slots += fmt::format(" {}:va{:08X}/{}x{}/t{}{}", k, t->selfVa, t->width,
+                             t->height, u32(t->type),
+                             t->sourceSurface ? "/link" : "");
+      }
+      BD_INFO("[node-diag]   vs{} | ps{} | tex{}", regs, pregs, slots);
     }
     // Occlusion culling (gpu/occlusion_cull.h): a scene node whose proxy
     // passed no sample two frames running is dropped here, after every
@@ -856,10 +879,32 @@ void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q
   }
   if (!out)
     return;
+  // Fingerprints, so two frames can be diffed draw by draw: the pixel
+  // block, the vertex block without the camera rows (c32-c39, which move
+  // every frame), the texture slots and the pipeline (2026-09-03).
+  const float *ps = bd::gpu::StagedPixelBlock();
+  const float *vs = bd::gpu::StagedVertexBlock();
+  const u64 ps_h = XXH3_64bits(ps, 256 * 16);
+  u64 vs_h = XXH3_64bits(vs, 32 * 16);
+  vs_h ^= XXH3_64bits(vs + 40 * 4, (256 - 40) * 16);
+  const auto &st = bd::gpu::state();
+  struct {
+    const void *tex[16];
+    const void *pipeline;
+  } tp{};
+  for (u32 k = 0; k < 16; ++k)
+    tp.tex[k] = st.textures[k];
+  tp.pipeline = q.pipeline;
+  const u64 tex_h = XXH3_64bits(&tp, sizeof(tp));
+  const u64 ps_hash = (st.pixel_shader && st.pixel_shader->shaderCacheEntry)
+                          ? st.pixel_shader->shaderCacheEntry->hash
+                          : 0ull;
   out << bd::gpu::FrameStatFrameCount() << ' ' << std::hex << tag.matrix_va
       << ' ' << tag.mesh_va << ' ' << tag.visual_va << std::dec << ' '
       << tag.render_view << ' ' << (tag.from_list ? 1 : 0) << ' ' << path
-      << ' ' << q.count << ' ' << (q.blended ? 1 : 0) << '\n';
+      << ' ' << q.count << ' ' << (q.blended ? 1 : 0) << ' ' << std::hex
+      << (ps_h & 0xFFFFFFFFu) << ' ' << (vs_h & 0xFFFFFFFFu) << ' '
+      << (tex_h & 0xFFFFFFFFu) << ' ' << ps_hash << std::dec << '\n';
 }
 
 bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
