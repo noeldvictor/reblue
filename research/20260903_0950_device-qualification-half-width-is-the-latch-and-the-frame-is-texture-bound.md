@@ -149,9 +149,17 @@ lazy-linked resolve textures are materialised first (the resolve the guest asked
 what keeps sampling the previous image while drawing over it defined), the pool holds a
 head while an alias lives, the alias ends on return or reuse. Steady state, multiview
 half width: **seeds 2 -> 0 a frame, barrier calls 44 -> 35, GPU 6.0 -> 5.8 ms**, vsync
-held, image identical to the seeded reference. What is left of the EDRAM residue in the
-tail: the 16-to-8-bit front conversion (one shader resolve), and on the desktop the two
-MSAA resolves.
+held, image identical to the seeded reference. Then the 16-to-8-bit front conversion (11:13): the resolve gate accepts a
+colour-to-colour format change for the full-screen chain while the host owns the post
+chain, so the front texture is a lazy link to the composite's fp16 surface and the
+conversion pass never runs (every reader samples float4; a read the substitution cannot
+reach still materialises through the converting shader resolve). The alias follows a
+head's link to the surface that holds its image and takes its format, so the guest's last
+8-bit pass draws into the same fp16 image too. **Eager copies 3 -> 2** (the desktop's MSAA
+resolves are all that remain), framebuffer binds 10 -> 9, barrier calls 44 -> 34 over the
+morning, image identical. On the Quest, which has no MSAA, the residue of the tail is now
+zero copies; the reflection stub's 128x72 resolve and one materialise are what is left of
+the EDRAM model in a frame.
 
 ## Also seen
 

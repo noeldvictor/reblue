@@ -502,8 +502,11 @@ list's begin and submit, and the resolve-source barrier goes ahead of the queued
 instead of flushing them first. 26 passes a frame -> 19, image unchanged. **Then the chain seeds became tile
 aliases** (`bd_chain_alias`, 11:07): a fresh full-screen surface bound after the chain
 head is the head's texture, the way both were one EDRAM tile; seeds 2 -> 0 a frame,
-barrier calls 44 -> 35, image identical. Left of the EDRAM residue in the tail: the
-16-to-8-bit front conversion. The trace is the
+barrier calls 44 -> 35, image identical. Then the 16-to-8-bit front conversion became a
+lazy link (11:13, eager copies 3 -> 2 on the desktop, where the two left are the MSAA
+resolves; zero copies in the Quest's tail). Left of the EDRAM model in a Quest frame: the
+reflection stub's 128x72 resolve, one materialise, and the surface pool's tile matching
+under it all. The trace is the
 instrument for the rest: run the desktop with `PLUME_FB_TRACE=<path>` set, read one frame
 between two `1920x1080` present passes; `pass ended by barriers` lines name the texture,
 `host surface|texture guest .. plume ..` lines name the guest object behind it.
