@@ -21,6 +21,8 @@
 #include "gpu/device.h"
 #include "gpu/settings.h"
 
+REXCVAR_DECLARE(f64, bd_debug_mip_bias);
+
 namespace bd::gpu {
 
 namespace {
@@ -140,6 +142,12 @@ plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]) {
   d.borderColor = fetch.border_color == xe::BorderColor::k_ABGR_White
                       ? plume::RenderBorderColor::OPAQUE_WHITE
                       : plume::RenderBorderColor::TRANSPARENT_BLACK;
+  // A probe, not a setting: the Quest's counters read 0.9% of texture
+  // fetches from a non-base level after the host mip chains landed
+  // (2026-09-03), the same as before them. A large positive bias makes every
+  // reachable chain visible as blur in a capture; no blur means the chain is
+  // not what the sampler sees.
+  d.mipLODBias = static_cast<float>(REXCVAR_GET(bd_debug_mip_bias));
   return d;
 }
 

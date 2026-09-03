@@ -475,6 +475,10 @@ REXCVAR_DEFINE_BOOL(bd_host_list_build, true, kCvarGroup,
                     "Emit the guest's deferred render-list entries from a "
                     "host template instead of running the per-node "
                     "interpreter to build them.");
+REXCVAR_DEFINE_DOUBLE(bd_debug_mip_bias, 0.0, kCvarGroup,
+                      "Probe: mip LOD bias applied to every guest sampler. "
+                      "A large positive value blurs whatever samples a "
+                      "reachable mip chain.");
 REXCVAR_DEFINE_BOOL(bd_cel_characters, false, kCvarGroup,
                     "Cel-shade the skinned draws (the characters): the "
                     "recompiled pixel shaders band their lit colour under a "
