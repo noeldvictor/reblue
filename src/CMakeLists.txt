@@ -13,6 +13,7 @@ set(reblue_backend_only
     gpu/foveation.cpp
     gpu/frag_census.cpp
     gpu/vertex_pull.cpp
+    gpu/shadow_fit.cpp
     gpu/frame_ring.cpp
     gpu/gpu_profiling.cpp
     gpu/gpu_timing.cpp

@@ -21,6 +21,7 @@
 #include "gpu/draw_queue.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/shadow_fit.h"
 #include "gpu/frame_stats.h"
 #include "gpu/format.h"
 #include "gpu/host_resource_heap.h"

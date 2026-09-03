@@ -36,6 +36,7 @@
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/vertex_pull.h"
+#include "gpu/shadow_fit.h"
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
@@ -184,7 +185,10 @@ UploadState &upload_state() {
 // per draw, so a distance change applies without a restart (the dimension term
 // lags a pending restart-gated change until the map is recreated).
 void RecomputeShadowPcfScale(UploadState &s) {
-  const f64 dist = std::clamp(ShadowCoverageScale(), 1.0, 4.0);
+  // The host fit narrows the box by its zoom (gpu/shadow_fit.h), which is
+  // the same thing as a smaller coverage for the penumbra's world size.
+  const f64 dist =
+      std::clamp(ShadowCoverageScale() * ShadowFitZoom(), 0.05, 4.0);
   const f64 dim = std::max(512, Settings::Get().ShadowDimension());
   s.shadowPcfScale = static_cast<float>(std::max(1.0 / dist, 1024.0 / dim));
 }
@@ -746,11 +750,15 @@ void FetchVertexBlock(UploadState &s, u32 device_guest) {
   const auto *ov = bd::gpu::state().material_override;
   if (ov && ov->vs) {
     std::memcpy(s.scratchVS, ov->vs, kConstantBlockBytes);
-    return;
+  } else {
+    CopyByteSwap32FlushNaN(s.scratchVS,
+                           device_guest + offsetof(D3DDevice, vsFloatConstants),
+                           kConstantBlockBytes);
   }
-  CopyByteSwap32FlushNaN(s.scratchVS,
-                         device_guest + offsetof(D3DDevice, vsFloatConstants),
-                         kConstantBlockBytes);
+  // The sun shadow fit sees every draw's block here, interpreted and
+  // replayed alike, in host byte order (gpu/shadow_fit.h).
+  ShadowFitOnVertexBlock(reinterpret_cast<float *>(s.scratchVS),
+                         bd::gpu::state());
 }
 
 void FetchPixelBlock(UploadState &s, u32 device_guest) {

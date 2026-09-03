@@ -34,12 +34,12 @@ def main():
         areas.append(area)
         if area > min_area:
             hits += 1
-            if area < 60.0:
+            if 2.0 < area < 60.0:
                 print("frame %3d: cyan %.2f%%" % (seq, area))
     if areas:
-        patches = sum(1 for a in areas if min_area < a < 60.0)
+        patches = sum(1 for a in areas if max(min_area, 2.0) < a < 60.0)
         whole = sum(1 for a in areas if a >= 60.0)
-        print("%d frames, %d with cyan over %.2f%%: %d patch frames (under 60%%), "
+        print("%d frames, %d with cyan over %.2f%%: %d patch frames (2-60%%), "
               "%d whole-frame (the zenith sky reads the same); median %.3f%%, max %.2f%%"
               % (len(files), hits, min_area, patches, whole, float(np.median(areas)), max(areas)))
 

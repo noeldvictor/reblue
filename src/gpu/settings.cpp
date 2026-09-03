@@ -911,6 +911,18 @@ REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
                     "Diagnostic only - the image is unchanged and the cost "
                     "doubles. Measures whether stereo is reachable.");
 
+// The sun shadow frustum fitted to the view on the host (gpu/shadow_fit.h):
+// the guest's light box recentred and zoomed onto the camera frustum's near
+// part, in the light's own clip space, so the map's texels land where the
+// camera looks. Stage 5's first piece (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_shadow_fit, true, kCvarGroup,
+                    "Fit the sun shadow frustum to the camera's view.");
+REXCVAR_DEFINE_DOUBLE(bd_shadow_fit_distance, 500.0, kCvarGroup,
+                      "How far along the view the fitted shadow frustum "
+                      "reaches, in world units.")
+    .range(10.0, 5000.0);
+REXCVAR_DEFINE_BOOL(bd_shadow_fit_diag, false, kCvarGroup,
+                    "Log the camera frustum's place in the light box.");
 REXCVAR_DEFINE_BOOL(bd_shadows, true, kCvarGroup,
                     "Sun shadows. Off renders the shadow map at 64x64, which "
                     "costs nothing. Requires restart.")
