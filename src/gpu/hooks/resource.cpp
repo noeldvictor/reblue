@@ -7,6 +7,8 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <unordered_set>
@@ -61,8 +63,27 @@ bd::gpu::GuestTexture *D3DDevice_CreateSurface_hook(u32 width, u32 height,
 
   // Pooled reuse of the same-dim scratch surfaces the engine recreates every
   // frame, fresh committed alloc on miss. Reuse is fence-gated, so GPU-safe.
-  return bd::gpu::SurfacePool::Acquire(width, height, format,
-                                       static_cast<u32>(msaa_count));
+  bd::gpu::GuestTexture *surface = bd::gpu::SurfacePool::Acquire(
+      width, height, format, static_cast<u32>(msaa_count));
+  // PLUME_FB_TRACE: the guest surface behind a plume texture pointer, so a
+  // barrier in the trace can be read back to what the guest created.
+  if (surface && surface->texture) {
+    static FILE *tf = nullptr;
+    static bool tried = false;
+    if (!tried) {
+      tried = true;
+      if (const char *path = std::getenv("PLUME_FB_TRACE"))
+        tf = std::fopen(path, "a");
+    }
+    if (tf) {
+      std::fprintf(tf, "  host surface guest %p plume %p %ux%u fmt 0x%x\n",
+                   static_cast<const void *>(surface),
+                   static_cast<const void *>(surface->texture), width, height,
+                   format);
+      std::fflush(tf);
+    }
+  }
+  return surface;
 }
 
 // D3DDevice_CreateTexture is __stdcall and returns D3DBaseTexture*:
@@ -209,6 +230,23 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   texture->format = plume_format;
   texture->guestFormat = format;
   (void)usage;
+  // PLUME_FB_TRACE: see the surface trace above.
+  if (texture->texture) {
+    static FILE *tf = nullptr;
+    static bool tried = false;
+    if (!tried) {
+      tried = true;
+      if (const char *path = std::getenv("PLUME_FB_TRACE"))
+        tf = std::fopen(path, "a");
+    }
+    if (tf) {
+      std::fprintf(tf, "  host texture guest %p plume %p %ux%u fmt 0x%x levels %u type %u\n",
+                   static_cast<const void *>(texture),
+                   static_cast<const void *>(texture->texture), width, height,
+                   format, levels, d3d_type);
+      std::fflush(tf);
+    }
+  }
   return texture;
 }
 
