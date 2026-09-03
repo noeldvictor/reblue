@@ -690,7 +690,15 @@ REXCVAR_DEFINE_BOOL(bd_mv_force_mono_targets, false, kCvarGroup,
 // scene target became 688x720x2 and the frame 62.7 -> 41.7 ms, but the front
 // buffer the guest resolves into is still sized from the output fit (1376
 // wide) and the presented frame was black.
+#if defined(__ANDROID__)
+// On the headset each layer is one eye: half the guest's width per layer
+// gives the same pixels per eye as side-by-side (verified as a correct pair
+// on the desktop with the layered host post chain, 2026-09-03). The per-eye
+// size then follows bd_render_scale like the flat frame does.
+REXCVAR_DEFINE_BOOL(bd_mv_half_width, true, kCvarGroup,
+#else
 REXCVAR_DEFINE_BOOL(bd_mv_half_width, false, kCvarGroup,
+#endif
                     "Multiview: render each layer at half the scene width, "
                     "matching side-by-side's per-eye pixels. Requires restart.");
 REXCVAR_DEFINE_BOOL(bd_mv_small_targets_mono, false, kCvarGroup,

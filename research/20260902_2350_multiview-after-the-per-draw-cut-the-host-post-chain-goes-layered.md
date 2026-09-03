@@ -72,3 +72,11 @@ adb for an hour; killed). Two desktop-only pieces followed:
   entries (274 a frame) are replaced by re-emitting recorded entry images through the
   guest's own allocator with a fresh matrix and palette. 564 of 639 node runs a frame are
   the host's now. CPU effect unmeasured until the headset is back.
+
+## Half width, desktop (03:00)
+
+`bd_mv_half_width=true` with the layered host post chain: a correct stereo pair at 960x1080
+a layer (`out/shot_mv_half.png`) - exposure, depth of field, bloom and the sun shadow in both
+eyes. The 2026-08-31 note that "the present chain does not follow" half width described the
+guest's post chain on layered targets; the host chain follows. Android default now; the Quest
+run is the parity measurement against side-by-side's 13.2 ms.
