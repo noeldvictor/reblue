@@ -510,6 +510,13 @@ bool HostPostProducerSkip(VideoState &s, u64 ps_hash) {
   }
 }
 
+bool HostPostOverwritesTarget(VideoState &s, u64 ps_hash) {
+  if (!REXCVAR_GET(bd_host_post) || !REXCVAR_GET(bd_host_post_composite))
+    return false;
+  Chain &c = chain();
+  return !c.failed && ps_hash == kMsTex && c.dof.valid;
+}
+
 bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
   if (!REXCVAR_GET(bd_host_post) || !s.command_list || !s.render_target)
     return false;

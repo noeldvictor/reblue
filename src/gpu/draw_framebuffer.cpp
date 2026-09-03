@@ -472,6 +472,9 @@ bool Video::BindDrawFramebufferLocked() {
     // single-sample dst) and does not need to be: the MSAA pass reaching here
     // is the scene, the chain source, which writes the whole tile fresh.
     s.command_list->discardTexture(rt->texture);
+  } else if (discard_rt && s.bind_overwrites) {
+    // The host composite writes the whole target; nothing to inherit.
+    s.command_list->discardTexture(rt->texture);
   } else if (discard_rt && REXCVAR_GET(bd_seed_targets) &&
              rt != s.held_clear_rt) {
     // (A target with a held guest clear is about to be cleared by its pass's

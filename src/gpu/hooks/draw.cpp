@@ -284,7 +284,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // copies were ten of the frame's fourteen (2026-09-02).
   if (ps_hash && bd::gpu::HostPostProducerSkip(s, ps_hash))
     return;
-  if (!bd::gpu::Video::BindDrawFramebufferLocked()) {
+  s.bind_overwrites = ps_hash && bd::gpu::HostPostOverwritesTarget(s, ps_hash);
+  const bool bound = bd::gpu::Video::BindDrawFramebufferLocked();
+  s.bind_overwrites = false;
+  if (!bound) {
     return;
   }
   {

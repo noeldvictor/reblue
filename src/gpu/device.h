@@ -527,6 +527,10 @@ struct VideoState {
   // to SHADER_READ at a target change leaves it alone - that barrier would
   // make plume flush the clear as a zero-draw pass and the scene would LOAD.
   GuestTexture *held_clear_rt = nullptr;
+  // Set by DispatchDraw for a draw the host post chain will replace with a
+  // pass that writes every pixel of the target (the composite): the bind
+  // discards the fresh target instead of seeding it from its predecessor.
+  bool bind_overwrites = false;
   bool clear_pending = false;
   u32 clear_flags = 0;
   u32 clear_color_argb = 0xFF000000;

@@ -35,4 +35,8 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest);
 // ten of the frame's fourteen (2026-09-02).
 bool HostPostProducerSkip(VideoState &s, u64 ps_hash);
 
+// True for a guest draw the host chain replaces with a full-target write (the
+// ms_tex composite into the frame), so its bind need not seed the target.
+bool HostPostOverwritesTarget(VideoState &s, u64 ps_hash);
+
 } // namespace bd::gpu
