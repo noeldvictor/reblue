@@ -276,16 +276,21 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       s.dirtyStates.pipelineState, s.pipelineState.primitiveTopology,
       MapPrimitiveType(primitive_type));
 
+  const u64 ps_hash = (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
+                          ? s.pixel_shader->shaderCacheEntry->hash
+                          : 0;
+  // A guest producer draw of the post chain is dropped before its target is
+  // bound: the bind seeds a fresh target from its predecessor, and those
+  // copies were ten of the frame's fourteen (2026-09-02).
+  if (ps_hash && bd::gpu::HostPostProducerSkip(s, ps_hash))
+    return;
   if (!bd::gpu::Video::BindDrawFramebufferLocked()) {
     return;
   }
   {
-    // The host-owned post chain takes the guest's post-effect producer draws
-    // here, before any state is flushed for them, and fills the textures the
+    // The host-owned post chain takes the guest's dof and ms_tex draws here,
+    // before any state is flushed for them, and fills the textures the
     // guest's composites sample. See gpu/post_chain.cpp.
-    const auto *ps = s.pixel_shader;
-    const u64 ps_hash =
-        (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0;
     if (ps_hash && bd::gpu::HostPostIntercept(s, ps_hash, device_guest))
       return;
   }

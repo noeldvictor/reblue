@@ -488,8 +488,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
 
 } // namespace
 
-bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
-  if (!REXCVAR_GET(bd_host_post) || !s.command_list || !s.render_target)
+bool HostPostProducerSkip(VideoState &s, u64 ps_hash) {
+  if (!REXCVAR_GET(bd_host_post) || !s.render_target)
     return false;
   Chain &c = chain();
   if (c.failed)
@@ -505,6 +505,18 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
       return false;
     ++c.skipped;
     return true;
+  default:
+    return false;
+  }
+}
+
+bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
+  if (!REXCVAR_GET(bd_host_post) || !s.command_list || !s.render_target)
+    return false;
+  Chain &c = chain();
+  if (c.failed)
+    return false;
+  switch (ps_hash) {
   case kDof: {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);

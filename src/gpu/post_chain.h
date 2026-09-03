@@ -28,4 +28,11 @@ struct VideoState;
 // small passes over 1/2 to 1/16 of the scene with no resolves between them.
 bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest);
 
+// The producer half of the intercept, asked BEFORE the draw binds its
+// framebuffer: a guest quoter/ms_weight/brightpass draw into a pyramid level
+// is dropped here, so the level is never bound - binding a fresh target
+// seeds it from its predecessor (a full-surface copy), and those seeds were
+// ten of the frame's fourteen (2026-09-02).
+bool HostPostProducerSkip(VideoState &s, u64 ps_hash);
+
 } // namespace bd::gpu
