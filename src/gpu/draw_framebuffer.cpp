@@ -41,7 +41,10 @@ namespace bd::gpu {
 // a fresh pointer and misses.
 plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
                                          GuestTexture *ds) {
-  GuestTexture *container = ds ? ds : rt;
+  // An alias draws into its root's texture; the cache lives on the root so
+  // the two hand plume the same framebuffer object, and a pass on the shared
+  // image continues across the guest's surface change instead of ending.
+  GuestTexture *container = ds ? ds : (rt && rt->aliasOf) ? rt->aliasOf : rt;
   if (!container)
     return nullptr;
   const plume::RenderTexture *key = rt ? rt->texture : nullptr;
@@ -234,6 +237,11 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
       continue;
     if (src == rt || src == ds)
       continue;
+    // An alias of the bound target shares its texture: flipping it to a read
+    // layout would read the image being drawn. The alias materialised every
+    // link it found; one it did not is left in the write layout here.
+    if ((rt && src->texture == rt->texture) || (ds && src->texture == ds->texture))
+      continue;
     if (src->layout == plume::RenderTextureLayout::SHADER_READ)
       continue;
     TraceHost("TransitionResolveSources", src, plume::RenderTextureLayout::SHADER_READ);
@@ -319,6 +327,8 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
   // lazy resolve link (a front texture whose resolve never copied points at
   // the surface that holds the image).
   GuestTexture *root = head;
+  GuestTexture *chain[6] = {head};
+  u32 chain_len = 1;
   for (u32 hops = 0; hops < 4; ++hops) {
     GuestTexture *next = root->aliasOf ? root->aliasOf
                          : (root->sourceSurface && root->sourceSurface != root &&
@@ -328,6 +338,7 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
     if (!next)
       break;
     root = next;
+    chain[chain_len++] = next;
   }
   if (!root->texture || root == rt || root == s.back_buffer_surface)
     return false;
@@ -343,10 +354,12 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
   if (rt->sampleCount != plume::RenderSampleCount::COUNT_1)
     return false;
   // The previous image leaves through its resolve textures before the alias
-  // draws over it.
-  MaterializeOutboundLocked(s, head);
-  if (root != head)
-    MaterializeOutboundLocked(s, root);
+  // draws over it - through every surface on the chain, since each may hold
+  // a lazy link into the shared image (the front texture links to the last
+  // alias, not to the root). A link left in place would have the next quad
+  // sample the image it is drawing into.
+  for (u32 i = 0; i < chain_len; ++i)
+    MaterializeOutboundLocked(s, chain[i]);
   if (rt->ownFormat == plume::RenderFormat::UNKNOWN)
     rt->ownFormat = rt->format;
   rt->texture = root->texture;

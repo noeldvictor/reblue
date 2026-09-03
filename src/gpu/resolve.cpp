@@ -177,7 +177,7 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
 
   const bool dims_match =
       src->width == dst->width && src->height == dst->height;
-  const bool format_match = src->format == dst->format;
+  bool format_match = src->format == dst->format;
   // A non-unity exp bias scale (BD's HDR scene at x0.25) needs the
   // shader resolve path (copy_color_ps * Param0), not a 1:1 copyTexture.
   const float resolve_scale = dst->resolveScale;
@@ -186,6 +186,53 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
   // so it needs a strict 1:1 copyTextureRegion rather than either other path.
   const bool dst_is_cube =
       dst->viewDimension == plume::RenderTextureViewDimension::TEXTURE_CUBE;
+
+  // A full-screen chain texture of another colour format (the RGBA8 front
+  // buffer taking the composite's fp16 image) is re-backed in the source's
+  // format the first time it is copied into, while the host owns the post
+  // chain: the guest never reads the host format back, every reader samples
+  // float4, and from then on the copy is a blit and the lazy link needs no
+  // conversion. The declared format stays in guestFormat (2026-09-03).
+  if (!format_match && dims_match && !needs_scale && !dst_is_cube &&
+      dst->type == ResourceType::Texture && dst->mipLevels <= 1 &&
+      dst->layers == src->layers && !IsDepthFormat(src->format) &&
+      !IsDepthFormat(dst->format) && IsRenderTargetCapable(src->format) &&
+      src->sampleCount == plume::RenderSampleCount::COUNT_1 &&
+      HostPostActive() && FullscreenChainClassLocked(s, dst) &&
+      dst->textureHolder) {
+    plume::RenderTextureDesc desc;
+    desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
+    desc.width = dst->width;
+    desc.height = dst->height;
+    desc.depth = 1;
+    desc.mipLevels = 1;
+    desc.arraySize = dst->layers ? dst->layers : 1;
+    desc.format = src->format;
+    desc.flags = plume::RenderTextureFlag::RENDER_TARGET;
+    desc.committed = true;
+    auto retyped = CreateHostTexture(s.device.get(), desc, "chain-retyped");
+    if (retyped) {
+      // Parked by hand: the locked Park helpers take s.mutex, which the copy
+      // already holds.
+      s.texture_graveyard[Video::RetireSlot("texture")].push_back(
+          std::move(dst->textureHolder));
+      if (dst->textureView)
+        s.texture_view_graveyard[Video::RetireSlot("texture view")].push_back(
+            std::move(dst->textureView));
+      dst->framebuffers.clear();
+      dst->textureHolder = std::move(retyped);
+      dst->texture = dst->textureHolder.get();
+      dst->format = src->format;
+      dst->layout = plume::RenderTextureLayout::UNKNOWN;
+      BindTextureSRVLocked(s, dst); // the same slot, a view of the new image
+      format_match = true;
+      static u32 told = 0;
+      if (told++ < 4)
+        BD_INFO("[resolve] {}x{} chain texture re-backed in the source's "
+                "format (guest 0x{:X} -> {}); its copies are blits now",
+                dst->width, dst->height, dst->guestFormat, u32(src->format));
+    }
+  }
 
   if (dims_match && format_match && !needs_scale &&
       src->sampleCount == plume::RenderSampleCount::COUNT_1) {
