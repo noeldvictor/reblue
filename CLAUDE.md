@@ -528,9 +528,15 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    geometry, overdraw and shaders are the Quest's). **First report (11:47, village, 960x1080
    a layer, desktop defaults): 10.6 M fragments a frame, 5.1 a pixel; `bd_normal_ps` 48%,
    `bd_normal_ps_nolight` 20%, `bd_shadowmap_ps` 20%, `bd_normal_ps_wind` 11%; the normal
-   family is 79%.** Host replacements for that family by hash (`BloomMaskClampBlob` in
-   `guest_shaders.cpp` is the substitution mechanism), fewer fetches, the shadow taps only
-   where a shadow can land, a lighting-model slot. The tail of the frame is host-owned now:
+   family is 79%.** The path census (`[frag] ... paths`, draws per shader and boolean
+   words) says the lit material runs under four paths in the field: colour texture on or
+   off, normal map on or off, shadow map on or off, always fog and diffuse; environment
+   map, specular and the detail textures never. **The host lit material is those four
+   paths and nothing else**: colour texture times one directional diffuse light plus
+   ambient, optional normal map, one to four shadow taps instead of six, fog; a
+   lighting-model slot (guest look, cel). Substituted for `bd_normal_ps` by hash
+   (`BloomMaskClampBlob` in `guest_shaders.cpp` is the mechanism), then the wind and
+   unlit variants; verified against a capture of the same frame with the guest shader. The tail of the frame is host-owned now:
    composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
    passes each sample the image they draw over (an input-attachment self-dependency would
    fold them into one pass; later).

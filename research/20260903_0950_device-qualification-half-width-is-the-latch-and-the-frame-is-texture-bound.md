@@ -209,7 +209,29 @@ shadows and reflections on (the desktop defaults), the village:
 | **total** | **10.6 M over 756 draws** | 5.1 fragments a pixel |
 
 Five shaders are 99% of the fragments, and one family (`bd_normal_ps` and its unlit and
-wind variants) is 79%. That is the materials stage's target list: a host material for the
+wind variants) is 79%.
+
+**The paths (11:52).** The uber-shaders are steered by the guest's pixel-shader boolean
+constants (`BOOL_BIT(128+n)` is bit n of the first PS boolean word). A census of draws per
+(shader, four words) found 38 paths in the village frame with only the first word varying,
+and the lit material drawn under four values of it: `0x046000E9`, `E1`, `E0`, `C1`. Named:
+
+| bit | name | E9 | E1 | E0 | C1 |
+| --- | --- | --- | --- | --- | --- |
+| 0 | `g_bTexture0` (colour texture) | on | on | off | on |
+| 3 | `g_bNMap` (normal map) | on | off | off | off |
+| 5 | `g_bShadowMap` (six taps) | on | on | on | off |
+| 6 | `g_bFog` | on | on | on | on |
+| 7 | `g_bDiffuse` | on | on | on | on |
+| 21, 22, 26 | (149, 150, 154; unnamed) | on | on | on | on |
+| 4 `g_bEnvMap`, 8 `g_bSpecular`, 1-2 `g_bTexture1/2`, fog modes, debug | | never set | | |
+
+So the host lit material is: an optional colour texture times one directional diffuse
+light plus ambient from the constants, an optional normal map, an optional shadow term
+(the guest's six taps; the host's can be one to four), and fog - and nothing else. The
+cube fetch, the specular term and the two detail textures are dead paths in the field.
+Substituted for `bd_normal_ps` by hash (the `bd_normal_ps_wind` and `_nolight` variants
+next), verified against a capture of the same frame with the guest shader. That is the materials stage's target list: a host material for the
 normal family with a lighting-model slot (the guest look, cel), fewer fetches per fragment,
 and the shadow taps only where a shadow can land. The shadow pass's 20% is the 4096 map at
 the desktop's setting; the host shadow map (stage 5) sizes it to the view.
