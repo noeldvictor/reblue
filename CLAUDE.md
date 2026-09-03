@@ -525,9 +525,12 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
 3. **The materials.** `bd_frag_census=true` on a desktop run prints `[frag] ... the top
    ten` every 300 frames: fragment shader invocations per guest pixel shader from
    pipeline-statistics queries around every queued draw (`gpu/frag_census.cpp`; the
-   geometry, overdraw and shaders are the Quest's). Host replacements for the top shaders
-   by hash (`BloomMaskClampBlob` in `guest_shaders.cpp` is the substitution mechanism),
-   fewer fetches, a lighting-model slot. The tail of the frame is host-owned now:
+   geometry, overdraw and shaders are the Quest's). **First report (11:47, village, 960x1080
+   a layer, desktop defaults): 10.6 M fragments a frame, 5.1 a pixel; `bd_normal_ps` 48%,
+   `bd_normal_ps_nolight` 20%, `bd_shadowmap_ps` 20%, `bd_normal_ps_wind` 11%; the normal
+   family is 79%.** Host replacements for that family by hash (`BloomMaskClampBlob` in
+   `guest_shaders.cpp` is the substitution mechanism), fewer fetches, the shadow taps only
+   where a shadow can land, a lighting-model slot. The tail of the frame is host-owned now:
    composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
    passes each sample the image they draw over (an input-attachment self-dependency would
    fold them into one pass; later).

@@ -192,8 +192,27 @@ pipeline-statistics query pools (fragment shader invocations; Vulkan, fork `6a6f
 and the host brackets every queued draw with one (`bd_frag_census`, `gpu/frag_census.cpp`,
 the draw's pixel shader hash on the queued draw), folding the counts per pixel shader
 every 300 frames: `[frag] N M fragments a frame over D draws; the top ten`. Desktop only,
-but the geometry, the overdraw and the shaders are the Quest's. The first report is the
-next section.
+but the geometry, the overdraw and the shaders are the Quest's. Frame time is unchanged
+with it on (4.9 ms CPU, vsync held).
+
+First report, desktop, multiview half width at 960x1080 a layer (2.07 M pixels a frame),
+shadows and reflections on (the desktop defaults), the village:
+
+| pixel shader | fragments a frame | share |
+| --- | --- | --- |
+| `bd_normal_ps` (the lit material: colour, two detail colours, normal, cube, up to six shadow taps; 1,333 lines, 19 fetch sites) | 5.08 M | 48% |
+| `bd_normal_ps_nolight` | 2.09 M | 20% |
+| `bd_shadowmap_ps` (the 4096x4096 shadow pass) | 2.08 M | 20% |
+| `bd_normal_ps_wind` (foliage) | 1.16 M | 11% |
+| `bd_normal_ps_ref` | 0.11 M | 1% |
+| `bd_toon_ps` | 0.05 M | 0.5% |
+| **total** | **10.6 M over 756 draws** | 5.1 fragments a pixel |
+
+Five shaders are 99% of the fragments, and one family (`bd_normal_ps` and its unlit and
+wind variants) is 79%. That is the materials stage's target list: a host material for the
+normal family with a lighting-model slot (the guest look, cel), fewer fetches per fragment,
+and the shadow taps only where a shadow can land. The shadow pass's 20% is the 4096 map at
+the desktop's setting; the host shadow map (stage 5) sizes it to the view.
 
 ## Also seen
 
