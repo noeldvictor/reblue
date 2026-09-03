@@ -12,6 +12,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
 #include <cstring>
 #include <mutex>
 #include <optional>
@@ -26,6 +27,7 @@
 
 #include <plume_render_interface.h>
 
+#include "core/app_root.h"
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
@@ -60,6 +62,7 @@ REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
+REXCVAR_DECLARE(bool, bd_draw_ledger);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
 REXCVAR_DECLARE(i32, bd_node_diag_mesh);
 REXCVAR_DECLARE(i32, bd_render_scale);
@@ -69,6 +72,9 @@ REXCVAR_DECLARE(f64, bd_stereo_convergence);
 REXCVAR_DECLARE(bool, bd_draw_phase_timing);
 
 namespace {
+// Defined beside UploadAndBindUpVertices below.
+void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q,
+                const char *path);
 
 namespace xe = rex::graphics::xenos;
 
@@ -638,10 +644,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         if (told++ < 3)
           BD_INFO("[occ] dispatch key {:016X} (matrix {:08X} mesh {:08X} list {})",
                   key, tag.matrix_va, tag.mesh_va, tag.from_list ? 1 : 0);
-        if (bd::gpu::OcclusionCullOccluded(key))
+        if (bd::gpu::OcclusionCullOccluded(key)) {
+          LedgerNote(tag, q, "dropped");
           return;
+        }
       }
     }
+    LedgerNote(bd::gpu::scene::CurrentNodeTag(), q,
+               bd::gpu::scene::HostDrawReplaying() ? "replay" : "interp");
     bd::gpu::DrawQueuePush(q);
   };
   const auto finish_deferred = [&]() {
@@ -829,6 +839,28 @@ void FitDesignCanvasVertices(u8 *verts, u32 vertexCount, u32 vertexStride,
                              bool normalized);
 void InsetQuadUVs(u8 *verts, u32 vertexCount, u32 vertexStride, UVEdges edges);
 bool IsScreenSpriteQuad(u32 primitiveType, u32 vertexCount, u32 vertexStride);
+
+// The draw ledger (bd_draw_ledger): one line per queued scene draw, with
+// the frame, the node key and the path it came by, so a frame with a hole
+// in a capture sequence can be diffed against its neighbour by draw.
+void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q,
+                const char *path) {
+  if (!REXCVAR_GET(bd_draw_ledger))
+    return;
+  static std::ofstream out;
+  static bool opened = false;
+  if (!opened) {
+    opened = true;
+    out.open((bd::AppRootFolder() / "logs" / "draw_ledger.txt").string(),
+             std::ios::trunc);
+  }
+  if (!out)
+    return;
+  out << bd::gpu::FrameStatFrameCount() << ' ' << std::hex << tag.matrix_va
+      << ' ' << tag.mesh_va << ' ' << tag.visual_va << std::dec << ' '
+      << tag.render_view << ' ' << (tag.from_list ? 1 : 0) << ' ' << path
+      << ' ' << q.count << ' ' << (q.blended ? 1 : 0) << '\n';
+}
 
 bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
                              u32 vertexCount, u32 vertexStride) {

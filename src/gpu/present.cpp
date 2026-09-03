@@ -858,8 +858,8 @@ void ResolveCapture(bool bgra) {
   g_capture_buffer->unmap();
 
   if (out)
-    BD_INFO("[capture] wrote {}x{} to {}", g_capture_w, g_capture_h,
-            path.string());
+    BD_INFO("[capture] wrote {}x{} to {} (seq {}, frame {})", g_capture_w,
+            g_capture_h, path.string(), g_capture_seq - 1, FrameStatFrameCount());
   else
     BD_ERROR("[capture] could not write {}", path.string());
 }

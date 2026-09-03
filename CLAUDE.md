@@ -597,14 +597,17 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **The cyan-skirt artefact's real cause (16:40, `bee9e5d`)**: `contentHash` is
-   a marker (1 for a mirrored texture, 0 for the rest), not a hash, so classifying a
-   template's render-target slots by `contentHash == 0` filed every non-mirrored texture as
-   a surface and inherited it from the previous host-ordered draw. Surfaces are now told by
-   resource type (RenderTarget, DepthStencil), and an ordinary texture is guarded by the
-   guest address its object had at capture. Four 240-frame sequences of the configuration
-   that failed one run in three show no patch frame; `tools/capture_cyan.py` is the
-   detector (patch frames 2-60% of the frame; whole-frame readings are the zenith sky).
+   calls it. **The "cyan skirt" is the game's own streaming, not a host fault (17:10)**: the
+   draw ledger (`bd_draw_ledger`, `tools/ledger_diff.py`) diffed a hole frame against its
+   neighbour and found a visual whose draw count grows one or two nodes a frame from zero
+   to twenty-seven as the player arrives - and the guest-only path shows the same growth
+   for the same kind of visuals (1, 17, 77, 102 draws over forty frames). The flat colour
+   is the scene clear where a ground detail piece has not streamed in yet. The sequence
+   tool caught it because autoplay keeps walking into new ground. The three replay guards
+   written on the way (surfaces by resource type, textures by guest address, the captured
+   inherited slots re-bound) stay as hardening; the "real cause" claims of 14:50 and 16:40
+   were wrong, and the four clean sequences were timing. `tools/capture_cyan.py` counts
+   the colour in the lower part of the frame apart from the sky.
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.

@@ -55,6 +55,7 @@ extern "C" void __imp__bdSceneNodeDrawSingle(PPCContext &__restrict ctx,
                                              uint8_t *base);
 
 REXCVAR_DECLARE(bool, bd_node_write_diag);
+REXCVAR_DECLARE(bool, bd_draw_ledger);
 
 namespace {
 std::atomic<u64> g_node_calls{0};
@@ -134,7 +135,8 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     }
   }
 
-  if (bd::gpu::scene::RecordingArmed() || bd::gpu::scene::HostDrawEnabled()) {
+  if (bd::gpu::scene::RecordingArmed() || bd::gpu::scene::HostDrawEnabled() ||
+      REXCVAR_GET(bd_draw_ledger)) {
     using namespace bd::gpu::scene;
     NodeTag tag;
     tag.mesh_va = ctx.r3.u32;

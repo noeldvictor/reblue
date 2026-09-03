@@ -143,3 +143,20 @@ the previous host-ordered draw had bound, which in a different order than the in
 is the water map. Surfaces are told by resource type now, and the hash guard compared ones;
 it compares the guest address instead. Commit `bee9e5d`; four 240-frame sequences of the
 failing configuration (the shadow-fit A/B, host materials on) with zero patch frames.
+
+## Addendum (17:10): the skirt was the game streaming, and the ledger that proved it
+
+`bd_draw_ledger` writes one line per queued scene draw (frame, node matrix and mesh, visual,
+view, list, path, count) to `logs/draw_ledger.txt`, and the capture log now names each
+sequence capture's frame, so `tools/ledger_diff.py` can diff a hole frame against its
+neighbour by draw. The hole frame (frame 1656) lacked three meshes of visual `282b89a0` that
+frame 1662 drew, and the ledger's history of that visual reads 0, 0, 2, 2, 4, 4, ... 27 over
+frames 1642-1690: its nodes appear one or two a frame. With the host-issued draws off the same
+kind of visual grows the same way (1, 17, 77, 102 draws at first sight, +5, +20, +40 frames).
+It is the guest streaming a zone's detail in as the player arrives; the flat colour is the
+scene clear where the piece is not yet drawn. The 14:50 and 16:40 "real cause" findings were
+wrong: the guards they added are sound hardening of the replay (surfaces by type, textures by
+address, inherited slots re-bound from the capture) but the artefact they were chasing is the
+original game's pop-in, and the sequences that read clean were timing. Occlusion culling made
+it show more only because the autoplay's walk crossed a streaming boundary more often in
+those runs.

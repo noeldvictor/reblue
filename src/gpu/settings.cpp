@@ -919,6 +919,10 @@ REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
 // node under an occlusion query at the end of the scene pass; a node whose
 // proxy passed no sample two frames running is not drawn. Stage 8's second
 // half, desktop first (2026-09-03).
+// One line per queued scene draw into logs/draw_ledger.txt, to diff a frame
+// with a hole against its neighbour (tools/capture_seq.py names the frame).
+REXCVAR_DEFINE_BOOL(bd_draw_ledger, false, kCvarGroup,
+                    "Write every queued scene draw to logs/draw_ledger.txt.");
 REXCVAR_DEFINE_BOOL(bd_occlusion_cull, false, kCvarGroup,
                     "Occlusion-cull scene nodes by last frame's proxy queries.");
 REXCVAR_DEFINE_BOOL(bd_occlusion_diag, true, kCvarGroup,
