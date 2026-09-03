@@ -14,6 +14,7 @@
 namespace bd::gpu {
 
 struct VideoState;
+struct GuestTexture;
 
 // Called from the draw path once the framebuffer for a guest draw is bound and
 // before its state is flushed, with the pixel shader hash the draw would use.
@@ -38,5 +39,16 @@ bool HostPostProducerSkip(VideoState &s, u64 ps_hash);
 // True for a guest draw the host chain replaces with a full-target write (the
 // ms_tex composite into the frame), so its bind need not seed the target.
 bool HostPostOverwritesTarget(VideoState &s, u64 ps_hash);
+
+// True for a texture the host chain wrote every pixel of last frame and will
+// again this frame (a dof pyramid level, the bloom mask): a guest resolve into
+// it is a copy the host overwrites, so the resolve is skipped outright.
+bool HostPostWillOverwrite(const GuestTexture *dst);
+
+// True once the host composite has run: every guest post draw is being
+// dropped, so a downscaled resolve of the scene (the input of the guest's
+// first quarter pass) has no reader - the host pyramid samples the full-res
+// scene texture itself.
+bool HostPostActive();
 
 } // namespace bd::gpu

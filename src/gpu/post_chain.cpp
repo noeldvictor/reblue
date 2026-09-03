@@ -130,6 +130,8 @@ struct DofInputs {
 };
 
 struct Chain {
+  // The bloom mask texture the host wrote last, for HostPostWillOverwrite.
+  GuestTexture *bloom_mask = nullptr;
   std::unique_ptr<plume::RenderShader> shaders[u32(Shader::Count)];
   std::unordered_map<u64, std::unique_ptr<plume::RenderPipeline>> pipelines;
   std::vector<std::unique_ptr<Scratch>> scratch;
@@ -510,6 +512,25 @@ bool HostPostProducerSkip(VideoState &s, u64 ps_hash) {
   }
 }
 
+bool HostPostActive() {
+  if (!REXCVAR_GET(bd_host_post))
+    return false;
+  Chain &c = chain();
+  return !c.failed && c.composite_frames > 0;
+}
+
+bool HostPostWillOverwrite(const GuestTexture *dst) {
+  if (!dst || !REXCVAR_GET(bd_host_post))
+    return false;
+  Chain &c = chain();
+  if (c.failed || !c.dof.valid)
+    return false;
+  for (const GuestTexture *level : c.dof.levels)
+    if (level == dst)
+      return true;
+  return c.bloom_mask == dst;
+}
+
 bool HostPostOverwritesTarget(VideoState &s, u64 ps_hash) {
   if (!REXCVAR_GET(bd_host_post) || !REXCVAR_GET(bd_host_post_composite))
     return false;
@@ -538,6 +559,7 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
       DrawQueueFlush(s.command_list);
     GuestTexture *scene = Source(s, s.textures[0]);
     GuestTexture *bloom = BuildBloomMask(s, c, scene, device_guest);
+    c.bloom_mask = bloom;
     const bool composed = HostComposite(s, c, scene, bloom, device_guest);
     c.dof.valid = false;
     RestoreGuestDraw(s);

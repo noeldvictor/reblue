@@ -26,6 +26,7 @@
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
+#include "gpu/post_chain.h"
 #include "gpu/settings.h"
 
 namespace bd::gpu {
@@ -637,6 +638,29 @@ void Video::ResolveRtToTexture(GuestTexture *dst) {
     return;
   if (src == dst)
     return;
+  // A level the host post chain overwrites every frame: the guest's scaled
+  // resolve into it (688x360 on the Quest, 0.78 ms) would be copied and then
+  // written over. Neither copied nor aliased - an alias would hand the
+  // chain's readers the surface instead of the level.
+  // Likewise a downscaled resolve of the full-screen scene: it fed the
+  // guest's first quarter pass, which is dropped, and the host pyramid reads
+  // the full-res scene texture. Two of them a frame (960x540 on the desktop,
+  // 688x360 on the Quest at 0.78 ms each).
+  const bool downscaled_scene =
+      HostPostActive() && dst->width < src->width && dst->height < src->height &&
+      dst->format == src->format && FullscreenChainClassLocked(s, src);
+  if (HostPostWillOverwrite(dst) || downscaled_scene) {
+    static u32 told = 0;
+    if (told++ < 3)
+      BD_INFO("[resolve] skipped: {}x{} -> {}x{} ({})", src->width,
+              src->height, dst->width, dst->height,
+              downscaled_scene ? "downscaled scene, no reader with the host "
+                                 "post chain"
+                               : "a host post level");
+    s.last_resolved_dst = dst;
+    s.draw_framebuffer_bound = false;
+    return;
+  }
 
   // A fallback-guessed source is not finished pass content: it may be redrawn
   // before this dst is sampled, so aliasing would serve drifted pixels. Only a
@@ -657,6 +681,20 @@ void Video::ResolveRtToTexture(GuestTexture *dst) {
 
   if (CopySurfaceToTextureLocked(s, src, dst, "Resolve")) {
     NoteResolveOp(ResolveOp::EagerCopy);
+    // The eager copies of a field frame, listed once: each is a pass of its
+    // own on the headset (0.3-0.6 ms with its blit and preemption).
+    {
+      static u32 listed = 0;
+      const u32 frame = FrameStatFrameCount();
+      if (frame > 3000 && listed < 12) {
+        ++listed;
+        BD_INFO("[resolve] frame {} eager: {}x{} fmt {} s{} -> {}x{} fmt {} "
+                "scale {:.3f} mips {}",
+                frame, src->width, src->height, u32(src->format),
+                u32(src->sampleCount), dst->width, dst->height,
+                u32(dst->format), dst->resolveScale, dst->mipLevels);
+      }
+    }
     s.last_resolved_dst = dst;
     // A scaled full-screen resolve (672x720 scene -> 1280x720 at design res) is
     // always the scene history. A 1:1 one is the same pass end, but this path
