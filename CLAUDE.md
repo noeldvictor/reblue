@@ -371,6 +371,48 @@ and the distance to the next boundary, never fps.
   count; it profiles at ~5%. "Most draws are blended full-screen passes" reasoned from counts
   while the measured time was 81% in the scene pass. This mistake has been made four times.
 
+## Owner decision, 2026-09-03 10:00: desktop only until every Xbox 360 paradigm is gone
+
+**No Quest runs until the host owns the frame.** The morning's nine device runs (the note
+above) qualified the head build and then measured the 360's frame model itself: a
+fragment-bound scene pass under a blend-heavy material layering, seventeen to twenty-six
+passes a frame with EDRAM seeds, resolves and a preemption slot at every boundary, Xenos
+shaders run one to one. Measuring that again is worthless; replacing it is the work. The
+owner's words: "until all xbox360 paradigms are removed it seems worthless to test on quest
+2", "we must remove edram emulation", "i'm okay with updating engine code".
+
+What "removed" means, each verified on a desktop capture, in this order:
+
+1. **The host owns the targets (stage 4).** Scene colour and depth are host textures the
+   host creates (two layers, per eye, the size it chooses); the guest's set-target, clear
+   and resolve calls for render views 0, 1 and 3 map onto host passes; a resolve destination
+   *is* the host texture (no copy); the seed copies, tile aliasing, held clears and the
+   surface pool's EDRAM matching go. The front buffer is the host composite's 8-bit output.
+2. **The host owns the passes.** Scene, dof at half res, bloom at quarter res, one composite
+   with gamma folded in straight into the runtime's swapchain (multiview, two layers), the
+   guest's 2D and effects as one overlay pass. Five or six passes, not twenty.
+3. **The host owns the materials.** The dominant material families get host shaders (fewer
+   fetches, fog per vertex, a lighting-model slot: guest look or cel); the render list's
+   "sorted" materials that are opaque cutouts draw opaque; the rest of the Xenos shaders
+   stay only for what is not yet converted. The two `bd_debug_skip_*` A/Bs (last device
+   runs) say which class carries the fragments.
+4. **Assets at the asset level (stage 3).** Meshes as triangle lists in host buffers, merged
+   statics, LODs and impostors; textures with chains in the device's native compression;
+   materials as host pipelines. Cooked once on the desktop from the recompiled loaders.
+5. **Shadows, animation, culling, indirect draws on the host** (stages 5, 6, 8), then
+   **foveation** on the host frame (stage 7).
+
+The PC shows the same structure: with `bd_gpu_timing_segments` on the desktop (10:00,
+multiview half width, 960x1080 a layer, 813 draws) the GPU frame is **5.5 ms, of which the
+scene pass is 1.6**; the other 4 ms is passes, copies and resolves that a host frame would
+not have. The desktop vsync hides it; it is the same waste the Quest pays at its rates.
+
+Engine code is in scope: the recompiled render path (`bdCameraRender`, the render views,
+the posteff chain, `bdSceneNodeDrawSingle`, the render list loop) can be replaced by host
+code outright, not only hooked. The desktop loop, `tools/rdc_outline.py` pass lists and
+`bd_capture_after_s` captures are the verification. The Quest comes back for one run when
+item 2 ships and the frame is the host's.
+
 ## The direction (owner, 2026-09-02 evening): a host-owned frame
 
 The last trace of the day settled where the frame goes: **the scene pass is draw-bound, not
@@ -446,21 +488,31 @@ stage 7 renders into the runtime's swapchain instead), multiview's 277 ms withou
 chain (not shipped), and `bd_mv_half_width` (62.7 -> 41.7 ms, present chain does not follow;
 superseded by stage 7).
 
-## The next device session, in order (written 2026-09-03 09:55; the 03:10 list ran, see the note)
+## The next steps, desktop only (written 2026-09-03 10:05)
 
-`out/probe/reblue_probes.apk` is the current head plus the fragment-census probes. Never two
-runs at once; wait for each completion notification. Autoplay lands in a different scene
-every run: compare within-run A/B arms and same-build traces only.
+No device runs: see the owner decision above. The last device measurement, the render-list
+A/B (`bd_debug_skip_list_draws`, run 11): **-1.2% GPU** with the guest's sorted and
+translucent draws dropped, so the fragment cost is in the tree-walk materials - terrain,
+rock, buildings - not in the translucent layering. The blended-class A/B was not run.
 
-1. `APK=out/probe/reblue_probes.apk bash tools/verify_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false,bd_ab_flag=bd_debug_skip_list_draws,bd_ab_period=240"`
-   - the render list's (sorted and translucent) share of the scene pass.
-2. The same with `bd_ab_flag=bd_debug_skip_blended` - the blended share.
-3. `bash tools/gpu_drawtrace_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false"`
-   with the class that dominates dropped, to see the scene pass without it.
-4. Then the design: whichever class carries the fragments gets the host treatment (fewer
-   layers, cheaper fetches, cards as instanced billboards, fog as one pass), and stage 7's
-   foveation on top. Multiview is the shipping path once its scene pass is under
-   side-by-side's; today it is 14.6 against 12-13 ms of render for the same pixels.
+1. **Stage 4, the host owns the targets.** Start in `gpu/draw_framebuffer.cpp` and
+   `gpu/resolve.cpp`: a host scene target per render view (colour+depth, two layers under
+   multiview) bound when the guest binds the scene surface; the guest's resolve of the scene
+   becomes "the destination is this texture" (alias always, no size or format gate, the
+   post chain already applies the resolve scale); `SeedFreshColorTarget`, the held clears,
+   the surface pool's EDRAM matching and `MaterializeInboundLocked` retire for the scene
+   chain. Verify: `[seed]` and `[resolve] eager` at zero for the scene chain,
+   `tools/rdc_outline.py` pass list, capture unchanged.
+2. **The passes.** Composite with gamma folded in, into an 8-bit host target that the
+   guest's 2D draws overlay, presented without the front copy; under XR straight into the
+   layered swapchain (`XR_FB_foveation` attaches there later).
+3. **The materials.** From a desktop RenderDoc capture, the five most common pixel shaders
+   of the tree-walk draws by fragment count (`tools/rdc_outline.py` per draw); host
+   replacements by shader hash (`BloomMaskClampBlob` in `guest_shaders.cpp` is the
+   substitution mechanism), fewer fetches, a lighting-model slot.
+4. **Assets** (stage 3), then shadows, animation, culling, foveation.
+
+Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 
 ## Multiview: where it is and what is left
 
