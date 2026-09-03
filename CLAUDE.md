@@ -248,7 +248,28 @@ the replay gathers the matrices live. `research/20260902_2040_the-render-list-an
 The Quest run of that build sat at 60 fps (`gpu_total_ms` 18.5 at 481 draws) **in a lighter
 scene than yesterday's** (261 node draws against 535); it is not a comparison.
 
-**What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
+**THE SCENE PASS IS 3.7 MS; THE FRAME IS NINETEEN PASSES (2026-09-02, 21:00).** The render-stage
+trace of the bones build: scene pass 3.67 ms for ~470 draws (under 8 us a draw, against 36 us
+yesterday - the per-draw ABI cut landed), and a 16.3 ms GPU frame of which 3.0 ms is
+compositor preemption at pass boundaries: shadow stub 64x64 (1.2), reflection stub 128x72
+(1.3), scene copy (0.6), dof chain (1.4), bright mask and blurs (2.5), four full-res passes
+after the composite (4.0), present (0.5). **Fewer passes is the GPU lever now**: scene into a
+texture the composite reads, one composite into the eye-resolution swapchain image with gamma
+folded in, the shadow and reflection stubs skipped when off.
+`research/20260902_2100_the-scene-pass-is-3-7-ms-...md`.
+
+**The CPU frame is the guest's "Draw Thread"; "SDLThread" is SDL's pump (2026-09-02, 21:00).**
+The first profile since the capture hang: the Draw Thread carries the walk, the node draws,
+the uploads and Present, and a quarter of its samples were the SDK heap's recursive mutex under
+`BaseHeap::QueryProtect`, reached from every `bd::mem::try_load` the host scene code makes
+(now behind a per-thread page cache, `memory_helpers.cpp`). SDLThread was SDL3's Android
+`SDL_WaitEvent` spinning (no blocking wait on Android) - 100% of a big core, pinned there as
+"guest main" by `threading.cpp` for a week; the SDK fork's loop polls and sleeps now, and the
+policy gives the big cluster to the Draw Thread. Numbers before those fixes: `other_ms` 18.2,
+`gpu_total_ms` 16.9 at 474 draws, 90% of field frames in one 60 Hz slot.
+
+**What is left on the CPU, per thread** (`out/device/profile_setmove.txt`, 2026-09-01; the
+SDLThread paragraph below is superseded by the profile above):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
   Adreno shader compiler (75% of their samples in `libllvm-qgl.so`): `pso_predictor` expands
@@ -297,6 +318,10 @@ and the distance to the next boundary, never fps.
   doing then - on 2026-09-01 a transition: 78% of samples in libc `syscall`/`nanosleep`, 18% in
   the Adreno shader compiler, 0.4% in `libreblue.so`. It now dumps once at
   `bd_capture_after_s` and stops, so the profile and the capture describe the same moment.
+- **A capture used to hang the render thread** (2026-09-02, fixed in `2d3f8af`): the log
+  stopped at `[capture] wrote`, the profile never dumped, and everything measured after
+  `bd_capture_after_s` was a frozen frame. If a run goes quiet after the capture line again,
+  `cdb -pv -p <pid> -c "~*k"` on the desktop process names the wait in seconds.
 - **`tools/stereo_check.py` has been confidently wrong four times**, each time on an image that
   was not a stereo pair (a composited panel, a misdecoded array, a mono frame twice). Look at the
   capture before believing the verdict. Only a `--stacked` grab from `bd_mv_capture_array` gives a
