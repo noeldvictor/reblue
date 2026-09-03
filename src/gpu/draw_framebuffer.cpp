@@ -241,11 +241,17 @@ void TransitionResolveSources(VideoState &s, const GuestTexture *rt,
   }
   if (!sampled_count)
     return;
-  // The barrier ends the render pass, so anything queued has to come out first
-  // or it would be emitted against a pass that no longer exists. Same
-  // null-framebuffer guard as above.
-  if (s.plume_framebuffer_bound)
-    bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
+  // The barrier goes out AHEAD of the draws still queued, not after them.
+  // Flushing the queue first was what split the scene pass: plume opens a
+  // pass lazily at the first draw, so the flush opened it and the barrier
+  // then ended it - one sub-pass per resolve source the scene samples (the
+  // reflection map on the first water draw; a framebuffer trace, 2026-09-03).
+  // The queued draws do not touch the surfaces flipped here: a draw that
+  // sampled one would have flipped it when it was recorded, and none renders
+  // into a surface that is being read. So the barrier can precede them, and
+  // with no pass open yet it costs no store and reload. If a pass is open
+  // (draws already emitted this pass) the split is unavoidable and plume
+  // resumes the same framebuffer at the next draw.
   s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, sampled,
                            sampled_count);
   NoteBarrierCall(sampled_count, BarrierSite::DrawFb);
