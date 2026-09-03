@@ -42,6 +42,13 @@ void Video::SetTexture(u32 index, GuestTexture *texture) {
   auto &s = state();
   std::lock_guard lock(s.mutex);
   if (texture->texture) {
+    // A scaled alias (the HDR scene, resolved at x0.25 while the host post
+    // chain runs) cannot be substituted: the surface holds the unscaled
+    // image. The guest wants the texture, so the copy happens now.
+    if (texture->sourceSurface && texture->sourceSurface != texture &&
+        texture->resolveScale != 1.0f) {
+      MaterializeInboundLocked(s, texture);
+    }
     BindTextureSRVLocked(s, texture);
     // SharedConstants substitution samples the source as a Texture2D, which an
     // MSAA descriptor cannot back.

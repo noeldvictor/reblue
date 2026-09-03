@@ -35,7 +35,10 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
     const uint level[5] = { asuint(g_PSC[3].y), asuint(g_PSC[3].z), asuint(g_PSC[3].w),
                             asuint(g_PSC[4].x), asuint(g_PSC[4].y) };
 
-    const float4 scene = Tap(g_PushConstants.ResourceDescriptorIndex, texCoord);
+    // g_PSC[0].w: the scene's resolve scale when it is an alias of the
+    // unscaled surface, 0 = 1.
+    const float sceneScale = g_PSC[0].w > 0.0 ? g_PSC[0].w : 1.0;
+    const float4 scene = Tap(g_PushConstants.ResourceDescriptorIndex, texCoord) * sceneScale;
     const float depth = Tap(depthIdx, texCoord).x;
 
     // The guest's pow(x, 1/8) through log2/exp2, with its clamps.

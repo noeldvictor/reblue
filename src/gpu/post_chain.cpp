@@ -125,6 +125,7 @@ struct Scratch {
 struct DofInputs {
   GuestTexture *depth = nullptr;
   GuestTexture *levels[5] = {};
+  float scene_scale = 1.0f; // what the composite multiplies the scene tap by
   float params[4] = {0, 0, 0, 0}; // c27.x, .y, .z, .w
   bool valid = false;
 };
@@ -296,6 +297,15 @@ GuestTexture *Source(VideoState &s, GuestTexture *t) {
   return src;
 }
 
+// The factor a reader of Source(t) applies: a scaled resolve that aliases
+// (the HDR scene at x0.25) hands out the unscaled surface.
+float SourceScale(const GuestTexture *t) {
+  if (t && t->sourceSurface && t->sourceSurface != t &&
+      t->sourceSurface->texture && t->resolveScale != 1.0f)
+    return t->resolveScale;
+  return 1.0f;
+}
+
 // A guest texture about to be written by the host: drop any resolve link
 // pointing into it (the host content replaces what the copy would bring) and
 // make it a colour attachment.
@@ -346,6 +356,10 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   if (!dual)
     return false;
   u32 prev_slot = scene->descriptorIndex;
+  // Param1 of the first level: the scene's resolve scale when the scene is an
+  // alias of the unscaled surface. 0 means 1 to the shader.
+  float level_scale = SourceScale(s.textures[1]);
+  c.dof.scene_scale = level_scale;
   u32 filled = 0;
   for (u32 slot = 2; slot <= 6; ++slot) {
     GuestTexture *dst = s.textures[slot];
@@ -365,10 +379,12 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
     // and at the nominal width the distance stayed sharp (desktop captures,
     // 2026-09-02).
     Pass(s, pipe, fb, dst->width, dst->height,
-         PostPush{prev_slot, 0, float(REXCVAR_GET(bd_host_post_blur)), 0.0f});
+         PostPush{prev_slot, 0, float(REXCVAR_GET(bd_host_post_blur)),
+                  level_scale});
     EndGuestTarget(s, dst);
     c.dof.levels[filled++] = dst;
     prev_slot = dst->descriptorIndex;
+    level_scale = 1.0f; // the levels hold scaled content
   }
   if (filled == 0)
     return false;
@@ -446,6 +462,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   k.dof[0] = c.dof.params[0];
   k.dof[1] = c.dof.params[1];
   k.dof[2] = c.dof.params[3];
+  k.dof[3] = SourceScale(s.textures[0]); // the scene tap's factor, 0 = 1
   for (u32 i = 0; i < 4; ++i) {
     k.w0[i] = GuestPixelConstant(device_guest, 13, i);
     k.w1[i] = GuestPixelConstant(device_guest, 14, i);
@@ -558,7 +575,13 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
     GuestTexture *scene = Source(s, s.textures[0]);
-    GuestTexture *bloom = BuildBloomMask(s, c, scene, device_guest);
+    // The bloom mask reads the first dof level rather than the scene: half
+    // the texels, and already scaled when the scene is a scaled alias.
+    GuestTexture *bloom_src =
+        c.dof.valid && c.dof.levels[0] ? Content(c.dof.levels[0]) : nullptr;
+    if (!Readable(bloom_src) || SourceScale(s.textures[0]) == 1.0f)
+      bloom_src = scene;
+    GuestTexture *bloom = BuildBloomMask(s, c, bloom_src, device_guest);
     c.bloom_mask = bloom;
     const bool composed = HostComposite(s, c, scene, bloom, device_guest);
     c.dof.valid = false;

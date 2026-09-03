@@ -44,5 +44,7 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
     acc += (b + c + e + f) * 0.03125;
     acc += (d + e + g + hh) * 0.03125;
     acc += (e + f + hh + i) * 0.03125;
-    return acc;
+    // Param1: the source's resolve scale (the HDR scene aliased unscaled), 0 = 1.
+    const float scale = g_PushConstants.Param1 > 0.0 ? g_PushConstants.Param1 : 1.0;
+    return acc * scale;
 }

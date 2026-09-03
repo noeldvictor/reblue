@@ -898,6 +898,7 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
 
     bd::gpu::GuestTexture *tex = vs.textures[i];
     if (tex && tex->sourceSurface && tex->sourceSurface->texture &&
+        tex->resolveScale == 1.0f && // a scaled alias holds the unscaled image
         tex->sourceSurface->sampleCount == plume::RenderSampleCount::COUNT_1 &&
         tex->sourceSurface != vs.render_target &&
         tex->sourceSurface != vs.depth_stencil &&

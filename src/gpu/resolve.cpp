@@ -96,10 +96,15 @@ GuestTexture *ResolveSourceForFlagsLocked(VideoState &s, u32 flags,
 bool CanAliasResolveLocked(const GuestTexture *src, const GuestTexture *dst) {
   // An MSAA source can never alias: substitution would bind a Texture2DMS
   // descriptor into a Texture2D slot.
+  // A scaled resolve (the HDR scene at x0.25) aliases only while the host
+  // post chain runs: its passes multiply the surface by dst->resolveScale
+  // themselves, and a guest draw that samples the texture materialises the
+  // scaled copy first (SetTexture). That copy was a full-res pass a frame.
+  const bool scale_ok = dst->resolveScale == 1.0f || HostPostActive();
   return src && dst && src != dst && src->texture && dst->texture &&
          src->sampleCount == plume::RenderSampleCount::COUNT_1 &&
          src->width == dst->width && src->height == dst->height &&
-         src->format == dst->format && dst->resolveScale == 1.0f &&
+         src->format == dst->format && scale_ok &&
          dst->viewDimension !=
              plume::RenderTextureViewDimension::TEXTURE_CUBE &&
          dst->mipLevels <= 1 && src->descriptorIndex != kInvalidDescriptorIndex;
