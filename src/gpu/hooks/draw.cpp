@@ -145,6 +145,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   bd::gpu::scene::NoteGuestDeviceVa(device_guest);
   bd::gpu::NoteDraw();
   bd::gpu::NoteDrawVertices(args.vertexOrIndexCount);
+  bd::gpu::state().current_draw_count = args.vertexOrIndexCount;
   // bd_dump_post_draws: name every post-effect draw of the next N frames by
   // its pixel shader, with the target it writes, the textures it samples and
   // the two parameter registers the bd_pe_* shaders read (c26 g_vCount, c27

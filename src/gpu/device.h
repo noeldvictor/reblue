@@ -419,6 +419,9 @@ struct VideoState {
   bool occlusion_result_pending[kNumFrames] =
       {}; // per-slot: counter->readback copy in flight
   u32 occlusion_last_count = 16384; // last sample count (default = visible)
+  // The vertex or index count of the draw being dispatched, for the seed
+  // site's one-shot log of what the first draw into a seeded target is.
+  u32 current_draw_count = 0;
   // Keyed by destination depth format, so D32_FLOAT and D32_FLOAT_S8_UINT both
   // work without a PSO/DSV mismatch.
   std::unordered_map<plume::RenderFormat,

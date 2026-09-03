@@ -344,11 +344,27 @@ void SeedFreshColorTarget(VideoState &s, GuestTexture *rt, u32 slot,
       const u32 frame = FrameStatFrameCount();
       if (frame > 3000 && listed < 24) {
         ++listed;
+        // The first draw into the seeded target, and whether it samples the
+        // seed source: a full-screen opaque draw that does not sample it
+        // overwrites the seed (discard instead); one that samples it needs
+        // two images (the copy stays); one that neither covers nor samples
+        // can render straight into the source (alias). Stage 4's decision
+        // per target (2026-09-03).
+        bool samples_src = false;
+        for (const GuestTexture *t : s.textures)
+          if (t && (t == seed_src || t->sourceSurface == seed_src))
+            samples_src = true;
+        const auto *ps = s.pixel_shader;
         BD_INFO("[seed] frame {} {}: {}x{} fmt {} <- {}x{} fmt {} (pending "
-                "clear {})",
+                "clear {}) first draw: {} verts, blend {}, colour mask 0x{:X}, "
+                "ps {:016X}, samples seed source {}",
                 frame, seed_tag, rt->width, rt->height, u32(rt->format),
                 seed_src->width, seed_src->height, u32(seed_src->format),
-                s.clear_pending ? 1 : 0);
+                s.clear_pending ? 1 : 0, s.current_draw_count,
+                s.pipelineState.alphaBlendEnable ? 1 : 0,
+                u32(s.pipelineState.colorWriteEnable),
+                (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0ull,
+                samples_src ? "yes" : "no");
       }
     }
     // The copy moved rt off COLOR_WRITE, so re-assert it for the composite
