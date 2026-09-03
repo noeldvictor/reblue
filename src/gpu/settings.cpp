@@ -774,6 +774,12 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // into the recompiled test per node (3% of the Draw Thread's samples on the
 // desktop, 2026-09-03). The other view paths (reflection, shadow, the point
 // test) still call the guest.
+// Vertex pulling (gpu/vertex_pull.h): instanced draws whose pull info
+// staged go through the pulled pipeline twin, binding no vertex streams.
+// The step before indirect draws; verified on the desktop by capture.
+REXCVAR_DEFINE_BOOL(bd_draw_pull, false, kCvarGroup,
+                    "Draw instanced groups through the vertex-pulling "
+                    "pipeline twin (no per-mesh stream binds).");
 REXCVAR_DEFINE_BOOL(bd_host_cull_diag, false, kCvarGroup,
                     "Run the guest's visibility test beside the host's and "
                     "log disagreements.");

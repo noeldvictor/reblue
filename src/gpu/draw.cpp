@@ -21,6 +21,7 @@
 #include "core/profiling.h"
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
+#include "gpu/vertex_pull.h"
 #include "gpu/scene/host_draw.h"
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
@@ -32,6 +33,7 @@
 REXCVAR_DECLARE(bool, bd_blend_no_depth_write);
 REXCVAR_DECLARE(bool, bd_depth_prepass);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
+REXCVAR_DECLARE(bool, bd_draw_pull);
 REXCVAR_DECLARE(bool, bd_host_draw_records);
 REXCVAR_DECLARE(bool, bd_blend_off_when_opaque);
 REXCVAR_DECLARE(i32, bd_debug_max_pso);
@@ -405,6 +407,7 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // draw on a clean pipeline state still has it. The draw queue merges
     // draws that share it, a mesh and a material into one instanced draw.
     s.current_instanced_pso = nullptr;
+    s.current_pulled_pso = nullptr;
     if (REXCVAR_GET(bd_draw_instancing) && !s.current_prepass_pso &&
         lookup.vertexShader && lookup.vertexShader->shaderCacheEntry &&
         (lookup.vertexShader->shaderCacheEntry->specConstantsMask &
@@ -420,6 +423,27 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
       s.current_instanced_pso = FindPipeline(inst);
       if (!s.current_instanced_pso)
         EnqueuePipelinePriority(inst);
+      // The pulled twin: the instanced state with the vertex shader pulling
+      // its attributes from the record's streams (SPEC_CONSTANT_PULLED) and
+      // the dummy input layout (gpu/vertex_pull.h). Same rule: never built
+      // on the render thread.
+      if (s.current_instanced_pso && REXCVAR_GET(bd_draw_pull) &&
+          (lookup.vertexShader->shaderCacheEntry->specConstantsMask &
+           kSpecConstantPulled) &&
+          VertexPullReady()) {
+        PipelineState pulled = inst;
+        pulled.specConstants |= kSpecConstantPulled;
+        pulled.vertexDeclaration = VertexPullDummyDeclaration();
+        std::memset(pulled.vertexStrides, 0, sizeof(pulled.vertexStrides));
+        if (pulled.vertexDeclaration) {
+          SanitizePipelineState(pulled);
+          s.current_pulled_pso = FindPipeline(pulled);
+          if (!s.current_pulled_pso) {
+            EnqueuePipelinePriority(pulled);
+            VertexPullNoteTwinMissing();
+          }
+        }
+      }
     }
   } else if (!s.current_pso) {
     // Clean dirty bits but no PSO bound: the first draw after a command list
@@ -444,6 +468,7 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
       InstanceRecordsRoom() &&
       (!bd::gpu::scene::HostDrawReplaying() || REXCVAR_GET(bd_host_draw_records));
   u32 record_index = ~0u;
+  bool pull_ok = false;
   bool vs_upload_kept = false;
   if (device_guest) {
     if (constants_in_record) {
@@ -494,8 +519,10 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     }
     // After the snapshot, which is what puts this draw's block in the
     // scratch the record is copied from.
-    if (constants_in_record)
+    if (constants_in_record) {
       record_index = StageInstanceRecord();
+      pull_ok = VertexPullStage(record_index, s);
+    }
     // One bind carries all three blocks, after every upload that could have
     // moved one. The VS and PS uploads are dirty-gated, so their offsets often
     // carry over unchanged from the previous draw.
@@ -568,6 +595,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     s.pending.instanced_pipeline =
         record_index != ~0u ? s.current_instanced_pso : nullptr;
     s.pending.record_index = record_index;
+    s.pending.pulled_pipeline =
+        (record_index != ~0u && pull_ok) ? s.current_pulled_pso : nullptr;
     const u32 first = s.bound_vertex_first;
     const u32 count = s.bound_vertex_count;
     for (u32 i = first; i < first + count && i < 16u; ++i) {

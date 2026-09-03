@@ -35,6 +35,7 @@
 #include "core/profiling.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/vertex_pull.h"
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
@@ -308,6 +309,7 @@ bool CreateInstanceChunk(UploadState &s) {
     return false;
   }
   s.staged.reserve(kInstanceRecordsPerFrame);
+  bd::gpu::VertexPullInit(device);
   BD_INFO("constant_buffers: instance records {} x {} per slot, {} MiB",
           kNumFrames, kInstanceRecordsPerSlot, bytes / (1024 * 1024));
   return true;
@@ -577,6 +579,7 @@ void ResetFrame(u32 slot) {
   up.chunkOffset = 0;
   up.recordsCommitted = 0;
   s.staged.clear();
+  bd::gpu::VertexPullFrameReset();
   // The offset caches name allocations in the slot being rewound.
   s.vsOffsets.clear();
   s.vsShadow.clear();
@@ -676,6 +679,7 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
       std::memset(&dst[i], 0, sizeof(InstanceRecord));
   }
   up.recordsCommitted += n;
+  bd::gpu::VertexPullCommit(staged, n, first);
   return first;
 }
 

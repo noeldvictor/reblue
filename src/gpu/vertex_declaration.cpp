@@ -24,6 +24,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/pipeline/pso_recorder.h"
 #include "gpu/shaders/shader_constants.h"
+#include "gpu/vertex_pull.h"
 
 namespace bd::gpu {
 
@@ -226,6 +227,22 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
     // add an attribute at an invalid location.
     if (g_vulkan && input.location == kNoLocation) {
       continue;
+    }
+    // The pulled path reads this element from the same bytes: the entry
+    // names the format the assembler would have converted from.
+    if (input.location < kPullTableEntries) {
+      const u32 entry =
+          VertexPullEntry(input.format, stream, input.alignedByteOffset);
+      if (entry == 0) {
+        decl->pullable = false;
+        static u32 told = 0;
+        if (told++ < 8)
+          BD_INFO("[pull] declaration not pullable: format {} at location {} "
+                  "(slot {}, offset {})",
+                  static_cast<u32>(input.format), input.location, stream,
+                  input.alignedByteOffset);
+      }
+      decl->pullTable[input.location] = entry;
     }
     input_elements.push_back(input);
   }

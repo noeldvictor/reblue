@@ -307,6 +307,12 @@ struct GuestVertexDeclaration {
   bool hasR11G11B10Normal = false;
   bool vertexStreams[16]{};
   u32 indexVertexStream = 0;
+  // Vertex pulling (gpu/vertex_pull.h): one packed entry per attribute
+  // location, the id in the GPU table once written, and whether every
+  // element decoded to a format the pulled path can read.
+  u32 pullTable[16]{};
+  u32 pullId = 0;
+  bool pullable = true;
 
   GuestVertexDeclaration() = default;
   GuestVertexDeclaration(const GuestVertexDeclaration &) = delete;

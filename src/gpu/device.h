@@ -533,6 +533,9 @@ struct VideoState {
   // built when the vertex shader carries the redirect and bd_draw_instancing
   // is on. Null otherwise. Exclusive with the prepass pair.
   plume::RenderPipeline *current_instanced_pso = nullptr;
+  // The pulled twin of the instanced one (gpu/vertex_pull.h), when the
+  // precache has it; the queue draws through it under bd_draw_pull.
+  plume::RenderPipeline *current_pulled_pso = nullptr;
 
   // The colour target whose guest clear plume is holding for its next pass
   // (RequestClear clears through a colour-only framebuffer and unbinds; plume

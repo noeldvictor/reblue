@@ -5,6 +5,7 @@
 #include "gpu/pipeline/pso_predictor.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstddef>
 #include <format>
 #include <mutex>
@@ -25,6 +26,7 @@
 #include "gpu/pipeline/pso_precache.h"
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/shaders/shader_constants.h"
+#include "gpu/vertex_pull.h"
 
 namespace bd::gpu {
 
@@ -281,6 +283,19 @@ size_t EmitTechDeclLocked(u32 tech, const DeclRecord &d) {
               SanitizePipelineState(inst);
               EnqueuePipeline(inst);
               ++emitted;
+              // And its pulled twin (gpu/vertex_pull.h): the dummy input
+              // layout, zero strides, the pull bit.
+              if ((slot.vs->shaderCacheEntry->specConstantsMask &
+                   kSpecConstantPulled) &&
+                  VertexPullDummyDeclaration()) {
+                PipelineState pulled = inst;
+                pulled.specConstants |= kSpecConstantPulled;
+                pulled.vertexDeclaration = VertexPullDummyDeclaration();
+                std::memset(pulled.vertexStrides, 0, sizeof(pulled.vertexStrides));
+                SanitizePipelineState(pulled);
+                EnqueuePipeline(pulled);
+                ++emitted;
+              }
             }
             // The templates carry sampleCount=COUNT_1 (config-independent), but
             // under bd_msaa the scene pass draws at the cvar count and its PSO

@@ -17,6 +17,7 @@
 #include "core/logging.h"
 #include "gpu/backend.h"
 #include "gpu/bindless_allocator.h"
+#include "gpu/vertex_pull.h"
 #include "gpu/format.h"
 #include "gpu/settings.h"
 
@@ -183,8 +184,13 @@ bool BuildPipelineLayout(VideoState &s) {
   tex_set_builder.begin();
   for (u32 dim = 0; dim < kTextureHeapDims; ++dim)
     tex_set_builder.addTexture(dim, kBindlessTextureCount);
+  // Binding 3: the block buffer heap the pulled vertex shaders read
+  // (gpu/vertex_pull.h). The last range carries the variable count; the
+  // texture heaps keep their fixed 4096 and plume flags every heap range
+  // of a boundless set update-after-bind.
+  tex_set_builder.addStructuredBuffer(3, kVertexBufferHeapCount);
   BD_INFO("[device] tex_set_builder.end");
-  tex_set_builder.end(true, kBindlessTextureCount);
+  tex_set_builder.end(true, kVertexBufferHeapCount);
 
   BD_INFO("[device] tex_set_builder.create");
   s.texture_descriptor_set = tex_set_builder.create(s.device.get());
@@ -276,6 +282,10 @@ bool BuildPipelineLayout(VideoState &s) {
   constant_set_builder.addConstantBufferDynamic(1);
   constant_set_builder.addConstantBufferDynamic(2);
   constant_set_builder.addStructuredBuffer(3);
+  // Bindings 4 and 5: the vertex pulling tables (gpu/vertex_pull.h), static
+  // like the record buffer.
+  constant_set_builder.addStructuredBuffer(4);
+  constant_set_builder.addStructuredBuffer(5);
   constant_set_builder.end();
   s.constant_descriptor_set = constant_set_builder.create(s.device.get());
   if (!s.constant_descriptor_set) {

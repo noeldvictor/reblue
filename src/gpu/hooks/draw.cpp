@@ -40,6 +40,7 @@
 #include "gpu/gpu_timing.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
+#include "gpu/vertex_pull.h"
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/frame.h"
 #include "gpu/post_chain.h"
@@ -560,6 +561,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       // just uploaded, which is exact.
       if (q.record_index != ~0u) {
         q.record_index = bd::gpu::StageInstanceRecord();
+        if (!bd::gpu::VertexPullStage(q.record_index, s))
+          q.pulled_pipeline = nullptr;
         if (q.record_index == ~0u)
           q.instanced_pipeline = nullptr;
       }

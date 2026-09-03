@@ -7,6 +7,7 @@
  */
 #include "gpu/draw_queue.h"
 #include "gpu/frag_census.h"
+#include "gpu/vertex_pull.h"
 
 #include <algorithm>
 #include <cstring>
@@ -27,6 +28,7 @@ REXCVAR_DECLARE(bool, bd_draw_sort);
 REXCVAR_DECLARE(bool, bd_draw_eye_major);
 REXCVAR_DECLARE(i32, bd_pass_split_draws);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
+REXCVAR_DECLARE(bool, bd_draw_pull);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
 REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
 
@@ -39,6 +41,7 @@ namespace {
 // submission path would be a new per-draw cost in the middle of removing one.
 std::vector<QueuedDraw> g_queue;
 u32 g_sequence = 0;
+u32 g_pulled_draws = 0; // per flush, reported with the instancing line
 
 // Only what actually has to be re-emitted. Sorting by pipeline means runs of
 // draws share one, and re-binding it per draw would spend back exactly what the
@@ -52,6 +55,7 @@ struct EmitState {
   plume::RenderRect scissor{};
   plume::RenderFramebuffer *framebuffer = nullptr;
   bool any = false;
+  bool dummy_bound = false; // the pulled path's slot-15 binding
 };
 
 // instance_count / first_instance: the instanced group this draw stands for
@@ -115,18 +119,32 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
   // bound. plume dereferences every view it is handed, so passing one with a
   // null buffer is a null dereference inside the backend, which is exactly how
   // this announced itself: ACCESS_VIOLATION reading address 0x10, three times.
-  u32 i = d.vertex_first;
-  const u32 end = d.vertex_first + d.vertex_count;
-  while (i < end && i < 16u) {
-    if (d.vertex_views[i].buffer.ref == nullptr) {
-      ++i;
-      continue;
+  // A pulled draw binds no streams: its pipeline's input layout reads slot
+  // 15 alone, from the 64-byte dummy, and the shader pulls the real
+  // attributes from the record's streams.
+  const bool pulled = d.pulled_pipeline && d.pipeline == d.pulled_pipeline;
+  if (pulled) {
+    if (!st.dummy_bound) {
+      cmd->setVertexBuffers(15, VertexPullDummyView(), 1, VertexPullDummySlot());
+      st.dummy_bound = true;
     }
-    u32 run = i;
-    while (run < end && run < 16u && d.vertex_views[run].buffer.ref != nullptr)
-      ++run;
-    cmd->setVertexBuffers(i, d.vertex_views + i, run - i, d.input_slots + i);
-    i = run;
+  } else {
+    u32 i = d.vertex_first;
+    const u32 end = d.vertex_first + d.vertex_count;
+    while (i < end && i < 16u) {
+      if (d.vertex_views[i].buffer.ref == nullptr) {
+        ++i;
+        continue;
+      }
+      u32 run = i;
+      while (run < end && run < 16u && d.vertex_views[run].buffer.ref != nullptr)
+        ++run;
+      cmd->setVertexBuffers(i, d.vertex_views + i, run - i, d.input_slots + i);
+      // A stream bound over slot 15 invalidates the dummy binding.
+      if (run > 15u)
+        st.dummy_bound = false;
+      i = run;
+    }
   }
   if (d.has_index_buffer) {
     // The whole view, not just the buffer pointer. Two draws can share a buffer
@@ -530,6 +548,17 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
       if (first != ~0u) {
         QueuedDraw d = q;
         d.pipeline = q.instanced_pipeline;
+        // Pulled when every draw of the group staged its pull info (the
+        // group key already fixes the pipeline, so one check per group).
+        if (REXCVAR_GET(bd_draw_pull) && q.pulled_pipeline) {
+          bool all_pulled = true;
+          for (size_t k = i; k < j && all_pulled; ++k)
+            all_pulled = g_queue[k].pulled_pipeline == q.pulled_pipeline;
+          if (all_pulled) {
+            d.pipeline = q.pulled_pipeline;
+            ++g_pulled_draws;
+          }
+        }
         if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
         if (!d.blended) {
           opaque += n;
@@ -732,10 +761,11 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     acc_grouped += grouped_draws;
     if (n_flush == 300) {
       BD_INFO("[draw-queue] instancing: {} draws in -> {} issued per flush; "
-              "{} groups of >1 covering {} draws",
+              "{} groups of >1 covering {} draws; {} issued pulled",
               acc_in / n_flush, acc_out / n_flush, acc_groups / n_flush,
-              acc_grouped / n_flush);
+              acc_grouped / n_flush, g_pulled_draws / n_flush);
       n_flush = acc_in = acc_out = acc_groups = acc_grouped = 0;
+      g_pulled_draws = 0;
     }
   }
   g_queue.clear();

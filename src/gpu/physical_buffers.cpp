@@ -33,6 +33,7 @@
 #include "gpu/byte_swap.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/vertex_pull.h"
 
 // Block mirroring: one host RenderBuffer per model load (XPhysical) block with
 // each mesh bound as an offset view, collapsing a model's thousands of tiny
@@ -396,6 +397,7 @@ void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
         freed_bytes += block.size;
         block_buffers = 1;
         scrub.push_back(block_buf);
+        bd::gpu::VertexPullForgetBuffer(block_buf);
         g_physicalBufferGraveyard[slot].push_back(std::move(block.buffer));
       }
       g_physicalBlocks.erase(ait);

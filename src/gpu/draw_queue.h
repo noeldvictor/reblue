@@ -109,6 +109,9 @@ struct QueuedDraw {
   // so the flush may sort a run of them to bring equal keys together.
   plume::RenderPipeline *instanced_pipeline = nullptr;
   u32 record_index = ~0u;
+  // The instanced twin that pulls its vertices from the record's streams
+  // (gpu/vertex_pull.h); set only when this draw's pull info staged.
+  plume::RenderPipeline *pulled_pipeline = nullptr;
   u64 group_key = 0;
   bool reorderable = false;
 };
