@@ -37,6 +37,9 @@ reblue_host_shader(copy_depth_ps ps_6_1)
 foreach(shader IN ITEMS bd_pe_ps_brightpass_clamp bd_pe_ps_ms_bright_clamp)
     reblue_host_shader(${shader} ps_6_0 -D REBLUE_RECOMP)
 endforeach()
+# The host lit material (gpu/shaders/hlsl/bd_normal_lit.hlsl) replaces the
+# guest's bd_normal_ps by hash at link time; 6.1 for SV_ViewID.
+reblue_host_shader(bd_normal_lit ps_6_1 -D REBLUE_RECOMP)
 # The host-owned post chain (gpu/post_chain.cpp): downsample, separable blur
 # and bright mask, producing the guest's pyramid textures without the tile.
 foreach(shader IN ITEMS post_down_ps post_blur_ps post_bright_ps

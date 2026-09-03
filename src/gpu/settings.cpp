@@ -766,6 +766,12 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // every 300 frames as "[frag] ... the top ten". Which shaders produce the
 // fragments the Quest's counters say the scene pass is bound by
 // (2026-09-03).
+// The host material shaders replace the guest's scene pixel shaders by hash
+// at link time (guest_shaders.cpp): bd_normal_ps first, the family after.
+// Read once per shader link, so a change needs a restart.
+REXCVAR_DEFINE_BOOL(bd_host_materials, true, kCvarGroup,
+                    "Substitute host material shaders for the guest's scene "
+                    "pixel shaders (bd_normal_ps family).");
 REXCVAR_DEFINE_BOOL(bd_frag_census, false, kCvarGroup,
                     "Count fragment shader invocations per guest pixel shader "
                     "(Vulkan pipeline statistics, desktop).");

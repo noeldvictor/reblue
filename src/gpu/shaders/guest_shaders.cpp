@@ -16,7 +16,10 @@
 #include <vector>
 
 #include <plume_render_interface.h>
+#include <rex/cvar.h>
 #include <rex/hash.h>
+
+REXCVAR_DECLARE(bool, bd_host_materials);
 #include <zstd.h>
 
 #include "core/logging.h"
@@ -31,10 +34,12 @@
 #include "gpu/shaders/shader_linker.h"
 #include "src/gpu/shaders/hlsl/bd_pe_ps_brightpass_clamp.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/bd_pe_ps_ms_bright_clamp.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/bd_normal_lit.hlsl.dxil.h"
 #include <miniz.h>
 #else
 #include "src/gpu/shaders/hlsl/bd_pe_ps_brightpass_clamp.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/bd_pe_ps_ms_bright_clamp.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/bd_normal_lit.hlsl.spirv.h"
 #include <smolv.h>
 #endif
 
@@ -150,6 +155,14 @@ bool BloomMaskClampBlob(u64 hash, const void *&blob, size_t &size) {
     blob = REBLUE_BLOB_SYMBOL(bd_pe_ps_ms_bright_clamp);
     size = sizeof(REBLUE_BLOB_SYMBOL(bd_pe_ps_ms_bright_clamp));
     return true;
+  // The host materials: the scene's lit pixel shader, 79% of the frame's
+  // fragments in the 2026-09-03 census, owned by the host from here on.
+  case 0xFB83DD3F5E67CEB7ull: // bd_normal_ps
+    if (!REXCVAR_GET(bd_host_materials))
+      return false;
+    blob = REBLUE_BLOB_SYMBOL(bd_normal_lit);
+    size = sizeof(REBLUE_BLOB_SYMBOL(bd_normal_lit));
+    return true;
   default:
     return false;
   }
@@ -206,6 +219,8 @@ plume::RenderShader *GetOrLinkShader(GuestShader *gs, u32 specConstants) {
   const void *clampBlob = nullptr;
   size_t clampSize = 0;
   if (BloomMaskClampBlob(entry->hash, clampBlob, clampSize)) {
+    BD_INFO("[material] host shader substituted for guest ps {:016X}",
+            entry->hash);
     return PublishShader(gs, device->createShader(clampBlob, clampSize, "main",
                                                   kHostShaderFormat));
   }
