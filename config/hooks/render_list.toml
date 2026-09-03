@@ -14,6 +14,11 @@
 [[midasm_hook]]
 address = 0x8227F524
 name = "bdRenderListEntryHook"
-registers = ["r31"]
+# r23 is the loop's current visual: an entry of the same visual skips the
+# visual setup (0x8227F524 compares entry+272 with r23), another visual ends
+# the previous one and begins this one. A replayed entry jumps past that, so
+# the host replays only while r23 already names the entry's visual and lets
+# the guest perform every switch itself (2026-09-03, the cyan skirt).
+registers = ["r31", "r23"]
 after_instruction = false
 jump_address_on_true = 0x8227FD28

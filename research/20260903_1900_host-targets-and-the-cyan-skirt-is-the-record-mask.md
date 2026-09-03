@@ -129,3 +129,37 @@ Sources: `src/gpu/host_targets.cpp`, `src/gpu/draw_framebuffer.cpp`, `src/gpu/sc
 (`VerifyAgainstReplay`, `PassRegs`), `src/gpu/constant_buffers.cpp` (`CommitInstanceRecords`),
 `src/gpu/draw_queue.cpp`, `tools/rdc_pixel_history.py`; logs of 2026-09-03 17:00-19:00 in
 `out/build/win-amd64-release/logs/`.
+
+## Addendum (20:30): the mask is innocent; the skirt is fixed
+
+The mask-off run's clean sequence was one run's luck. With the mask on and the same scene,
+runs alternated between clean and 15-76 patch frames of 120, and the patch's on/off pattern
+followed the template refresh cadence (`bd_host_draw_refresh` 16), i.e. which entries were
+interpreted that frame. The last asymmetry was outside the composition the verifier checks: the
+guest's own state machine around a replayed entry.
+
+`sub_8227F360`'s loop (generated/reblue_recomp.84.cpp, `loc_8227F520`) keeps the current visual
+in `r23`: `cmplw cr6, r23, entry+272`; equal skips to the draw setup, different calls
+`sub_8221DCA0` (end the previous visual) and sets `r23 = entry+272` before the visual's own
+setup (constant block, render states, `SetVertexShaderConstantB`/`SetPixelShaderConstantB`).
+The host's midasm hook at `0x8227F524` jumps to the loop tail for a replayed entry, so `r23`
+kept the previous visual and the next interpreted entry of the replayed visual either skipped a
+switch it needed or performed one the host state did not match. Fix: the hook carries `r23` and
+an entry replays only when `r23 == entry.visual`; the first entry of every run of a visual is
+the guest's, and every switch is the guest's own.
+
+Two more replay corrections, both named by the verifier: the replay's bool constants come from
+the live device (the pass and visual bits the guest toggles; the template's copy was the capture
+frame's, 503 draws wrong) with the node's foliage bit applied; and the host state is restored
+after a replay as before. Writing the replay's composition back into the guest's device block
+was tried and reverted: it produced a *persistent* flat patch (the guest inherits bools it
+believes it set), which is what showed the bools were the lever.
+
+Result, `bd_capture_frames = 120` at the rock, lower-40% cyan metric: 0, 0, 0 patch frames in
+three runs (one run had 49 consecutive uniform sky-blue frames, the zenith sweep, also seen
+before the fix). Before: 53, 31, 15, 76 of 120 in the runs of the previous hour.
+
+Corrections to the section above: "the cyan skirt is the instance-record mask" is withdrawn;
+`bd_record_mask` is on again. The record-mask split modes and the `[records]` group dump stay
+as diagnostics; the group dump showed groups whose members' blocks are identical (the same mesh
+at the same transform, two to twelve times), which is a separate question for the queue.

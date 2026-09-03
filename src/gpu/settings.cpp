@@ -812,14 +812,11 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // Instance records carry a per-register mask of what differs from the
 // group's uniform block, and the shader reads only those from the record
 // (constant_buffers.h). Off writes all-ones masks: the old whole-record read.
-// Off by default since 2026-09-03 evening: with the mask on, a group of
-// replayed ground pieces at the village rock renders one piece as the clear
-// colour in about half the frames (the "cyan skirt"); the producer, the
-// consumer and the ring bytes all check out on the CPU, and the cause is
-// still open (research/20260903_1900_...). Costs Quest GPU time when it
-// comes back on (the whole-record read measured 28 ms against 19.5 with every
-// scene draw on records, 2026-09-02); singles are not affected.
-REXCVAR_DEFINE_BOOL(bd_record_mask, false, kCvarGroup,
+// The cyan skirt of 2026-09-03 was blamed on the mask for an hour (a
+// mask-off run read clean); it was the replay's pass camera and stale
+// templates (gpu/scene/host_draw.cpp, PassRegs and why_drift), and the mask
+// reads clean in the same scene with those in.
+REXCVAR_DEFINE_BOOL(bd_record_mask, true, kCvarGroup,
                     "Instance records mask the registers that differ from "
                     "the group's uniform block.");
 REXCVAR_DEFINE_BOOL(bd_draw_indirect, true, kCvarGroup,

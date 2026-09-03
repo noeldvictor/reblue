@@ -1482,9 +1482,15 @@ bool HostDrawReplay(const NodeTag &tag) {
     if (!t->bone_slots.empty())
       GatherBones(tag, t->bone_slots, t_vs_block);
     u32 bools[8];
-    // The template's: the bools are the node's, not the visual's (taking the
-    // visual's interpreted node's put 118,737 draws wrong in the verifier).
-    std::memcpy(bools, d.bools, sizeof(bools));
+    // The live device's: the bits the guest toggles per pass and per visual
+    // (VS bit 30, PS bit 5 in the verifier) are set by the visual switch
+    // the guest performs itself before any replay of the visual, and the
+    // node's own bit (31, foliage) is applied below. The template's copy
+    // was the capture frame's (503 draws wrong).
+    for (u32 i = 0; i < 4; ++i) {
+      bools[i] = static_cast<u32>(dev->vsBoolConstants[i]);
+      bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
+    }
     if (has_foliage) {
       std::memcpy(t_vs_block + 57 * 16, foliage.v, sizeof(foliage.v));
       if (foliage.flag)
@@ -1566,7 +1572,9 @@ bool HostDrawReplay(const NodeTag &tag) {
                                          d.base_vertex, d.start_vertex);
   }
   t_replaying = false;
-  {
+  if (verify) {
+    // The interpreter runs this node now, from the state it found: put the
+    // host state back and check its draws at capture.
     std::lock_guard lock(s.mutex);
     s.material_override = nullptr;
     s.pipelineState = saved.pipelineState;
@@ -1578,11 +1586,28 @@ bool HostDrawReplay(const NodeTag &tag) {
     s.index_view = saved.index_view;
     Video::SetAlphaThreshold(saved.alpha);
     mark_dirty();
-  }
-  if (verify) {
-    // The interpreter runs this node now; its draws are checked at capture.
     t_verify.active = true;
     return false;
+  }
+  // The guest's device block is not written back: a replay that wrote the
+  // template's bool constants into it left a persistent flat patch (the
+  // guest inherits bools it believes it set; 2026-09-03).
+  {
+    // The host bindings go back to what the node found: the interpreter's
+    // deferred-state shadow (0x82DD80D8) still describes the last interpreted
+    // node, and the next interpreted node skips a set the shadow calls
+    // current, which is right only if the host state is the shadow's.
+    std::lock_guard lock(s.mutex);
+    s.material_override = nullptr;
+    s.pipelineState = saved.pipelineState;
+    std::memcpy(s.textures, saved.textures, sizeof(s.textures));
+    std::memcpy(s.vertex_views, saved.vertex_views, sizeof(s.vertex_views));
+    std::memcpy(s.input_slots, saved.input_slots, sizeof(s.input_slots));
+    s.bound_vertex_first = saved.vertex_first;
+    s.bound_vertex_count = saved.vertex_count;
+    s.index_view = saved.index_view;
+    Video::SetAlphaThreshold(saved.alpha);
+    mark_dirty();
   }
   return true;
 }

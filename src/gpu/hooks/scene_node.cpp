@@ -256,8 +256,9 @@ void CloseListCapture() {
 }
 } // namespace
 
-// Loop head of sub_8227F360, r31 = the entry. True skips the iteration.
-bool bdRenderListEntryHook(PPCRegister &r31) {
+// Loop head of sub_8227F360, r31 = the entry, r23 = the loop's current
+// visual. True skips the iteration.
+bool bdRenderListEntryHook(PPCRegister &r31, PPCRegister &r23) {
   using namespace bd::gpu::scene;
   CloseListCapture();
   if (!(RecordingArmed() || HostDrawEnabled()))
@@ -268,7 +269,13 @@ bool bdRenderListEntryHook(PPCRegister &r31) {
   if (tag.seq == 0)
     BD_INFO("[node] render-list entry hook is live");
   SetCurrentNodeTag(tag);
-  if (HostDrawReplay(tag)) {
+  // The loop's visual switch (end the previous visual, begin this one, its
+  // constant block and states) happens only when r23 changes, and a skipped
+  // iteration leaves r23 as it was. So the first entry of every run of a
+  // visual is the guest's, and only the entries after it replay: the guest's
+  // own state machine then never misses a switch (2026-09-03).
+  const bool visual_current = r23.u32 == tag.visual_va;
+  if (visual_current && HostDrawReplay(tag)) {
     ClearCurrentNodeTag();
     return true;
   }

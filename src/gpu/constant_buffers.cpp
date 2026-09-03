@@ -658,17 +658,6 @@ u32 UploadVertexBlockFromStaged(u32 index) {
                 first_reg);
       }
     }
-    {
-      static u32 told = 0;
-      if (s.buffer.mapped &&
-          std::memcmp(s.buffer.mapped + it->second.offset, block,
-                      kConstantBlockBytes) != 0 && told++ < 8)
-        BD_WARN("[records] hit window at offset {} does not hold the block "
-                "in the ring (shadow agrees: {})", it->second.offset,
-                it->second.shadow < s.vsShadow.size() &&
-                    std::memcmp(s.vsShadow[it->second.shadow].data(), block,
-                                kConstantBlockBytes) == 0);
-    }
     return it->second.offset;
   }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
@@ -681,17 +670,6 @@ u32 UploadVertexBlockFromStaged(u32 index) {
                              alloc.dynamicOffset,
                              static_cast<u32>(s.vsShadow.size() - 1)});
   NoteConstantUpload(true, true);
-  {
-    // Diagnostic (2026-09-03): the window as the ring holds it, read back
-    // (desktop only; write-combined memory, never in a shipping path).
-    static u32 checked = 0, told = 0;
-    if (checked++ < 20000 && s.buffer.mapped &&
-        std::memcmp(s.buffer.mapped + alloc.dynamicOffset, block,
-                    kConstantBlockBytes) != 0 && told++ < 8)
-      BD_WARN("[records] fresh window at offset {} does not hold the block "
-              "(chunk {} slot {})", alloc.dynamicOffset, alloc.dynamicOffset /
-              kConstantBlockBytes, s.cursor);
-  }
   return alloc.dynamicOffset;
 }
 
@@ -756,6 +734,51 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
     // The ring is write-combined: one contiguous write, no read back.
     std::memcpy(dst[i].regs, r.regs, sizeof(r.regs));
     std::memcpy(dst[i].mask, mask, sizeof(mask));
+    if (base && n > 1 && i > 0) {
+      // Per frame, for a few frames: how many groups have members with
+      // identical blocks (the same mesh at the same transform, drawn twice),
+      // and the registers the others differ in (2026-09-03).
+      static u32 frame_seen = 0, groups = 0, identical_groups = 0, told = 0;
+      static u32 frames_told = 0;
+      static bool this_identical = true;
+      const u32 frame = FrameStatFrameCount();
+      if (frame != frame_seen) {
+        if (frame_seen > 600 && frames_told < 6) {
+          ++frames_told;
+          BD_INFO("[records] frame {}: {} groups, {} with every member "
+                  "identical to the first", frame_seen, groups,
+                  identical_groups);
+        }
+        frame_seen = frame;
+        groups = identical_groups = 0;
+      }
+      u32 count = 0;
+      for (u32 w = 0; w < 8; ++w)
+        count += static_cast<u32>(__builtin_popcount(mask[w]));
+      std::string regs;
+      if (count && told < 16) {
+        u32 listed = 0;
+        for (u32 reg = 0; reg < 256 && listed < 24; ++reg)
+          if ((mask[reg / 32] >> (reg % 32)) & 1u) {
+            ++listed;
+            regs += fmt::format(" c{}", reg);
+          }
+      }
+      if (i == 1) {
+        ++groups;
+        this_identical = true;
+      }
+      if (count)
+        this_identical = false;
+      if (i == n - 1 && this_identical)
+        ++identical_groups;
+      if (count && frame > 600 && told < 16) {
+        ++told;
+        BD_INFO("[records] frame {} group of {} record {}: {} registers differ "
+                "from the first:{}{}", frame, n, i, count, regs,
+                count > 24 ? " ..." : "");
+      }
+    }
   }
   up.recordsCommitted += n;
   bd::gpu::VertexPullCommit(staged, n, first);

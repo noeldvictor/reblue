@@ -595,27 +595,37 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **The "cyan skirt" (2026-09-03 evening, `research/20260903_1900_...md`)**: the
-   17:10 "game streaming" verdict was wrong. A within-run A/B on `bd_host_draw` over a
-   240-frame sequence at the village rock: 38 of 120 frames with the patch on the replay
-   arm, 2 on the interpreter arm (both arm boundaries); the host walk and the list build
-   A/Bs showed it on both arms. The replay verifier (`bd_host_draw_verify`: the replay
-   composes the node, the interpreter draws it, every sub-draw is diffed register by
-   register and slot by slot) then found and fixed the reflection view's eye register
-   (VS/PS c1 zero on replayed render-list entries: the list loop writes the camera block
-   only on a visual's first entry; the pass camera is now recorded per view and applied to
-   every replay) and stale templates after a resolution change (`why_drift`), after which
-   the scene and reflection views compose identically and the patch remains. It needs the
-   replay, the record path and the **instance-record mask** together: `bd_record_mask =
-   false` reads 0 of 60 frames against 21-49 of 60; the mask's producer, the bound window
-   (read back from the ring) and the shader's decode all check out on the CPU, and the
-   cause is open. **The mask is off by default until it is named** (its Quest cost: the
-   whole-record read was 28 ms against 19.5 with every scene draw on records, 2026-09-02).
-   `tools/rdc_pixel_history.py` lists every event that wrote a pixel (a clean frame's
-   ground is an indirect instanced draw; RenderDoc's presence hides the patch);
-   `bd_renderdoc_frames` captures N consecutive frames. Read `tools/capture_cyan.py`
-   against the lower part of the frame and a look at the image: the intro cutscene and a
-   zenith view read as cyan over the whole frame.
+   calls it. **The "cyan skirt" is fixed (2026-09-03, 20:30; `research/20260903_1900_...md`)**:
+   three 120-frame sequences at the village rock read zero patch frames against 15-76 of
+   120 before. The 17:10 "game streaming" verdict was wrong, and so was the hour spent on
+   the instance-record mask (a mask-off run read clean once; the mask is innocent and on).
+   What it was: the host replay of a node is composed correctly (the replay verifier,
+   `bd_host_draw_verify`, diffs every replayed node's composition against the
+   interpreter's draws and now reads clean for the scene and reflection views), but the
+   guest's state machines around the replay were not: the render-list loop keeps its
+   current visual in `r23` and performs the visual switch (end the previous visual, begin
+   this one, its constant block, states and bool constants) only when the entry's visual
+   differs, and a replayed entry jumped past that without updating it, so a later
+   interpreted entry of the visual inherited another visual's state and fogged flat. Four
+   changes, each named by the verifier or by a sequence: **a list entry replays only while
+   `r23` already names its visual** (the hook carries `r23`; every switch is the guest's
+   own), **the pass camera (VS/PS c0-c1) is recorded per render view from the frame's
+   interpreted draws and applied to every replay** (the eye was zero on replayed
+   reflection-view entries: fog and fresnel from the origin), **a stable template register
+   the visual wrote differently this frame invalidates the template** (`why_drift`; a
+   screen-size constant after a resolution change), and **a replay takes the live bool
+   constants** (the pass and visual bits the guest toggles) with the node's foliage bit
+   applied. Two things tried and reverted, with the verifier's numbers: taking VS c2-c4 or
+   the visual's bools from the pass or the visual (they are the node's), and writing the
+   replay's composition back into the guest's device block (a persistent flat patch: the
+   guest inherits bools it believes it set). The host state is restored after a replay,
+   as before, because the interpreter's deferred-state shadow describes the last
+   interpreted node. Instruments left: the verifier; `tools/rdc_pixel_history.py` (every
+   event that wrote a pixel, with the last writer's bindings; RenderDoc's presence hides
+   the patch) and `bd_renderdoc_frames`; the draw ledger's per-draw fingerprints;
+   `bd_record_mask_mode` and the `[records]` group dump. Read `tools/capture_cyan.py`
+   against the lower part of the frame and look at the image: the intro cutscene and the
+   zenith sweep (a uniform sky-blue frame, 49 in a row in one run) read as cyan.
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
@@ -775,8 +785,9 @@ files as that day's result. **Never run two device measurements at once.**
 - **`bd_host_draw_verify`** composes every node the host replay would issue, lets the
   interpreter draw it, and diffs the two per sub-draw (`[verify]` lines, a per-register
   histogram every 300 frames). It named the reflection view's eye register in one run after
-  four A/B runs had only located "the replay". Its limit: it sees the composition, not what
-  the draw queue does with it (instancing groups, record masks, indirect batches).
+  four A/B runs had only located "the replay". Its limit: it sees a replayed node's
+  composition, not the state an *interpreted* node inherits after a replay (the guest's
+  loop register `r23`, the deferred-state shadow), which is where the cyan skirt was.
 - **`tools/rdc_pixel_history.py`** (`RDC_CAPTURE`, `RDC_XY=x,y;x,y`, under qrenderdoc's
   python) lists every event that touched a pixel of the scene target and of the presented
   image, with the last writer's shaders and bound textures. `bd_renderdoc_frames` captures
