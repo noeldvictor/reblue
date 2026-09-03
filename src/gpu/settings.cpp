@@ -761,6 +761,14 @@ REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
                     "Alias a fresh full-screen surface to the chain head's "
                     "texture instead of seeding it with a copy.");
+// Desktop instrument for the materials stage: a pipeline-statistics query
+// around every queued draw, folded per pixel shader at readback and printed
+// every 300 frames as "[frag] ... the top ten". Which shaders produce the
+// fragments the Quest's counters say the scene pass is bound by
+// (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_frag_census, false, kCvarGroup,
+                    "Count fragment shader invocations per guest pixel shader "
+                    "(Vulkan pipeline statistics, desktop).");
 // Clears the layered scene target magenta inside its own render pass. With
 // bd_mv_capture_array it answers whether anything at all reaches a viewMask=3
 // attachment. Destroys the scene; a diagnostic only.

@@ -11,6 +11,7 @@ set(reblue_backend_only
     gpu/draw_queue.cpp
     gpu/dred.cpp
     gpu/foveation.cpp
+    gpu/frag_census.cpp
     gpu/frame_ring.cpp
     gpu/gpu_profiling.cpp
     gpu/gpu_timing.cpp

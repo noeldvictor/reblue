@@ -6,6 +6,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/draw_queue.h"
+#include "gpu/frag_census.h"
 
 #include <algorithm>
 #include <cstring>
@@ -142,12 +143,17 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
 
   st.any = true;
 
+  // Fragment census: every draw's fragment shader invocations, folded per
+  // pixel shader at readback (bd_frag_census).
+  const bool counted = FragCensusBegin(cmd, d.ps_hash);
   if (d.indexed)
     cmd->drawIndexedInstanced(d.count, instance_count, d.start_index,
                               d.base_vertex, first_instance);
   else
     cmd->drawInstanced(d.count, instance_count, d.start_vertex,
                        first_instance);
+  if (counted)
+    FragCensusEnd(cmd);
 }
 
 // Everything two draws must share to be one instanced draw. The vertex

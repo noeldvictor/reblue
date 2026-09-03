@@ -42,6 +42,7 @@
 #include "gpu/constant_buffers.h"
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
+#include "gpu/frag_census.h"
 #include "gpu/output.h"
 #include "gpu/screenshot.h"
 #include "gpu/settings.h"
@@ -1453,6 +1454,7 @@ void Video::Present(GuestTexture *frontBuffer) {
     // Its GPU work is complete, which is what "not submitted" means here.
     s.command_list_submitted[cur] = false;
     CollectGPUTimings(cur);
+    FragCensusCollect(cur);
   } else {
     s.command_list_submitted[cur] = true;
   }

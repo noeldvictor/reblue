@@ -33,6 +33,9 @@ namespace bd::gpu {
 // flushes when that pass ends, which is where the barriers already are.
 struct QueuedDraw {
   plume::RenderPipeline *pipeline = nullptr;
+  // The guest pixel shader's hash, for the fragment census (frag_census.h):
+  // which shaders produce the fragments of the scene pass.
+  u64 ps_hash = 0;
 
   // Base offsets for the vertex, pixel and shared guest constant blocks. These
   // are the whole per-draw material: transform, material parameters, and the

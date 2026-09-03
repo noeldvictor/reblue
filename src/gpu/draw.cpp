@@ -560,6 +560,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // overwrites its own views between draws and a queued draw is replayed
     // long after that.
     s.pending.pipeline = s.current_pso;
+    s.pending.ps_hash = (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
+                            ? s.pixel_shader->shaderCacheEntry->hash
+                            : 0ull;
     s.pending.prepass_pipeline = s.current_prepass_pso;
     s.pending.color_pipeline = s.current_color_pso;
     s.pending.instanced_pipeline =
