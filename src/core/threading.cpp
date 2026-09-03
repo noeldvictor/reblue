@@ -156,11 +156,16 @@ void ApplyThreadPolicy() {
     if (!name[0])
       continue;
 
-    // The guest's threads are the ones the SDK names "<name> (HHHHHHHH)", plus
-    // SDL's, which is where the guest main loop runs.
-    const bool is_guest_main = std::strncmp(name, "SDLThread", 9) == 0;
+    // The guest's threads are the ones the SDK names "<name> (HHHHHHHH)".
+    // The frame is the guest's own "Draw Thread": the sampling profile of
+    // 2026-09-02 puts the scene walk, the node draws, the constant uploads and
+    // Present on it. "SDLThread" is SDL's event pump (and two idle SDL
+    // threads), not guest code - it spun on a big core for a week under the
+    // belief that it was the guest main loop.
+    const bool is_guest_main = std::strncmp(name, "Draw Thread", 11) == 0;
     const bool is_guest_worker = std::strncmp(name, "Main Thread", 11) == 0 ||
-                                 std::strncmp(name, "XThread", 7) == 0;
+                                 std::strncmp(name, "XThread", 7) == 0 ||
+                                 std::strncmp(name, "SDLThread", 9) == 0;
     if (!is_guest_main && !is_guest_worker)
       continue;
 
