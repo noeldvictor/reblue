@@ -16,9 +16,11 @@
 #include <rex/cvar.h>
 
 #include "core/logging.h"
+#include "core/memory_helpers.h"
 #include "gpu/device.h"
 #include "gpu/frame_stats.h"
 #include "gpu/resources.h"
+#include "gpu/scene/guest_scene.h"
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(bool, bd_shadow_fit);
@@ -192,10 +194,34 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
                     frame > 1800 && frame != st.diag_frame;
 
   if (pass == Pass::Scene) {
-    const Mat4 vp = ReadRegs(regs, 32);
-    st.camera_vp = vp;
-    st.camera_valid = true;
-    st.camera_frame = frame;
+    // The camera: the guest's own camera view (render view 1) only. The 2D
+    // and post passes draw into the same target under an orthographic
+    // matrix, and taking theirs projected the occlusion proxies off-screen
+    // and culled the scene (2026-09-03).
+    const u32 view_now = bd::mem::try_load<u32>(scene::kRenderViewIdVa);
+    {
+      static u32 told = 0;
+      if (told < 12 && frame > 800 && s.render_target->width < 1900) {
+        ++told;
+        BD_INFO("[shadow-fit] scene block: view {} frame {} rt {}x{} row3 "
+                "({:.3f} {:.3f} {:.3f} {:.3f})",
+                view_now, frame, s.render_target ? s.render_target->width : 0u,
+                s.render_target ? s.render_target->height : 0u, regs[32 * 4 + 12],
+                regs[32 * 4 + 13], regs[32 * 4 + 14], regs[32 * 4 + 15]);
+      }
+    }
+    // The camera is the perspective block: the 2D and post passes draw into
+    // the same target under an orthographic matrix (row 3 = 0 0 0 1).
+    const bool perspective = regs[32 * 4 + 12] != 0.0f ||
+                             regs[32 * 4 + 13] != 0.0f ||
+                             regs[32 * 4 + 14] != 0.0f;
+    (void)view_now;
+    if (perspective) {
+      const Mat4 vp = ReadRegs(regs, 32);
+      st.camera_vp = vp;
+      st.camera_valid = true;
+      st.camera_frame = frame;
+    }
     if (st.fix_valid && st.fix_frame == frame && REXCVAR_GET(bd_shadow_fit))
       WriteRegs(regs, 36, Mul(st.clip_fix, ReadRegs(regs, 36)));
     return;
@@ -277,5 +303,14 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
 }
 
 f64 ShadowFitZoom() { return state_().zoom; }
+
+bool ShadowFitCamera(float out[16], u32 &frame) {
+  auto &st = state_();
+  if (!st.camera_valid)
+    return false;
+  std::memcpy(out, st.camera_vp.m, sizeof(st.camera_vp.m));
+  frame = st.camera_frame;
+  return true;
+}
 
 } // namespace bd::gpu

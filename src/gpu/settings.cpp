@@ -915,6 +915,14 @@ REXCVAR_DEFINE_BOOL(bd_stereo_test, false, kCvarGroup,
 // the guest's light box recentred and zoomed onto the camera frustum's near
 // part, in the light's own clip space, so the map's texels land where the
 // camera looks. Stage 5's first piece (2026-09-03).
+// Host occlusion culling (gpu/occlusion_cull.h): a view-space cube proxy per
+// node under an occlusion query at the end of the scene pass; a node whose
+// proxy passed no sample two frames running is not drawn. Stage 8's second
+// half, desktop first (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_occlusion_cull, false, kCvarGroup,
+                    "Occlusion-cull scene nodes by last frame's proxy queries.");
+REXCVAR_DEFINE_BOOL(bd_occlusion_diag, true, kCvarGroup,
+                    "Log the occlusion culling counters every 300 frames.");
 REXCVAR_DEFINE_BOOL(bd_shadow_fit, true, kCvarGroup,
                     "Fit the sun shadow frustum to the camera's view.");
 REXCVAR_DEFINE_DOUBLE(bd_shadow_fit_distance, 500.0, kCvarGroup,

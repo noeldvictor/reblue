@@ -28,6 +28,7 @@
 #include "gpu/gpu_timing.h"
 #include "gpu/occlusion.h"
 #include "gpu/frag_census.h"
+#include "gpu/occlusion_cull.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
@@ -93,6 +94,7 @@ void BeginCommandList(VideoState &s) {
       zero_offsets, 3);
   FrameBegin(s.device.get(), s.command_list, cur);
   FragCensusFrameBegin(s.device.get(), s.command_list, cur);
+  OcclusionCullFrameBegin(s.device.get(), s.command_list, cur);
   s.command_list_open = true;
 
   // Freshly opened list, no render pass active, and command_list_open already
@@ -268,6 +270,7 @@ void AdvanceAndWaitReused(VideoState &s) {
     s.command_list_submitted[slot] = false;
     CollectGPUTimings(slot);
     FragCensusCollect(slot);
+    OcclusionCullCollect(slot);
 #if defined(REXGLUE_ENABLE_PROFILING) && defined(REBLUE_D3D12)
     if (auto *ctx = GpuProfilerCtx()) {
       TracyD3D12NewFrame(ctx);

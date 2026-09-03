@@ -1195,6 +1195,14 @@ bool HostDrawReplay(const NodeTag &tag) {
             s.textures[k] = v->tex[k];
           else
             ++st.surface_inherited;
+        } else if (d.textures[k] &&
+                   d.textures[k]->type == ResourceType::Texture &&
+                   d.textures[k]->selfVa == d.tex_va[k]) {
+          // A slot the node did not set: the guest inherits it from whatever
+          // drew before, in its own order. The host draws in another order
+          // and skips nodes, so the replay binds what the capture saw there
+          // (the terrain skirt's texture at the village rock, 2026-09-03).
+          s.textures[k] = d.textures[k];
         }
       }
       std::memcpy(s.vertex_views, d.vertex_views, sizeof(s.vertex_views));

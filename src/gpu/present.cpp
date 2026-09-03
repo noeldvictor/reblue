@@ -43,6 +43,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 #include "gpu/frag_census.h"
+#include "gpu/occlusion_cull.h"
 #include "gpu/output.h"
 #include "gpu/screenshot.h"
 #include "gpu/settings.h"
@@ -1466,6 +1467,7 @@ void Video::Present(GuestTexture *frontBuffer) {
     s.command_list_submitted[cur] = false;
     CollectGPUTimings(cur);
     FragCensusCollect(cur);
+    OcclusionCullCollect(cur);
   } else {
     s.command_list_submitted[cur] = true;
   }

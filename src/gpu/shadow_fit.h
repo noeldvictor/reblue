@@ -30,4 +30,8 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s);
 // kernel's world-space scale.
 f64 ShadowFitZoom();
 
+// The scene pass's projection (its c32-35, row-major as the registers lie,
+// clip = P * v) and the frame it was seen in; false before any.
+bool ShadowFitCamera(float out[16], u32 &frame);
+
 } // namespace bd::gpu

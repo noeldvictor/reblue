@@ -41,6 +41,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
 #include "gpu/vertex_pull.h"
+#include "gpu/occlusion_cull.h"
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/frame.h"
 #include "gpu/post_chain.h"
@@ -619,6 +620,27 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
               static_cast<const void *>(q.vertex_views[0].buffer.ref),
               q.vertex_views[0].buffer.offset, tex,
               bd::gpu::Video::AlphaThreshold(), q.blended ? 1 : 0, q.depth);
+    }
+    // Occlusion culling (gpu/occlusion_cull.h): a scene node whose proxy
+    // passed no sample two frames running is dropped here, after every
+    // state effect of its dispatch has happened.
+    {
+      const auto &tag = bd::gpu::scene::CurrentNodeTag();
+      // Depth-tested draws only: an occluded one contributes nothing; a
+      // draw with the depth test off is an overlay and keeps its place.
+      const bool depth_tested =
+          s.pipelineState.zEnable &&
+          (s.pipelineState.zFunc == plume::RenderComparisonFunction::LESS ||
+           s.pipelineState.zFunc == plume::RenderComparisonFunction::LESS_EQUAL);
+      if (tag.valid && tag.render_view == 3 && depth_tested) {
+        const u64 key = (u64(tag.matrix_va) << 32) | u64(tag.mesh_va);
+        static u32 told = 0;
+        if (told++ < 3)
+          BD_INFO("[occ] dispatch key {:016X} (matrix {:08X} mesh {:08X} list {})",
+                  key, tag.matrix_va, tag.mesh_va, tag.from_list ? 1 : 0);
+        if (bd::gpu::OcclusionCullOccluded(key))
+          return;
+      }
     }
     bd::gpu::DrawQueuePush(q);
   };

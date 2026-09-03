@@ -49,6 +49,7 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/frame_stats.h"
+#include "gpu/occlusion_cull.h"
 #include "gpu/device.h"
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
@@ -56,6 +57,7 @@
 REXCVAR_DECLARE(bool, bd_host_walk);
 REXCVAR_DECLARE(bool, bd_host_cull);
 REXCVAR_DECLARE(bool, bd_host_cull_diag);
+REXCVAR_DECLARE(bool, bd_occlusion_cull);
 namespace {
 u32 g_cull_walks = 0, g_cull_host_walks = 0, g_cull_tested = 0,
     g_cull_disagreed = 0;
@@ -126,6 +128,12 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   const u32 plane_table_va = u32(u32(-32033) << 16) + u32(-30608);
   bool host_cull = REXCVAR_GET(bd_host_cull) &&
                    bd::mem::try_load<u32>(cull_switch_va) == 0;
+  // Occlusion culling applies to the camera's drawing pass, render view 3
+  // (the scene draws fetch their constants under it; view 1 is the
+  // collecting walk): the proxies are queried against that pass's depth
+  // (gpu/occlusion_cull.h).
+  const bool occlusion = REXCVAR_GET(bd_occlusion_cull) &&
+                         bd::mem::try_load<u32>(kRenderViewIdVa) == 3;
   float planes[6][4];
   if (host_cull) {
     const u32 view = bd::mem::try_load<u32>(kRenderViewIdVa);
@@ -255,6 +263,26 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
               sub_82287788(ctx, base);
               bdSceneCullDistanceHook(ctx.r3);
               visible = ctx.r3.s32 != 0;
+            }
+          }
+          if (visible && occlusion) {
+            // A sphere that holds the camera (the terrain, the sky dome)
+            // has its proxy clipped by the near plane and would read as
+            // occluded; it is never tested. The centre is camera-relative.
+            const f64 d2 = f64(out[0]) * out[0] + f64(out[1]) * out[1] +
+                           f64(out[2]) * out[2];
+            const f64 r_near = f64(radius) * 1.3 + 8.0;
+            // The draw is still dispatched: the node's texture and constant
+            // bindings must happen for the nodes after it, which inherit
+            // them; the queue drops an occluded node's draw instead
+            // (hooks/draw.cpp), keyed as the dispatch tag sees it.
+            if (d2 > r_near * r_near) {
+              static u32 told = 0;
+              if (told++ < 3)
+                BD_INFO("[occ] walk key {:016X} (matrix {:08X} mesh {:08X})",
+                        (u64(matrix) << 32) | u64(mesh), matrix, mesh);
+              bd::gpu::OcclusionCullNote((u64(matrix) << 32) | u64(mesh), out,
+                                         radius);
             }
           }
           if (visible) {
