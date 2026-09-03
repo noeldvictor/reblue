@@ -48,9 +48,13 @@
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "gpu/device.h"
+#include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
 
 REXCVAR_DECLARE(bool, bd_host_walk);
+REXCVAR_DECLARE(bool, bd_reflections);
+REXCVAR_DECLARE(bool, bd_walk_skip_stubs);
 
 REX_EXTERN(__imp__bdSceneNodeCullTraverse);
 REX_EXTERN(bdSceneNodeDrawSingle);
@@ -194,5 +198,34 @@ REX_HOOK_RAW(bdSceneNodeCullTraverse) {
   }
   if (g_walks++ == 0)
     BD_INFO("[walk] host scene walk is live");
+  // Which render view draws into which target, once per view id: the pass
+  // gates below need the ids, and the ids are the guest's.
+  {
+    static u32 seen_views = 0;
+    const u32 view = bd::mem::try_load<u32>(kRenderViewIdVa);
+    if (view < 32 && !((seen_views >> view) & 1u)) {
+      seen_views |= 1u << view;
+      const auto &s = bd::gpu::state();
+      const bd::gpu::GuestTexture *rt = s.render_target;
+      const bd::gpu::GuestTexture *ds = s.depth_stencil;
+      BD_INFO("[walk] render view {} draws into {}x{} (guest 0x{:08X}), depth "
+              "{}x{}, clear flags 0x{:X} depth {:.3f} stencil {} pending {}",
+              view, rt ? rt->width : 0, rt ? rt->height : 0,
+              rt ? rt->selfVa : 0, ds ? ds->width : 0, ds ? ds->height : 0,
+              s.clear_flags, s.clear_depth, s.clear_stencil,
+              s.clear_pending ? 1 : 0);
+    }
+  }
+  // The reflection stub. With reflections off the guest still re-renders the
+  // scene into a 128x72 map (50 draws, 1.3 ms of Quest GPU with its
+  // preemption, 2026-09-02); render view 0 is that pass (view 1 the shadow
+  // map, view 3 the scene, logged above). Skipping its walk leaves the
+  // guest's own clear in the map; the frame is pixel-identical on the
+  // desktop. The shadow stub is not skipped: an empty shadow map shadows the
+  // whole scene, and with shadows off the 64x64 map is blocky stripes anyway
+  // - the shadow pass is host work (stage 5), not a gate.
+  const u32 view = bd::mem::try_load<u32>(kRenderViewIdVa);
+  if (view == 0 && REXCVAR_GET(bd_walk_skip_stubs) && !REXCVAR_GET(bd_reflections))
+    return;
   Walk(ctx, base, ctx.r3.u32, ctx.r4.u32);
 }
