@@ -47,6 +47,8 @@
 
 #include <fmt/format.h>
 #include <rex/cvar.h>
+#include <rex/hook.h>
+#include <rex/ppc/context.h>
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
@@ -62,6 +64,7 @@
 
 REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
+REXCVAR_DECLARE(bool, bd_host_list_build);
 
 namespace bd::gpu::scene {
 
@@ -160,6 +163,16 @@ struct Store {
   // The render-list share of the above, per frame and accumulated.
   u32 list_replayed = 0, list_interpreted = 0;
   u32 acc_list_replayed = 0, acc_list_interpreted = 0;
+  // Render-list entries built by the host instead of the interpreter.
+  struct ListTemplate {
+    std::vector<std::vector<u8>> entries; // the guest's bytes, per entry
+    u32 captured_frame = 0;
+    u32 replays = 0;
+  };
+  std::unordered_map<u64, ListTemplate> lists;
+  u32 list_built = 0, list_built_runs = 0; // entries, runs this frame
+  u32 acc_list_built = 0, acc_list_built_runs = 0;
+  u32 matrix_agree = 0, matrix_disagree = 0;
 };
 
 Store &store() {
@@ -490,6 +503,9 @@ void Tally(Store &st, bool replayed, bool from_list) {
     st.acc_list_replayed += st.list_replayed;
     st.acc_list_interpreted += st.list_interpreted;
     st.list_replayed = st.list_interpreted = 0;
+    st.acc_list_built += st.list_built;
+    st.acc_list_built_runs += st.list_built_runs;
+    st.list_built = st.list_built_runs = 0;
     ++st.acc_frames;
     st.replayed = st.interpreted = st.stale_bail = 0;
     st.why_none = st.why_refresh = st.why_volatile = st.why_never = 0;
@@ -507,13 +523,19 @@ void Tally(Store &st, bool replayed, bool from_list) {
           ++mixed;
       }
       BD_INFO("[node] keys: {} always empty, {} mixed of {}; {} untagged draws "
-              "a frame; render list: {} of {} entries host-issued",
+              "a frame; render list: {} of {} entries host-issued, {} entries "
+              "in {} runs host-built ({} list templates; matrix check {} ok, "
+              "{} off)",
               always_empty, mixed, st.runs.size(),
               st.acc_untagged / st.acc_frames,
               st.acc_list_replayed / st.acc_frames,
-              (st.acc_list_replayed + st.acc_list_interpreted) / st.acc_frames);
+              (st.acc_list_replayed + st.acc_list_interpreted) / st.acc_frames,
+              st.acc_list_built / st.acc_frames,
+              st.acc_list_built_runs / st.acc_frames, st.lists.size(),
+              st.matrix_agree, st.matrix_disagree);
       st.acc_untagged = 0;
       st.acc_list_replayed = st.acc_list_interpreted = 0;
+      st.acc_list_built = st.acc_list_built_runs = 0;
       BD_INFO("[node] host-issued {} of {} node draws a frame (refused: {} fresh "
               "values, {} no template, {} refresh, {} volatile, {} never); {} "
               "templates, {} volatile (why:{})",
@@ -548,6 +570,8 @@ bool PipelineReadsBones(const PipelineState &st) {
 }
 
 bool HostDrawReplaying() { return t_replaying; }
+
+bool HostDrawHasDraws() { return t_pending.valid && !t_pending.draws.empty(); }
 
 void NoteTextureSet(u32 index) {
   auto &p = t_pending;
@@ -815,6 +839,105 @@ void HostDrawCommit(const NodeTag &tag) {
   t.bone_slots = std::move(bone_slots);
   p.draws.clear();
   p.valid = false;
+}
+
+// The guest's render list (reblue_recomp.84.cpp, sub_8227F360 / sub_8227DB50):
+// +4 bump cursor, +8 pool base, +12 entry pointer array, +16 array cursor,
+// +20 count. An entry is (204 + bones) * 4 bytes, the bone count an s8 at
+// +289 and its table at +800.
+constexpr u32 kRenderListVa = 0x82DBA8F8u; // lis -32036, addi -22280
+constexpr u32 kEntryMatrix = 16;
+constexpr u32 kEntryPalette = 268;
+constexpr u32 kEntryBoneCount = 289;
+
+u32 RenderListCount() { return bd::mem::try_load<u32>(kRenderListVa + 20); }
+
+u32 EntrySize(u32 entry) {
+  const i32 bones = static_cast<i8>(bd::mem::try_load<u8>(entry + kEntryBoneCount));
+  return (204u + u32(std::max(0, bones))) * 4u;
+}
+
+void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
+  if (!tag.valid || !REXCVAR_GET(bd_host_list_build))
+    return;
+  const u32 count_after = RenderListCount();
+  if (count_after <= count_before || count_after - count_before > 64)
+    return;
+  const u32 array = bd::mem::try_load<u32>(kRenderListVa + 12);
+  if (!array)
+    return;
+  Store::ListTemplate lt;
+  lt.captured_frame = FrameStatFrameCount();
+  for (u32 i = count_before; i < count_after; ++i) {
+    const u32 entry = bd::mem::try_load<u32>(array + i * 4);
+    const u32 size = entry ? EntrySize(entry) : 0;
+    const u8 *bytes = entry ? bd::mem::try_at<u8>(entry) : nullptr;
+    if (!bytes || size < 816)
+      return;
+    lt.entries.emplace_back(bytes, bytes + size);
+  }
+  auto &st = store();
+  std::lock_guard lock(st.mutex);
+  // The matrix at +16 is the node's r5 matrix as handed to DrawSingle; the
+  // replay copies it from tag.matrix_va, so check that here.
+  {
+    const u8 *m = bd::mem::try_at<u8>(tag.matrix_va);
+    if (m && std::memcmp(m, lt.entries[0].data() + kEntryMatrix, 64) == 0)
+      ++st.matrix_agree;
+    else
+      ++st.matrix_disagree;
+  }
+  st.lists[KeyOf(tag)] = std::move(lt);
+}
+
+REX_EXTERN(sub_8227DB50);
+
+bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
+  if (!tag.valid || !REXCVAR_GET(bd_host_list_build) || tag.from_list)
+    return false;
+  auto &st = store();
+  std::vector<std::vector<u8>> const *entries = nullptr;
+  {
+    std::lock_guard lock(st.mutex);
+    auto it = st.lists.find(KeyOf(tag));
+    if (it == st.lists.end())
+      return false;
+    const u32 refresh =
+        static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
+    if (FrameStatFrameCount() - it->second.captured_frame >= refresh)
+      return false; // the interpreter runs once and re-records
+    // Only a run that agreed on the matrix source is replayed.
+    if (st.matrix_disagree > st.matrix_agree)
+      return false;
+    entries = &it->second.entries;
+    ++it->second.replays;
+  }
+  const u8 *matrix = bd::mem::try_at<u8>(tag.matrix_va);
+  if (!matrix)
+    return false;
+  const u32 r3 = ctx.r3.u32, r4 = ctx.r4.u32, r5 = ctx.r5.u32, r6 = ctx.r6.u32;
+  u32 built = 0;
+  for (const auto &image : *entries) {
+    ctx.r3.u64 = image.size();
+    sub_8227DB50(ctx, base); // the guest's own bump allocator
+    const u32 entry = ctx.r3.u32;
+    u8 *dst = entry ? bd::mem::try_at<u8>(entry) : nullptr;
+    if (!dst)
+      break; // the list is full; the entries already placed still draw
+    std::memcpy(dst, image.data(), image.size());
+    std::memcpy(dst + kEntryMatrix, matrix, 64);
+    const u32 palette_be = __builtin_bswap32(tag.palette_va);
+    std::memcpy(dst + kEntryPalette, &palette_be, 4);
+    ++built;
+  }
+  ctx.r3.u32 = r3; ctx.r4.u32 = r4; ctx.r5.u32 = r5; ctx.r6.u32 = r6;
+  {
+    std::lock_guard lock(st.mutex);
+    Tally(st, true, false);
+    st.list_built += built;
+    ++st.list_built_runs;
+  }
+  return true;
 }
 
 bool HostDrawWantsCapture(const NodeTag &tag) {

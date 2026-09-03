@@ -152,13 +152,19 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     SetCurrentNodeTag(tag);
     // The host issues this node's draw itself when it has a template for it;
     // the interpreter runs otherwise, and what it writes becomes the template.
-    if (!HostDrawReplay(tag)) {
+    if (!HostDrawReplay(tag) && !HostListBuildReplay(tag, ctx, base)) {
       const bool capture = HostDrawEnabled() && HostDrawWantsCapture(tag);
+      const u32 list_before = RenderListCount();
       if (capture)
         HostDrawSnapshotBefore();
       __imp__bdSceneNodeDrawSingle(ctx, base);
+      // A run that issued draws is a draw template; one that only grew the
+      // render list is a list template.
+      const bool drew = capture && HostDrawHasDraws();
       if (capture)
         HostDrawCommit(tag);
+      if (!drew)
+        HostListBuildCapture(tag, list_before);
     }
     ClearCurrentNodeTag();
     return;

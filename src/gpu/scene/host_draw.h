@@ -20,6 +20,8 @@ struct VideoState;
 struct QueuedDraw;
 } // namespace bd::gpu
 
+struct PPCContext;
+
 namespace bd::gpu {
 struct PipelineState;
 } // namespace bd::gpu
@@ -60,6 +62,8 @@ void NoteSamplerSet(u32 slot);
 // After the interpreter returned for the node: the draws it issued since the
 // snapshot become (or refresh, or invalidate) the node's template.
 void HostDrawCommit(const NodeTag &tag);
+// Whether the run since HostDrawSnapshotBefore issued any draw.
+bool HostDrawHasDraws();
 
 // From the draw hook, once the queued draw is complete, under the video
 // state's mutex: remembers what the interpreter produced for the tagged node
@@ -72,6 +76,19 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
 // not run. False when there is no usable template - the interpreter runs,
 // and its draw refreshes the template.
 bool HostDrawReplay(const NodeTag &tag);
+
+// The guest's deferred render list, built without the interpreter.
+//
+// A sorted or translucent node's bdSceneNodeDrawSingle run issues no draw:
+// it allocates one entry per sub-draw from the global render list
+// (sub_8227DB50) and fills it - a per-node constant image (the mesh record,
+// draw parameters, pass flags, bone table) plus the node matrix (r5, at +16)
+// and the traverse context's palette pointer (+268). The host records the
+// entries such a run produced and re-emits them next time: the guest's own
+// allocator, the recorded bytes, a fresh matrix and palette.
+u32 RenderListCount();
+void HostListBuildCapture(const NodeTag &tag, u32 count_before);
+bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base);
 
 // Whether a pipeline state's vertex shader reads the bone palette
 // (c60..c155): the draw is a skinned node - a character.
