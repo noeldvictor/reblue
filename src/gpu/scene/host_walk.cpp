@@ -72,6 +72,8 @@ REX_EXTERN(sub_82287788);
 // walk calls them.
 bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3);
 void bdSceneCullDistanceHook(PPCRegister &r3);
+bool bdSceneCullBiasHost(f64 &radius, const float c[3]);
+bool bdSceneCullDistanceHost(bool visible);
 
 namespace {
 
@@ -203,26 +205,30 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
           float out[3];
           for (u32 k = 0; k < 3; ++k)
             out[k] = m[12 + k] + c[0] * m[k] + c[1] * m[4 + k] + c[2] * m[8 + k];
-          for (u32 k = 0; k < 3; ++k)
-            StoreF32(centre_va + k * 4, out[k]);
           const float radius = radius_scale * LoadF32(mesh + offsetof(GuestMesh, radius));
-
-          ctx.f1.f64 = double(radius);
-          ctx.r3.u64 = centre_va;
           bool visible = false;
-          if (!bdSceneCullBiasHook(ctx.f1, ctx.r3)) {
-            if (host_cull) {
+          if (host_cull) {
+            // Host floats end to end: the centre never goes through guest
+            // scratch, and the census hooks take it as floats. The bias
+            // hook may scale the radius (bd_cull_bias), so the plane test
+            // uses the scaled one, as the guest test would have.
+            f64 r = double(radius);
+            if (!bdSceneCullBiasHost(r, out)) {
               bool outside = false;
               float dist[6];
               for (u32 i = 0; i < 6; ++i) {
                 dist[i] = out[0] * planes[i][0] + out[1] * planes[i][1] +
                           out[2] * planes[i][2] + planes[i][3];
-                outside = outside || dist[i] > radius;
+                outside = outside || f64(dist[i]) > r;
               }
+              ++g_cull_tested;
               // Diagnostic: the guest's verdict beside the host's, the
               // disagreements logged with the numbers (2026-09-03).
-              ++g_cull_tested;
               if (REXCVAR_GET(bd_host_cull_diag)) {
+                for (u32 k = 0; k < 3; ++k)
+                  StoreF32(centre_va + k * 4, out[k]);
+                ctx.f1.f64 = r;
+                ctx.r3.u64 = centre_va;
                 sub_82287788(ctx, base);
                 const bool guest_visible = ctx.r3.s32 != 0;
                 if (guest_visible == outside) {
@@ -234,16 +240,22 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
                             "{:.3f} {:.3f} {:.3f}] mesh {:08X}",
                             bd::mem::try_load<u32>(kRenderViewIdVa),
                             guest_visible ? 1 : 0, outside ? 0 : 1, out[0],
-                            out[1], out[2], radius, dist[0], dist[1], dist[2],
+                            out[1], out[2], r, dist[0], dist[1], dist[2],
                             dist[3], dist[4], dist[5], mesh);
                 }
               }
-              ctx.r3.s64 = outside ? 0 : 1;
-            } else {
-              sub_82287788(ctx, base);
+              visible = bdSceneCullDistanceHost(!outside);
             }
-            bdSceneCullDistanceHook(ctx.r3);
-            visible = ctx.r3.s32 != 0;
+          } else {
+            for (u32 k = 0; k < 3; ++k)
+              StoreF32(centre_va + k * 4, out[k]);
+            ctx.f1.f64 = double(radius);
+            ctx.r3.u64 = centre_va;
+            if (!bdSceneCullBiasHook(ctx.f1, ctx.r3)) {
+              sub_82287788(ctx, base);
+              bdSceneCullDistanceHook(ctx.r3);
+              visible = ctx.r3.s32 != 0;
+            }
           }
           if (visible) {
             if (bd::mem::try_load<u32>(kRenderViewIdVa) == 1) {

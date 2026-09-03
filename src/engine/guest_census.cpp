@@ -191,10 +191,14 @@ thread_local bool g_cull_this_node = false;
 // branches to loc_822825E0 from two earlier tests in the same traversal, before
 // it ever reaches the call, and nothing after that label reads the call's
 // result.
-bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
+// The core over host floats: the host walk's own cull path calls this with
+// the centre it computed (2026-09-03), so no node round-trips through guest
+// scratch. The register form below reads the centre the guest's traversal
+// wrote and calls this.
+bool bdSceneCullBiasHost(f64 &radius, const float c[3]) {
   const f64 bias = REXCVAR_GET(bd_cull_bias);
   if (bias != 1.0)
-    f1.f64 *= bias;
+    radius *= bias;
 
   // r3 is the transformed centre the visibility test reads - sub_82287788 opens
   // with `mr r10,r3` and the VMX chain just above writes three floats through
@@ -207,21 +211,10 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // only place the result can be overridden.
   g_cull_this_node = false;
   const f64 limit = REXCVAR_GET(bd_cull_distance);
-  const u32 va = r3.u32;
-  if (va == 0)
-    return false;
   // One translation for the block instead of one per component - this runs for
   // every node in the scene, and try_translate showed up in the profile under
   // it. Both ends are validated, so a centre straddling the end of a mapping is
   // still rejected rather than read past.
-  const auto *centre = bd::mem::try_at<const rex::be<u32>>(va);
-  if (!centre || !bd::mem::try_at<const rex::be<u32>>(va + 8))
-    return false;
-  float c[3];
-  for (int i = 0; i < 3; ++i) {
-    const u32 bits = static_cast<u32>(centre[i]);
-    std::memcpy(&c[i], &bits, sizeof(float));
-  }
   const f64 len_sq = f64(c[0]) * c[0] + f64(c[1]) * c[1] + f64(c[2]) * c[2];
 
   // Publish it whether or not distance culling is on. This is the node the
@@ -240,7 +233,7 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
   // (len - radius) > limit, without the square root: for a non-negative
   // threshold the comparison squares exactly, and a negative one means the
   // radius alone already reaches past the limit so nothing can be culled.
-  const f64 threshold = limit + f1.f64;
+  const f64 threshold = limit + radius;
   g_cull_this_node = threshold >= 0.0 && len_sq > threshold * threshold;
   if (g_cull_this_node) {
     g_culled_count.fetch_add(1, std::memory_order_relaxed);
@@ -278,7 +271,7 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
                         // Not in VR: Blue Dragon's own vertical half angle.
                         : 0.4142f;
   const f64 height = f64(bd::gpu::kDesignCanvasHeight);
-  const f64 radius_px = (f1.f64 / z) * (height * 0.5) / tan_v;
+  const f64 radius_px = (radius / z) * (height * 0.5) / tan_v;
   if (radius_px < min_px) {
     g_cull_this_node = true;
     g_detail_culled.fetch_add(1, std::memory_order_relaxed);
@@ -292,6 +285,45 @@ bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
 // Zeroes the visibility result the guest is about to compare against 0, which
 // sends it down its own "not visible" path and skips the draw. Nothing is
 // redirected and no return address is needed.
+bool bdSceneCullBiasHook(PPCRegister &f1, PPCRegister &r3) {
+  const u32 va = r3.u32;
+  if (va == 0) {
+    const f64 bias = REXCVAR_GET(bd_cull_bias);
+    if (bias != 1.0)
+      f1.f64 *= bias;
+    g_cull_this_node = false;
+    return false;
+  }
+  // One translation for the block instead of one per component - this runs for
+  // every node in the scene, and try_translate showed up in the profile under
+  // it. Both ends are validated, so a centre straddling the end of a mapping is
+  // still rejected rather than read past.
+  const auto *centre = bd::mem::try_at<const rex::be<u32>>(va);
+  if (!centre || !bd::mem::try_at<const rex::be<u32>>(va + 8)) {
+    g_cull_this_node = false;
+    return false;
+  }
+  float c[3];
+  for (int i = 0; i < 3; ++i) {
+    const u32 bits = static_cast<u32>(centre[i]);
+    std::memcpy(&c[i], &bits, sizeof(float));
+  }
+  f64 radius = f1.f64;
+  const bool culled = bdSceneCullBiasHost(radius, c);
+  f1.f64 = radius;
+  return culled;
+}
+
+// The host walk's form of the hook below: the decision as a bool.
+bool bdSceneCullDistanceHost(bool visible) {
+  if (g_cull_this_node) {
+    visible = false;
+    g_culled_count.fetch_add(1, std::memory_order_relaxed);
+  }
+  g_tested_count.fetch_add(1, std::memory_order_relaxed);
+  return visible;
+}
+
 void bdSceneCullDistanceHook(PPCRegister &r3) {
   // Only survivors reach here now - a culled node jumped past the call from the
   // hook before it - so this is belt and braces plus the survivor count.
