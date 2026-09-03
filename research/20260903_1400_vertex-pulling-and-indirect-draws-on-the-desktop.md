@@ -131,3 +131,15 @@ this frame interprets instead, and a template's ordinary texture pointer is chec
 the content hash it had at capture (a reused GuestTexture object keeps its pointer). The
 stress: templates refreshed every 600 frames, 300 captured frames, zero frames with 2-60%
 of the artefact colour; the readings near 2% are sky slivers.
+
+## Addendum (16:40): the skirt's real cause
+
+The patch came back in one run in three after the two guards. Its shape hugs the rock's
+base on every side - a terrain skirt mesh, not a shadow - and its colour is flat, which is a
+wrong texture with no albedo detail. The classification was the fault: `contentHash` is 1 for
+a mirrored texture and 0 for everything else, a marker, so "surface slot = contentHash 0"
+filed the skirt's non-mirrored texture as a render-target slot and inherited it from whatever
+the previous host-ordered draw had bound, which in a different order than the interpreter's
+is the water map. Surfaces are told by resource type now, and the hash guard compared ones;
+it compares the guest address instead. Commit `bee9e5d`; four 240-frame sequences of the
+failing configuration (the shadow-fit A/B, host materials on) with zero patch frames.

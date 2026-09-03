@@ -597,10 +597,14 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **Two replay guards** joined the surface-slot fix: a render-target slot with no
-   fresh binding this frame refuses the replay, and an ordinary texture whose object was
-   reused since the capture (content hash moved) refuses and recaptures - a 300-frame
-   sequence with templates refreshed every 600 frames shows no patch frame.
+   calls it. **The cyan-skirt artefact's real cause (16:40, `bee9e5d`)**: `contentHash` is
+   a marker (1 for a mirrored texture, 0 for the rest), not a hash, so classifying a
+   template's render-target slots by `contentHash == 0` filed every non-mirrored texture as
+   a surface and inherited it from the previous host-ordered draw. Surfaces are now told by
+   resource type (RenderTarget, DepthStencil), and an ordinary texture is guarded by the
+   guest address its object had at capture. Four 240-frame sequences of the configuration
+   that failed one run in three show no patch frame; `tools/capture_cyan.py` is the
+   detector (patch frames 2-60% of the frame; whole-frame readings are the zenith sky).
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
