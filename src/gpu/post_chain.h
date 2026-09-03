@@ -51,4 +51,8 @@ bool HostPostWillOverwrite(const GuestTexture *dst);
 // scene texture itself.
 bool HostPostActive();
 
+// True for a guest draw the host chain will take at the intercept (the dof
+// and ms_tex composites) - such a draw never samples its textures itself.
+bool HostPostWillIntercept(u64 ps_hash);
+
 } // namespace bd::gpu

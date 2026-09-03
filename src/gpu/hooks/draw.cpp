@@ -39,6 +39,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/output.h"
 #include "gpu/hooks/draw_dispatch.h"
+#include "gpu/frame.h"
 #include "gpu/post_chain.h"
 #include "gpu/scene/host_draw.h"
 #include "gpu/scene/node_tag.h"
@@ -284,6 +285,19 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // copies were ten of the frame's fourteen (2026-09-02).
   if (ps_hash && bd::gpu::HostPostProducerSkip(s, ps_hash))
     return;
+  // A scaled alias (the HDR scene resolved at x0.25, aliased while the host
+  // post chain runs) holds the unscaled surface. A guest draw that will
+  // sample it - not one the host chain takes - gets the scaled copy first.
+  // Materialising at SetTexture instead copied twice a frame for the dof
+  // and ms_tex draws the chain drops (Quest, rs_materialize 2, 2026-09-02).
+  if (!(ps_hash && bd::gpu::HostPostWillIntercept(ps_hash))) {
+    for (u32 i = 0; i < 16; ++i) {
+      bd::gpu::GuestTexture *tex = s.textures[i];
+      if (tex && tex->sourceSurface && tex->sourceSurface != tex &&
+          tex->resolveScale != 1.0f)
+        bd::gpu::MaterializeInboundLocked(s, tex);
+    }
+  }
   s.bind_overwrites = ps_hash && bd::gpu::HostPostOverwritesTarget(s, ps_hash);
   const bool bound = bd::gpu::Video::BindDrawFramebufferLocked();
   s.bind_overwrites = false;

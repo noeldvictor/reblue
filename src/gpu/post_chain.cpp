@@ -125,6 +125,14 @@ struct Scratch {
 struct DofInputs {
   GuestTexture *depth = nullptr;
   GuestTexture *levels[5] = {};
+  // The scene as the dof draw saw it: the first resolve's content (the
+  // surface when that resolve aliased, the texture otherwise) and its
+  // scale. The composite reads this, not the ms_tex draw's slot 0: between
+  // the two the guest resolves its (dropped) dof output into the same
+  // texture at scale 1, which under the host chain is a seeded, unscaled
+  // copy of the scene - the frame came out four times too bright reading it.
+  GuestTexture *scene_src = nullptr;
+  GuestTexture *scene_tex = nullptr;
   float scene_scale = 1.0f; // what the composite multiplies the scene tap by
   float params[4] = {0, 0, 0, 0}; // c27.x, .y, .z, .w
   bool valid = false;
@@ -360,6 +368,8 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   // alias of the unscaled surface. 0 means 1 to the shader.
   float level_scale = SourceScale(s.textures[1]);
   c.dof.scene_scale = level_scale;
+  c.dof.scene_src = scene;
+  c.dof.scene_tex = s.textures[1];
   u32 filled = 0;
   for (u32 slot = 2; slot <= 6; ++slot) {
     GuestTexture *dst = s.textures[slot];
@@ -462,7 +472,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   k.dof[0] = c.dof.params[0];
   k.dof[1] = c.dof.params[1];
   k.dof[2] = c.dof.params[3];
-  k.dof[3] = SourceScale(s.textures[0]); // the scene tap's factor, 0 = 1
+  k.dof[3] = c.dof.scene_scale; // the scene tap's factor, 0 = 1
   for (u32 i = 0; i < 4; ++i) {
     k.w0[i] = GuestPixelConstant(device_guest, 13, i);
     k.w1[i] = GuestPixelConstant(device_guest, 14, i);
@@ -536,6 +546,13 @@ bool HostPostActive() {
   return !c.failed && c.composite_frames > 0;
 }
 
+bool HostPostWillIntercept(u64 ps_hash) {
+  if (!REXCVAR_GET(bd_host_post))
+    return false;
+  Chain &c = chain();
+  return !c.failed && (ps_hash == kDof || ps_hash == kMsTex);
+}
+
 bool HostPostWillOverwrite(const GuestTexture *dst) {
   if (!dst || !REXCVAR_GET(bd_host_post))
     return false;
@@ -552,7 +569,10 @@ bool HostPostOverwritesTarget(VideoState &s, u64 ps_hash) {
   if (!REXCVAR_GET(bd_host_post) || !REXCVAR_GET(bd_host_post_composite))
     return false;
   Chain &c = chain();
-  return !c.failed && ps_hash == kMsTex && c.dof.valid;
+  // The composite writes its whole target; the dof draw's target is never
+  // read at all under the host chain (the composite reads the scene the dof
+  // draw saw), so neither needs seeding from its predecessor.
+  return !c.failed && (ps_hash == kMsTex || ps_hash == kDof);
 }
 
 bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
@@ -574,16 +594,32 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
   case kMsTex: {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
-    GuestTexture *scene = Source(s, s.textures[0]);
+    // The scene the dof draw saw (see DofInputs); the ms_tex slot 0 is the
+    // guest's re-resolve of its dropped dof output.
+    GuestTexture *scene = c.dof.valid && Readable(c.dof.scene_src)
+                              ? c.dof.scene_src
+                              : Source(s, s.textures[0]);
+    if (scene == c.dof.scene_src)
+      Transition(s, scene->texture, scene->layout,
+                 plume::RenderTextureLayout::SHADER_READ);
     // The bloom mask reads the first dof level rather than the scene: half
     // the texels, and already scaled when the scene is a scaled alias.
     GuestTexture *bloom_src =
         c.dof.valid && c.dof.levels[0] ? Content(c.dof.levels[0]) : nullptr;
-    if (!Readable(bloom_src) || SourceScale(s.textures[0]) == 1.0f)
+    if (!Readable(bloom_src) || c.dof.scene_scale == 1.0f)
       bloom_src = scene;
     GuestTexture *bloom = BuildBloomMask(s, c, bloom_src, device_guest);
     c.bloom_mask = bloom;
     const bool composed = HostComposite(s, c, scene, bloom, device_guest);
+    // Nothing reads the scene texture after the composite (a field frame's
+    // only materialisation was the surface's reuse next frame), so its
+    // resolve links are dropped here: with them, the scaled copy would still
+    // be made when the surface is rebound - the copy the alias exists to
+    // remove.
+    if (composed) {
+      DetachSourceSurfaceLocked(s, c.dof.scene_tex);
+      DetachSourceSurfaceLocked(s, s.textures[0]);
+    }
     c.dof.valid = false;
     RestoreGuestDraw(s);
     return composed;
