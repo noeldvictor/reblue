@@ -139,8 +139,20 @@ struct Store {
   u32 replayed = 0;
   u32 interpreted = 0;
   u32 stale_bail = 0; // replays refused for want of this frame's visual values
+  // Why a replay was refused, per frame: no template yet, refresh due,
+  // volatile, never-replayable shader (from the hook's gate).
+  u32 why_none = 0, why_refresh = 0, why_volatile = 0, why_never = 0;
+  u32 acc_none = 0, acc_refresh = 0, acc_volatile = 0, acc_never = 0;
   u32 acc_replayed = 0, acc_interpreted = 0, acc_frames = 0, acc_stale = 0;
   u32 last_frame = 0;
+  // Per key: runs that issued no draw at all, runs that issued some. A key
+  // that is always empty is a node the interpreter visits and never draws in
+  // that view; a mixed key draws under a condition the key does not carry.
+  std::unordered_map<u64, std::pair<u32, u32>> runs;
+  u32 untagged = 0, acc_untagged = 0; // scene-pass draws issued outside a node
+  // The render-list share of the above, per frame and accumulated.
+  u32 list_replayed = 0, list_interpreted = 0;
+  u32 acc_list_replayed = 0, acc_list_interpreted = 0;
 };
 
 Store &store() {
@@ -169,7 +181,8 @@ alignas(16) thread_local u8 t_ps_block[kBlockBytes];
 thread_local u32 t_fetch[32][6];
 
 u64 KeyOf(const NodeTag &tag) {
-  return (u64(tag.mesh_va) << 32) ^ (u64(tag.render_view) << 8) ^ u64(tag.tech);
+  return (u64(tag.mesh_va) << 32) ^ (u64(tag.render_view) << 8) ^ u64(tag.tech) ^
+         (tag.from_list ? (u64(1) << 24) : 0);
 }
 
 u64 VisualKeyOf(const NodeTag &tag) {
@@ -374,7 +387,7 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
   return true;
 }
 
-void Tally(Store &st, bool replayed) {
+void Tally(Store &st, bool replayed, bool from_list) {
   const u32 frame = FrameStatFrameCount();
   if (frame != st.last_frame) {
     {
@@ -389,27 +402,62 @@ void Tally(Store &st, bool replayed) {
     st.acc_replayed += st.replayed;
     st.acc_interpreted += st.interpreted;
     st.acc_stale += st.stale_bail;
+    st.acc_none += st.why_none;
+    st.acc_refresh += st.why_refresh;
+    st.acc_volatile += st.why_volatile;
+    st.acc_never += st.why_never;
+    st.acc_untagged += st.untagged;
+    st.untagged = 0;
+    st.acc_list_replayed += st.list_replayed;
+    st.acc_list_interpreted += st.list_interpreted;
+    st.list_replayed = st.list_interpreted = 0;
     ++st.acc_frames;
     st.replayed = st.interpreted = st.stale_bail = 0;
+    st.why_none = st.why_refresh = st.why_volatile = st.why_never = 0;
     st.last_frame = frame;
     if (st.acc_frames == 300) {
       std::string why;
       for (u32 i = 0; i < 7; ++i)
         if (g_why[i])
           why += fmt::format(" {}:{}", kWhy[i], g_why[i]);
-      BD_INFO("[node] host-issued {} of {} node draws a frame ({} interpreted "
-              "for fresh visual values); {} templates, {} volatile (why:{})",
+      u32 always_empty = 0, mixed = 0;
+      for (const auto &[k, r] : st.runs) {
+        if (r.first && !r.second)
+          ++always_empty;
+        else if (r.first && r.second)
+          ++mixed;
+      }
+      BD_INFO("[node] keys: {} always empty, {} mixed of {}; {} untagged draws "
+              "a frame; render list: {} of {} entries host-issued",
+              always_empty, mixed, st.runs.size(),
+              st.acc_untagged / st.acc_frames,
+              st.acc_list_replayed / st.acc_frames,
+              (st.acc_list_replayed + st.acc_list_interpreted) / st.acc_frames);
+      st.acc_untagged = 0;
+      st.acc_list_replayed = st.acc_list_interpreted = 0;
+      BD_INFO("[node] host-issued {} of {} node draws a frame (refused: {} fresh "
+              "values, {} no template, {} refresh, {} volatile, {} never); {} "
+              "templates, {} volatile (why:{})",
               st.acc_replayed / st.acc_frames,
               (st.acc_replayed + st.acc_interpreted) / st.acc_frames,
-              st.acc_stale / st.acc_frames, st.templates.size(),
+              st.acc_stale / st.acc_frames, st.acc_none / st.acc_frames,
+              st.acc_refresh / st.acc_frames, st.acc_volatile / st.acc_frames,
+              st.acc_never / st.acc_frames, st.templates.size(),
               st.volatile_count, why.empty() ? " -" : why);
       st.acc_replayed = st.acc_interpreted = st.acc_frames = st.acc_stale = 0;
+      st.acc_none = st.acc_refresh = st.acc_volatile = st.acc_never = 0;
     }
   }
   if (replayed)
     ++st.replayed;
   else
     ++st.interpreted;
+  if (from_list) {
+    if (replayed)
+      ++st.list_replayed;
+    else
+      ++st.list_interpreted;
+  }
 }
 
 } // namespace
@@ -495,8 +543,10 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   if (t_replaying)
     return;
   const NodeTag &tag = CurrentNodeTag();
-  if (!tag.valid)
+  if (!tag.valid) {
+    ++store().untagged;
     return;
+  }
   auto &p = t_pending;
   if (!p.valid || !p.replayable)
     return;
@@ -590,7 +640,14 @@ void HostDrawCommit(const NodeTag &tag) {
   auto &p = t_pending;
   auto &st = store();
   std::lock_guard lock(st.mutex);
-  Tally(st, false);
+  Tally(st, false, tag.from_list);
+  if (tag.valid && p.valid) {
+    auto &r = st.runs[KeyOf(tag)];
+    if (p.draws.empty())
+      ++r.first;
+    else
+      ++r.second;
+  }
   if (!p.valid || !p.replayable || p.draws.empty() || !tag.valid) {
     p.valid = false;
     return;
@@ -675,13 +732,23 @@ bool HostDrawReplay(const NodeTag &tag) {
   {
     std::lock_guard lock(st.mutex);
     auto it = st.templates.find(KeyOf(tag));
-    if (it == st.templates.end() || it->second.volatile_material ||
-        it->second.draws.empty())
+    if (it == st.templates.end() || it->second.draws.empty()) {
+      if (st.never.count(KeyOf(tag)))
+        ++st.why_never;
+      else
+        ++st.why_none;
       return false;
+    }
+    if (it->second.volatile_material) {
+      ++st.why_volatile;
+      return false;
+    }
     const u32 refresh =
         static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
-    if (frame - it->second.captured_frame >= refresh)
+    if (frame - it->second.captured_frame >= refresh) {
+      ++st.why_refresh;
       return false; // the interpreter runs once and refreshes the template
+    }
     t = &it->second;
     // Every moving value must have been written by an interpreted node of
     // this visual in this frame; otherwise this node is the one to interpret.
@@ -704,7 +771,7 @@ bool HostDrawReplay(const NodeTag &tag) {
           return false;
         }
     }
-    Tally(st, true);
+    Tally(st, true, tag.from_list);
     ++it->second.replays;
   }
 

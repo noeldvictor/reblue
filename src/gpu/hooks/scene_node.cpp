@@ -37,6 +37,7 @@
 #include <string>
 
 #include <fmt/format.h>
+#include <xxhash.h>
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -164,6 +165,107 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
   }
 
   __imp__bdSceneNodeDrawSingle(ctx, base);
+}
+
+// ---------------------------------------------------------------------------
+// The deferred render list (config/hooks/render_list.toml).
+//
+// A node whose material is sorted or translucent leaves bdSceneNodeDrawSingle
+// without a draw: the interpreter resolves its tokens into a render-list entry
+// and sub_8227F360 draws the whole list later, depth-sorted. 415 of the
+// village's 599 node keys drew nothing directly and 319 draws a frame arrived
+// untagged (2026-09-02) - the majority of the scene. The entry carries all the
+// identity a template needs, so the hook at the loop head tags it, replays
+// it when a template exists (and skips the guest's iteration), or opens a
+// capture that the next entry, or the function's return, commits.
+extern "C" void __imp__sub_8227F360(PPCContext &__restrict ctx, uint8_t *base);
+
+namespace {
+// Render-list entry layout, from sub_8227F360's loop (reblue_recomp.84.cpp).
+constexpr u32 kEntryWorld = 16;      // 4x4 matrix, bdBuildViewMatrix(entry+16)
+constexpr u32 kEntryNodeIndex = 252; // foliage table index, like r4 of DrawSingle
+constexpr u32 kEntryVisual = 272;
+constexpr u32 kEntryDrawParams = 280; // u16 start, count, base, +286 u16
+constexpr u32 kEntryFlags = 288;      // bytes 288..294 select the passes
+constexpr u32 kEntryDecl = 376;
+constexpr u32 kEntryStreams = 380;
+constexpr u32 kEntryIndices = 384;
+
+thread_local bool t_list_capturing = false;
+thread_local bd::gpu::scene::NodeTag t_list_tag;
+std::atomic<u64> g_list_entries{0};
+
+bd::gpu::scene::NodeTag ListEntryTag(u32 entry) {
+  using namespace bd::gpu::scene;
+  NodeTag tag;
+  const u32 visual = bd::mem::try_load<u32>(entry + kEntryVisual);
+  if (!visual)
+    return tag;
+  // The draw identity: geometry, draw parameters and the pass flags. Not the
+  // entry's address (a pooled slot whose occupant changes with the sort) and
+  // not the matrix (per frame).
+  u32 id[8];
+  id[0] = bd::mem::try_load<u32>(entry + kEntryDecl);
+  id[1] = bd::mem::try_load<u32>(entry + kEntryStreams);
+  id[2] = bd::mem::try_load<u32>(entry + kEntryIndices);
+  id[3] = bd::mem::try_load<u32>(entry + kEntryDrawParams);
+  id[4] = bd::mem::try_load<u32>(entry + kEntryDrawParams + 4);
+  // Bytes 291 and 294 move every frame and the draw loop never reads them
+  // (9518 keys with them, 644 without, 2026-09-02); 295 is scratch the loop
+  // clears. The rest select the passes.
+  id[5] = bd::mem::try_load<u32>(entry + kEntryFlags) & 0xFFFFFF00u;
+  id[6] = bd::mem::try_load<u32>(entry + kEntryFlags + 4) & 0xFFFF0000u;
+  id[7] = visual;
+  const u64 h = XXH3_64bits(id, sizeof(id));
+  tag.mesh_va = static_cast<u32>(h ^ (h >> 32)) | 1u;
+  tag.node_index = bd::mem::try_load<u32>(entry + kEntryNodeIndex);
+  tag.matrix_va = entry + kEntryWorld;
+  tag.visual_va = visual;
+  tag.render_view = bd::mem::try_load<u32>(kRenderViewIdVa);
+  tag.tech = bd::mem::try_field<u32>(visual, kVisualTech);
+  tag.seq = static_cast<u32>(
+      g_list_entries.fetch_add(1, std::memory_order_relaxed));
+  tag.from_list = true;
+  tag.valid = true;
+  return tag;
+}
+
+void CloseListCapture() {
+  if (t_list_capturing) {
+    bd::gpu::scene::HostDrawCommit(t_list_tag);
+    t_list_capturing = false;
+  }
+  bd::gpu::scene::ClearCurrentNodeTag();
+}
+} // namespace
+
+// Loop head of sub_8227F360, r31 = the entry. True skips the iteration.
+bool bdRenderListEntryHook(PPCRegister &r31) {
+  using namespace bd::gpu::scene;
+  CloseListCapture();
+  if (!(RecordingArmed() || HostDrawEnabled()))
+    return false;
+  const NodeTag tag = ListEntryTag(r31.u32);
+  if (!tag.valid)
+    return false;
+  if (tag.seq == 0)
+    BD_INFO("[node] render-list entry hook is live");
+  SetCurrentNodeTag(tag);
+  if (HostDrawReplay(tag)) {
+    ClearCurrentNodeTag();
+    return true;
+  }
+  if (HostDrawEnabled() && HostDrawWantsCapture(tag)) {
+    HostDrawSnapshotBefore();
+    t_list_capturing = true;
+    t_list_tag = tag;
+  }
+  return false;
+}
+
+REX_HOOK_RAW(sub_8227F360) {
+  __imp__sub_8227F360(ctx, base);
+  CloseListCapture();
 }
 
 // ---------------------------------------------------------------------------

@@ -30,6 +30,10 @@ struct NodeTag {
   u32 render_view = 0; // the guest's render-view id at the time
   u32 tech = 0;        // visual + kVisualTech
   u32 seq = 0;         // node draw ordinal within the process
+  // From the guest's deferred render list (sub_8227F360) rather than a
+  // direct node draw: mesh_va is then a hash of the entry's draw identity,
+  // matrix_va the entry's inline world matrix, ctx_va/palette_va unset.
+  bool from_list = false;
   bool valid = false;
 };
 

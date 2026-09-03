@@ -1,0 +1,19 @@
+# The guest's deferred render list (bodies in src/gpu/hooks/scene_node.cpp).
+#
+# bdSceneNodeDrawSingle draws most nodes indirectly: for a translucent or
+# sorted material the interpreter resolves the mesh's tokens into an entry of a
+# global render list (world matrix at +16, node index +252, visual +272, draw
+# parameters +280/+282/+284, declaration +376, streams +380, indices +384) and
+# issues nothing. sub_8227F360 sorts that list by depth and draws every entry
+# in one loop - 319 of the village's draws a frame (2026-09-02), none of them
+# carrying a node identity. The hook sits at the loop head, just after
+# `lwz r31,0(r14)` loaded the entry, and returns true to skip the iteration
+# when the host has issued the entry's draws itself; the jump target is the
+# loop's own tail (`addic. r30,r30,-1`), the same edge the guest takes for an
+# entry whose technique is 3.
+[[midasm_hook]]
+address = 0x8227F524
+name = "bdRenderListEntryHook"
+registers = ["r31"]
+after_instruction = false
+jump_address_on_true = 0x8227FD28
