@@ -599,7 +599,9 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
     GuestTexture *scene = c.dof.valid && Readable(c.dof.scene_src)
                               ? c.dof.scene_src
                               : Source(s, s.textures[0]);
-    if (scene == c.dof.scene_src)
+    // (scene is null under multiview, where the chain does not run on the
+    // two-layer targets yet; the null must not be compared into a deref.)
+    if (scene && scene == c.dof.scene_src)
       Transition(s, scene->texture, scene->layout,
                  plume::RenderTextureLayout::SHADER_READ);
     // The bloom mask reads the first dof level rather than the scene: half
