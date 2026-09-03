@@ -26,6 +26,7 @@
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/gpu_timing.h"
+#include "gpu/occlusion.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
@@ -56,6 +57,9 @@ void BeginCommandList(VideoState &s) {
   // frame and a tile must never seed from a stale or cross-chain buffer.
   s.subchain_resolve.clear();
   s.command_list->begin();
+  // The sun-occlusion counter is zeroed here, with no pass open, rather than
+  // inside the scene pass where its copy split the pass (2026-09-03).
+  Occlusion::PrepareFrame();
   // A fresh command list holds no framebuffer, whatever was bound on the last
   // one. The draw queue's flush guard reads this, and a stale true here meant
   // flushing into a null framebuffer - plume starts its render pass lazily from
@@ -275,6 +279,9 @@ void SubmitOpenListLocked(VideoState &s) {
   if (!s.command_list_open)
     return;
   const u32 cur = s.frame.load(std::memory_order_relaxed);
+  // The sun-occlusion readback copy, after the last pass rather than inside
+  // the scene pass.
+  Occlusion::FlushReadback();
   FrameEnd(s.command_lists[cur].get());
   s.command_lists[cur]->end();
   s.command_list_open = false;

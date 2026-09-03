@@ -128,21 +128,26 @@ void Occlusion::Begin() {
   }
 
   // Clear the counter to 0 before the sun quad draws.
-  s.command_list->barriers(
-      plume::RenderBarrierStage::COPY,
-      plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
-                                 plume::RenderBufferAccess::WRITE));
-  NoteBarrierCall(1, BarrierSite::Occlusion);
-  MarkResolve(s.command_list);
-  s.command_list->copyBufferRegion(s.occlusion_counter[slot]->at(0),
-                                   s.occlusion_zero->at(0), 4);
-  s.command_list->barriers(
-      plume::RenderBarrierStage::GRAPHICS,
-      plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
-                                 plume::RenderBufferAccess::READ |
-                                     plume::RenderBufferAccess::WRITE));
-  NoteBarrierCall(1, BarrierSite::Occlusion);
-  MarkResolve(s.command_list);
+  // Zeroed at the list's begin by PrepareFrame; only the very first query of
+  // a slot (buffers just created above) pays the mid-pass copy once.
+  if (!s.occlusion_zeroed[slot]) {
+    s.command_list->barriers(
+        plume::RenderBarrierStage::COPY,
+        plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
+                                   plume::RenderBufferAccess::WRITE));
+    NoteBarrierCall(1, BarrierSite::Occlusion);
+    MarkResolve(s.command_list);
+    s.command_list->copyBufferRegion(s.occlusion_counter[slot]->at(0),
+                                     s.occlusion_zero->at(0), 4);
+    s.command_list->barriers(
+        plume::RenderBarrierStage::GRAPHICS,
+        plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
+                                   plume::RenderBufferAccess::READ |
+                                       plume::RenderBufferAccess::WRITE));
+    NoteBarrierCall(1, BarrierSite::Occlusion);
+    MarkResolve(s.command_list);
+    s.occlusion_zeroed[slot] = true;
+  }
 
   s.occlusion_counting = true;
   Video::SetDirtyValue(s.dirtyStates.pipelineState, s.pipelineState.occlusionCounting,
@@ -160,14 +165,48 @@ void Occlusion::End() {
       !s.occlusion_readback[slot]) {
     return;
   }
-  // Copy the counted samples into this slot's readback buffer, mapped the next
-  // time this slot records (Begin).
+  // The copy into this slot's readback buffer waits for the submit
+  // (FlushReadback), after the last pass; Begin maps it the next time this
+  // slot records.
+  s.occlusion_readback_wanted[slot] = true;
+}
+
+void Occlusion::PrepareFrame() {
+  auto &s = state();
+  // Called from BeginCommandList with s.mutex held and the list just begun.
+  const u32 slot = s.frame.load(std::memory_order_relaxed);
+  s.occlusion_zeroed[slot] = false;
+  s.occlusion_readback_wanted[slot] = false;
+  if (!s.occlusion_counter[slot] || !s.occlusion_zero)
+    return; // no query has run yet; Begin creates the buffers and zeroes once
+  s.command_list->barriers(
+      plume::RenderBarrierStage::COPY,
+      plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
+                                 plume::RenderBufferAccess::WRITE));
+  s.command_list->copyBufferRegion(s.occlusion_counter[slot]->at(0),
+                                   s.occlusion_zero->at(0), 4);
+  s.command_list->barriers(
+      plume::RenderBarrierStage::GRAPHICS,
+      plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
+                                 plume::RenderBufferAccess::READ |
+                                     plume::RenderBufferAccess::WRITE));
+  s.occlusion_zeroed[slot] = true;
+}
+
+void Occlusion::FlushReadback() {
+  auto &s = state();
+  // Called from SubmitOpenListLocked with s.mutex held, before end().
+  const u32 slot = s.frame.load(std::memory_order_relaxed);
+  if (!s.occlusion_readback_wanted[slot])
+    return;
+  s.occlusion_readback_wanted[slot] = false;
+  if (!s.occlusion_counter[slot] || !s.occlusion_readback[slot])
+    return;
   s.command_list->barriers(
       plume::RenderBarrierStage::COPY,
       plume::RenderBufferBarrier(s.occlusion_counter[slot].get(),
                                  plume::RenderBufferAccess::READ));
   NoteBarrierCall(1, BarrierSite::Occlusion);
-  MarkResolve(s.command_list);
   s.command_list->copyBufferRegion(s.occlusion_readback[slot]->at(0),
                                    s.occlusion_counter[slot]->at(0), 4);
   s.occlusion_result_pending[slot] = true;

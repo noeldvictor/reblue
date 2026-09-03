@@ -19,6 +19,11 @@ public:
   // Begin and End bracket the sun test quad draw.
   static void Begin();
   static void End();
+  // At command-list begin, no pass open: zero this slot's counter. At submit,
+  // after the last pass: copy the counter out. Both used to happen inside
+  // the scene pass and split it (a buffer copy ends the render pass).
+  static void PrepareFrame();
+  static void FlushReadback();
 
   // Feeds D3DQuery_GetData.
   static u32 Count();

@@ -409,6 +409,13 @@ struct VideoState {
   std::unique_ptr<plume::RenderBuffer> occlusion_readback[kNumFrames];
   std::unique_ptr<plume::RenderBuffer> occlusion_zero; // UploadBuffer 4B (=0)
   bool occlusion_counting = false; // between D3DQuery_Issue BEGIN and END
+  // The counter was zeroed at this list's begin (Occlusion::PrepareFrame),
+  // and End asked for its readback at submit (Occlusion::FlushReadback):
+  // neither copy runs mid-pass any more. A buffer copy ends plume's render
+  // pass, and the sun query sits inside the scene pass - two of its three
+  // splits on a desktop trace (2026-09-03).
+  bool occlusion_zeroed[kNumFrames] = {};
+  bool occlusion_readback_wanted[kNumFrames] = {};
   bool occlusion_result_pending[kNumFrames] =
       {}; // per-slot: counter->readback copy in flight
   u32 occlusion_last_count = 16384; // last sample count (default = visible)

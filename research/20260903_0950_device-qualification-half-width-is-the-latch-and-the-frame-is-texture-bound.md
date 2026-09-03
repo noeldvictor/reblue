@@ -102,6 +102,26 @@ per fragment. Foveation cuts the periphery's share of both; it is the stage 7
 work. Any target above today's 688x720 a layer multiplies this cost by the
 pixel ratio: 1440x1584 a layer is 4.7x.
 
+## The scene pass was eight passes (desktop, 10:05-10:15)
+
+Owner decision at 10:00: no more Quest runs until the host owns the frame; engine code may
+be replaced. First cut, from a desktop `PLUME_FB_TRACE` of the multiview half-width frame:
+26 render passes a frame, and the 960x1080 scene framebuffer began and ended **eight
+times**, with `setFramebuffer old=X new=X active=1` between them - the host re-setting the
+framebuffer it already had (every `draw_framebuffer_bound = false` site: the guest's
+mid-pass resolves, the deferred queue's flushes), and plume ending the pass for a rebind
+of the open framebuffer. On a tiler each boundary stores and reloads the two-layer
+fp16+depth target; on the Quest each is a compositor preemption point, which is the
+4.5 ms of "Preempt" inside the scene pass of run 5.
+
+plume (fork `0bf3d63`): a rebind of the framebuffer whose pass is open is a no-op when no
+clear is pending. Desktop: **21 passes, the scene in 3 sub-passes**, image identical. The
+PC GPU frame did not move (6.0 vs 5.5 ms; a desktop GPU does not pay for pass boundaries),
+which is why the PC never showed this. The three that remain are ended by barriers, and
+the sun-occlusion query issues two of them inside the scene pass (its counter zeroing and
+readback are buffer copies bracketed by barriers); those moved to the command list's
+begin and submit. Result in the next section.
+
 ## Also seen
 
 - The launch hang (run 3): the process stayed alive with no guest threads and
