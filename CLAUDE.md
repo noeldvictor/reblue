@@ -105,7 +105,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Cel shading | **on the characters (2026-09-03, 00:50)**: `bd_cel_characters` sets a spec constant (`SPEC_CONSTANT_CEL`, XenosRecomp) on every skinned draw, and the recompiled pixel shader bands its lit colour before export; the world is untouched (desktop screenshot `out/shot_cel.png`). Four bands, no outline yet. **In the options menu (01:55)**: a "Cel Shading (Characters)" on/off row on the Graphics page (`settings_rows.cpp`, label in `res/embed/localization.toml`) bound to the cvar; compiled and booted, the row itself not yet looked at (autoplay never opens the menu) |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull (`bd_cull_distance`) and, **since 2026-09-03 13:00, the frustum test on the host** (`bd_host_cull`, default on): the guest's own six planes read once per walk, applied to each node's view-space sphere in host floats; `bd_host_cull_diag` runs the guest test beside it and read zero disagreements over 2,897 nodes a frame. The reflection and shadow views (ids 0, 1, 4, 5, 7, 8, 9) still call the guest test (4% of the desktop Draw Thread). Occlusion proper not started |
-| Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. **Vertex pulling and indirect draws shipped on the desktop 2026-09-03 14:00** (`gpu/vertex_pull.*`, `bd_draw_pull`, `bd_draw_indirect`, both default off until the Quest run): every vertex shader can pull its attributes from the instance record's streams (`SPEC_CONSTANT_PULLED`, a block buffer heap at binding 3 of the texture set, a per-declaration attribute table, a per-record stream table), the pulled twin draws with no stream binds, and batches of pulled draws sharing pipeline, material, index buffer and pass go out as one `drawIndexedIndirect` (plume fork). Village: 91 record draws a flush in 35 calls, frame correct. Coverage is the draws with records; the replayed draws join when `bd_host_draw_records` is trusted. `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md` |
+| Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. **Vertex pulling and indirect draws shipped on the desktop 2026-09-03, on by default since 15:00** (`gpu/vertex_pull.*`, `bd_draw_pull`, `bd_draw_indirect`): every vertex shader can pull its attributes from the instance record's streams (`SPEC_CONSTANT_PULLED`, a block buffer heap at binding 3 of the texture set, a per-declaration attribute table, a per-record stream table), the pulled twin draws with no stream binds, batches of pulled draws sharing pipeline, material, index buffer and pass go out as one `drawIndexedIndirect` (plume fork), and the record carries a per-register mask so the shader reads storage only for what differs from the group's uniform block (`bd_record_mask`). With the replayed draws on records (`bd_host_draw_records`, default on since the render-target slot fault was fixed) and singles on the record path: **village 258 draws a flush in -> 240 issued -> 80 indirect calls, 235 pulled**; within-run A/Bs -2.9% (indirect) and -3.2% (the pulled path) CPU per draw on the desktop, GPU flat; 300-frame sequences with no artefact frame. `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md` |
 | Host-issued node draws (`bd_host_draw`) | **village: 580 of 659 node runs a frame are the host's, 43 templates volatile (2026-09-03, 02:40)** - the 36 texture-volatile ones are real: a slot the interpreter sets in one run and not in another holds whatever the previous node bound, so merging slot sets or reading the texture from the visual painted the rock with the reflection map (reverted, `6911572` undone): draws replayed from templates, skinned ones included, and **the render-list entries built by the host** (`bd_host_list_build`: 306 entries in 217 runs a frame from recorded entry images, the guest's own allocator, a fresh matrix and palette; the matrix source verified on 52,455 runs). Every draw of the scene pass carries a node tag (`config/hooks/render_list.toml`). Side-by-side runs on the Quest; the list build is desktop-verified only (headset offline): a desktop within-run A/B (`bd_ab_flag="bd_host_list_build"`, 03:30) reads **-8.8% CPU per draw** with it on |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
@@ -576,14 +576,16 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    record marks the registers that differ from its group's first block, which the group
    binds as its uniform window, and `BD_VSC` reads the record only for those - the answer
    to the Quest's 28-against-19.5 ms storage-buffer constant reads of 2026-09-02, identical
-   by construction, verified on the desktop in every configuration. What remains before the
-   Quest: **the replayed draws on records** (`bd_host_draw_records`), whose intermittent
-   artefact predates this work and needs a per-frame instrument - without them the pulled
-   path covers the interpreted draws and the groups only. A capture trap, settled by the
-   day's CSVs: a solid sky-blue capture with 790 draws is the autoplay camera's cut to the
-   zenith (every run of the day, last night's included, spends 5-25% of field frames at
-   1.1 ms of GPU draw time in such stretches); read `gpu_draw_ms` beside a capture and
-   re-capture rather than reason.
+   by construction. **The replayed draws' artefact is named and fixed (14:50)**: the replay
+   inherited render-target texture slots from whatever the previous host-ordered draw left
+   bound (a pooled surface changes pointer every frame), which painted the ground around
+   the village rock with the reflection map - the "rock hidden in some frames" of
+   2026-09-02; the visual's interpreted node in the same pass now supplies those slots.
+   Found with `bd_capture_frames` (N consecutive captures), `tools/capture_seq.py`
+   (neighbour jumps, the pair written out) and `tools/capture_cyan.py` (the artefact colour
+   per frame, patch frames apart from whole-frame ones - the zenith sky reads the same, and
+   is what the afternoon's solid sky-blue captures were). **Defaults on since 15:00**:
+   replayed draws on records, singles on the record path, pulling, indirect draws.
    `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md`.
 6. **Assets** (stage 3), then shadows, animation, foveation.
 
@@ -717,7 +719,12 @@ files as that day's result. **Never run two device measurements at once.**
   `bd_ab_flag = "bd_some_bool"` (quoted) plus `bd_ab_period` flips the cvar during one run and
   labels each frame; unquoted, the value is dropped and every frame reads `ab_arm=255`.
 - **`bd_capture_after_s`** writes the composited frame as raw RGBA with a one-line header to
-  `logs/capture/`. `bd_capture_min_draws` holds it until a frame has that many draws, which is
+  `logs/capture/`. **`bd_capture_frames = N`** keeps capturing N consecutive frames
+  (sequence-numbered files): `python tools/capture_seq.py logs/capture` flags the jumps
+  between neighbours and writes the pair side by side, `python tools/capture_cyan.py
+  logs/capture` counts an artefact colour per frame. A one-shot capture compares scenes
+  across runs (the autoplay camera differs), and it lands on the zenith sky one time in
+  five; a sequence is what finds a few-frame artefact. `bd_capture_min_draws` holds it until a frame has that many draws, which is
   the only way to catch a field scene rather than a menu: autoplay lands somewhere different
   every run. `bd_mv_capture_array` photographs the largest colour+depth target's two layers
   stacked; `tools/stereo_check.py --stacked` reads that, `--raw` reads a side-by-side capture.

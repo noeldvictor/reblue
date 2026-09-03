@@ -91,8 +91,24 @@ cut to a cheap view (the zenith, a uniform blue with no clouds), and a one-shot 
 fixed second lands in it about one time in five. Read `gpu_draw_ms` beside a capture before
 calling it lost, and re-capture rather than reason.
 
-## What the Quest will need before this ships there
+## The replayed draws' artefact, named (14:50, commit `ee11470`)
 
-The register mask above answers the storage-buffer cost. What remains is the replayed draws
-on records (the coverage), and the Quest run itself, which comes with the rest of the
-host-owned frame per the owner's decision.
+With `bd_capture_frames` capturing 300 consecutive frames and `tools/capture_cyan.py` counting
+the artefact colour per frame: the default configuration had the patch in 186 of 300 frames
+at a 0.3% threshold and whole frames of it (the "solid sky-blue" captures were this too when
+they were not the zenith); with the host-issued draws off, none. The replay kept a template's
+render-target texture slots by inheriting whatever the previous host-ordered draw left bound,
+because a pooled surface changes pointer every frame; the order differs from the interpreter's,
+so the reflection map landed on the ground. The fix: the visual's interpreted node in the same
+pass records the surfaces it bound this frame (`VisualRegs::tex`) and the replay takes those.
+After: 0 patch frames of 300, twice, in the default configuration; 1 borderline frame (a sliver
+of sky at 1.09%) in the replayed-records one. Whole-frame readings with the host-issued draws
+off (87 of 300 in one run) are the zenith sky, and only those.
+
+## Everything on (15:00, commit `0f47166`)
+
+Replayed draws on records, singles on the record path, pulling and indirect draws all default
+on. Village: 258 draws a flush in -> 240 issued -> **80 indirect calls, 235 pulled**. A
+300-frame sequence with no artefact frame. Within-run A/Bs: `bd_draw_indirect` -2.9% CPU per
+draw, `bd_draw_pull` (the whole pulled path) -3.2%, GPU flat. The desktop driver's per-draw
+cost is small; the Quest's is what these are for, and that run comes with the host-owned frame.
