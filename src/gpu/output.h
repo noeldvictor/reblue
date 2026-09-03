@@ -35,6 +35,11 @@ public:
   // is upscaled at present.
   static bool LatchedFit(u32 &w, u32 &h);
 
+  // The latched width at the composed aspect. Equal to LatchedFit's width
+  // except under multiview at half width, where the pixel rect is half of it
+  // and every layer is presented stretched back to this.
+  static u32 LatchedFullWidth();
+
   // The ratio bd_aspect_ratio asks for, or 0 to take whatever the window is.
   static double ConfiguredAspect();
 

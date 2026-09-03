@@ -20,8 +20,16 @@
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(i32, bd_max_render_height);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_mv_half_width);
 
 namespace bd::gpu {
+
+namespace {
+// The latched rect at the composed aspect, before the multiview halving
+// below: the aspect the frame is projected and fitted for.
+u32 g_latched_full_w = 0;
+} // namespace
 
 bool Output::LatchedFit(u32 &w, u32 &h) {
   static u32 latched_w = 0;
@@ -57,12 +65,31 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
       fit_w = std::max<u32>(1u, static_cast<u32>(std::lround(fit_w * scale)));
       fit_h = static_cast<u32>(cap);
     }
+    g_latched_full_w = fit_w;
+    // Multiview at side-by-side's pixels per eye: every guest texture - the
+    // back buffer, the scene, the resolves and the post chain - is half the
+    // composed width, and each array layer holds one eye's half. Halving only
+    // the scene surface (2026-09-02) left the guest resolving each 688-wide
+    // layer up into 1376-wide layered targets and running its whole chain at
+    // twice side-by-side's pixels: 39.8 ms of Quest GPU against 20.8, with
+    // six eager resolves a frame against two (2026-09-03, 09:26). The frame
+    // is still projected and fitted at the full aspect (RenderAspect), the
+    // same anamorphic squeeze side-by-side's half-width viewports carry.
+    if (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width))
+      fit_w = std::max<u32>(8u, (fit_w / 2u) & ~7u);
     latched_w = fit_w;
     latched_h = fit_h;
   }
   w = latched_w;
   h = latched_h;
   return true;
+}
+
+u32 Output::LatchedFullWidth() {
+  u32 w = 0, h = 0;
+  if (!LatchedFit(w, h))
+    return 0;
+  return g_latched_full_w ? g_latched_full_w : w;
 }
 
 double Output::ConfiguredAspect() {
@@ -92,7 +119,7 @@ bool Output::StretchToFill() {
 double Output::RenderAspect() {
   u32 w = 0, h = 0;
   if (LatchedFit(w, h) && h)
-    return static_cast<double>(w) / static_cast<double>(h);
+    return static_cast<double>(LatchedFullWidth()) / static_cast<double>(h);
   return 16.0 / 9.0;
 }
 

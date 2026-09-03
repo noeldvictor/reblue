@@ -76,11 +76,9 @@ void bdSceneResolutionScaleHook(PPCRegister &r3, PPCRegister &r4) {
     r3.u32 = std::max(1u, r3.u32 * u32(pct) / 100u);
     r4.u32 = std::max(1u, r4.u32 * u32(pct) / 100u);
   }
-  // Multiview at side-by-side's per-eye pixels: each layer is half the scene
-  // width, and the guest sizes its post chain from this. See bd_mv_half_width.
-  if (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width)) {
-    r3.u32 = std::max(1u, r3.u32 / 2u);
-  }
+  // bd_mv_half_width no longer halves here: the guest sizes its whole chain
+  // from the back buffer, so the halving lives in Output::LatchedFit and the
+  // scene surface follows it like every other guest texture (2026-09-03).
 }
 
 // BD sizes the planar reflection off a hardcoded 320-wide base against the
