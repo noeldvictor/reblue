@@ -96,6 +96,10 @@ struct SubDraw {
   // old object also flipped its layout mid-pass and flushed the queue in the
   // middle of the node (the vanishing rock, 2026-09-02).
   u32 surface_mask = 0;
+  // Slots whose texture object differed between sightings (a pooled or
+  // animated texture re-pointed): the replay takes the visual's texture of
+  // this frame for them instead of the template's pointer.
+  u32 tex_unstable = 0;
   plume::RenderVertexBufferView vertex_views[16]{};
   plume::RenderInputSlot input_slots[16]{};
   u32 vertex_first = 0;
@@ -135,6 +139,8 @@ struct VisualRegs {
   u32 vs_frame[256] = {};
   u32 ps_frame[256] = {};
   u32 fetch_frame[32] = {};
+  u32 tex_frame[16] = {};
+  GuestTexture *tex[16] = {};
   u32 vs[256][4] = {};
   u32 ps[256][4] = {};
   u32 fetch[32][6] = {};
@@ -462,16 +468,22 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
       ++g_why[1];
       return false;
     }
-    if (x.tex_mask != y.tex_mask || x.surface_mask != y.surface_mask) {
+    if (x.surface_mask != y.surface_mask) {
       ++g_why[2];
       return false;
     }
-    for (u32 k = 0; k < 16; ++k)
-      if (((x.tex_mask & ~x.surface_mask) >> k) & 1u &&
-          x.textures[k] != y.textures[k]) {
-        ++g_why[2];
-        return false;
-      }
+    // A slot bound in one sighting only, or bound to another texture object:
+    // fresh from the visual at replay (34 templates were volatile on the
+    // slot set alone, 2026-09-03).
+    const u32 both = x.tex_mask & y.tex_mask & ~x.surface_mask;
+    x.tex_unstable |= (x.tex_mask ^ y.tex_mask) & ~x.surface_mask;
+    for (u32 k = 0; k < 16; ++k) {
+      if (((both >> k) & 1u) && x.textures[k] != y.textures[k])
+        x.tex_unstable |= 1u << k;
+      if (((y.tex_mask & ~x.tex_mask) >> k) & 1u)
+        x.textures[k] = y.textures[k];
+    }
+    x.tex_mask |= y.tex_mask;
     if (x.count != y.count || x.start_index != y.start_index ||
         x.base_vertex != y.base_vertex || x.indexed != y.indexed) {
       ++g_why[3];
@@ -754,8 +766,12 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   d.surface_mask = 0;
   for (u32 i = 0; i < 16; ++i) {
     d.textures[i] = s.textures[i];
+    // By resource type, not by "no content hash yet": an asset whose hash
+    // arrives after its first sighting flipped class and made 34 templates
+    // volatile (2026-09-03).
     if (((d.tex_mask >> i) & 1u) && s.textures[i] &&
-        s.textures[i]->contentHash == 0)
+        (s.textures[i]->type == ResourceType::RenderTarget ||
+         s.textures[i]->type == ResourceType::DepthStencil))
       d.surface_mask |= 1u << i;
   }
   for (u32 i = 0; i < 16; ++i) {
@@ -830,6 +846,11 @@ void HostDrawCommit(const NodeTag &tag) {
         v.ps_frame[r.reg] = frame;
         std::memcpy(v.ps[r.reg], r.value, 16);
       }
+      for (u32 k = 0; k < 16; ++k)
+        if (((d.tex_mask & ~d.surface_mask) >> k) & 1u) {
+          v.tex_frame[k] = frame;
+          v.tex[k] = d.textures[k];
+        }
       for (const FetchDelta &f : d.fetch_delta) {
         v.fetch_frame[f.slot] = frame;
         std::memcpy(v.fetch[f.slot], f.dword, sizeof(f.dword));
@@ -1034,6 +1055,12 @@ bool HostDrawReplay(const NodeTag &tag) {
           ++st.stale_bail;
           return false;
         }
+      for (u32 k = 0; k < 16; ++k)
+        if (((d.tex_unstable) >> k) & 1u &&
+            (!v || v->tex_frame[k] != frame || !v->tex[k])) {
+          ++st.stale_bail;
+          return false;
+        }
     }
     Tally(st, true, tag.from_list);
     ++it->second.replays;
@@ -1127,7 +1154,8 @@ bool HostDrawReplay(const NodeTag &tag) {
       s.pipelineState = d.pipelineState;
       for (u32 k = 0; k < 16; ++k)
         if (((d.tex_mask & ~d.surface_mask) >> k) & 1u)
-          s.textures[k] = d.textures[k];
+          s.textures[k] = ((d.tex_unstable >> k) & 1u) ? v->tex[k]
+                                                        : d.textures[k];
       std::memcpy(s.vertex_views, d.vertex_views, sizeof(s.vertex_views));
       std::memcpy(s.input_slots, d.input_slots, sizeof(s.input_slots));
       s.bound_vertex_first = d.vertex_first;
