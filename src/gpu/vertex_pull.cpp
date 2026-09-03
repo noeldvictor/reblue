@@ -30,6 +30,8 @@ namespace {
 // The pull-info region per frame slot matches the instance record region:
 // the same index addresses both (constant_buffers.cpp commits them together).
 constexpr u32 kInfosPerSlot = 2 * kInstanceRecordsPerFrame;
+// Indirect commands a frame slot can hold: one per issued draw at most.
+constexpr u32 kIndirectPerSlot = 16384;
 
 struct HeapSlot {
   const plume::RenderBuffer *buffer = nullptr;
@@ -50,6 +52,13 @@ struct PullState {
   plume::RenderInputSlot dummy_slot{};
   GuestVertexDeclaration *dummy_decl = nullptr;
   std::once_flag dummy_once;
+  // The indirect command ring: kNumFrames regions, one rewound per reset.
+  std::unique_ptr<plume::RenderBuffer> indirect;
+  u8 *indirect_mapped = nullptr;
+  bool multi_draw = false;
+  u32 indirect_slot = 0;
+  u32 indirect_used = 0; // commands used in the current region
+  u32 indirect_full_told = 0;
   // The heap: plume buffer -> slot, and the slots' state.
   std::mutex heap_mutex;
   std::unordered_map<const plume::RenderBuffer *, u32> slot_of;
@@ -163,6 +172,19 @@ bool VertexPullInit(plume::RenderDevice *device) {
         plume::RenderBufferReference(p.dummy.get(), 0), 64);
     p.dummy_slot = plume::RenderInputSlot(
         15, 0, plume::RenderInputSlotClassification::PER_VERTEX_DATA);
+  }
+  {
+    const u64 bytes = u64(kNumFrames) * kIndirectPerSlot * sizeof(IndirectCommand);
+    auto desc = plume::RenderBufferDesc::UploadBuffer(
+        bytes, plume::RenderBufferFlag::INDIRECT);
+    p.indirect = CreateHostBuffer(device, desc, "vertex-pull-indirect");
+    if (p.indirect)
+      p.indirect_mapped = reinterpret_cast<u8 *>(p.indirect->map());
+    p.multi_draw = device->getCapabilities().multiDrawIndirect;
+    if (!p.indirect_mapped)
+      BD_WARN("[pull] no indirect command ring; indirect draws are off");
+    else if (!p.multi_draw)
+      BD_WARN("[pull] the device has no multiDrawIndirect; indirect draws are off");
   }
   p.staged.reserve(kInstanceRecordsPerFrame);
   p.ready = true;
@@ -307,9 +329,33 @@ void VertexPullCommit(const u32 *staged, u32 n, u32 first) {
   }
 }
 
-void VertexPullFrameReset() {
+bool VertexPullIndirectOK() {
+  auto &p = pull();
+  return p.ready && p.indirect_mapped && p.multi_draw;
+}
+
+IndirectCommand *VertexPullAllocIndirect(u32 count, u64 &byte_offset) {
+  auto &p = pull();
+  if (!VertexPullIndirectOK() || count == 0)
+    return nullptr;
+  if (p.indirect_used + count > kIndirectPerSlot) {
+    if (p.indirect_full_told++ < 3)
+      BD_WARN("[pull] indirect ring full ({} commands a slot)", kIndirectPerSlot);
+    return nullptr;
+  }
+  const u32 first = p.indirect_slot * kIndirectPerSlot + p.indirect_used;
+  p.indirect_used += count;
+  byte_offset = u64(first) * sizeof(IndirectCommand);
+  return reinterpret_cast<IndirectCommand *>(p.indirect_mapped) + first;
+}
+
+plume::RenderBuffer *VertexPullIndirectBuffer() { return pull().indirect.get(); }
+
+void VertexPullFrameReset(u32 slot) {
   auto &p = pull();
   p.staged.clear();
+  p.indirect_slot = slot % kNumFrames;
+  p.indirect_used = 0;
   const u32 f = FrameStatFrameCount();
   if (f - p.diag_frame >= 300) {
     if (p.diag_frame)

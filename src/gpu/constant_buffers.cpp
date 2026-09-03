@@ -579,7 +579,7 @@ void ResetFrame(u32 slot) {
   up.chunkOffset = 0;
   up.recordsCommitted = 0;
   s.staged.clear();
-  bd::gpu::VertexPullFrameReset();
+  bd::gpu::VertexPullFrameReset(slot);
   // The offset caches name allocations in the slot being rewound.
   s.vsOffsets.clear();
   s.vsShadow.clear();

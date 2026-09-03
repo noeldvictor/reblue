@@ -56,7 +56,7 @@ bool VertexPullStage(u32 record_index, const VideoState &s);
 // Commits the staged infos of the records CommitInstanceRecords committed,
 // at the same GPU indices.
 void VertexPullCommit(const u32 *staged, u32 n, u32 first);
-void VertexPullFrameReset();
+void VertexPullFrameReset(u32 slot);
 void VertexPullNoteTwinMissing();
 
 // The pulled pipeline's input layout: every attribute location on slot 15
@@ -66,6 +66,22 @@ void VertexPullNoteTwinMissing();
 GuestVertexDeclaration *VertexPullDummyDeclaration();
 const plume::RenderVertexBufferView *VertexPullDummyView();
 const plume::RenderInputSlot *VertexPullDummySlot();
+
+// Indirect draws (bd_draw_indirect): a ring of VkDrawIndexedIndirectCommand
+// slots per frame, rewound with the records. Alloc returns the mapped
+// commands and their byte offset in the buffer, or null when the frame's
+// region is full or the device cannot multi-draw.
+struct IndirectCommand {
+  u32 index_count;
+  u32 instance_count;
+  u32 first_index;
+  i32 vertex_offset;
+  u32 first_instance;
+};
+static_assert(sizeof(IndirectCommand) == 20);
+bool VertexPullIndirectOK();
+IndirectCommand *VertexPullAllocIndirect(u32 count, u64 &byte_offset);
+plume::RenderBuffer *VertexPullIndirectBuffer();
 
 // A buffer that is about to be retired: its heap slot is reusable after the
 // frames in flight have drained.

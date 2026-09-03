@@ -29,6 +29,7 @@ REXCVAR_DECLARE(bool, bd_draw_eye_major);
 REXCVAR_DECLARE(i32, bd_pass_split_draws);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
 REXCVAR_DECLARE(bool, bd_draw_pull);
+REXCVAR_DECLARE(bool, bd_draw_indirect);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
 REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
 
@@ -42,6 +43,7 @@ namespace {
 std::vector<QueuedDraw> g_queue;
 u32 g_sequence = 0;
 u32 g_pulled_draws = 0; // per flush, reported with the instancing line
+u32 g_indirect_calls = 0, g_indirect_draws = 0;
 
 // Only what actually has to be re-emitted. Sorting by pipeline means runs of
 // draws share one, and re-binding it per draw would spend back exactly what the
@@ -60,15 +62,17 @@ struct EmitState {
 
 // instance_count / first_instance: the instanced group this draw stands for
 // (1 and 0 for a plain draw). d.pipeline is whichever variant the caller chose.
-void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
-             EmitState &st, u32 instance_count = 1, u32 first_instance = 0) {
+// The state a draw needs bound, without the draw: false when the draw
+// cannot be issued at all.
+bool EmitBindings(plume::RenderCommandList *cmd, const QueuedDraw &d,
+                  EmitState &st) {
   // Its own framebuffer, always. Whatever is bound at flush time is not
   // necessarily what this draw was recorded against, and may be nothing at all.
   if (!d.framebuffer) {
     static u32 told = 0;
     if (told++ < 8)
       BD_ERROR("[draw-queue] queued draw with no framebuffer, skipped");
-    return;
+    return false;
   }
   if (d.framebuffer != st.framebuffer) {
     cmd->setFramebuffer(d.framebuffer);
@@ -82,7 +86,7 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
     static u32 told = 0;
     if (told++ < 8)
       BD_ERROR("[draw-queue] queued draw with no pipeline, skipped");
-    return;
+    return false;
   }
 
   if (d.has_viewport &&
@@ -160,6 +164,13 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
   }
 
   st.any = true;
+  return true;
+}
+
+void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
+             EmitState &st, u32 instance_count = 1, u32 first_instance = 0) {
+  if (!EmitBindings(cmd, d, st))
+    return;
 
   // Fragment census: every draw's fragment shader invocations, folded per
   // pixel shader at readback (bd_frag_census).
@@ -254,6 +265,28 @@ void DrawQueuePush(const QueuedDraw &draw) {
   // eye viewport, and once rather than per comparison in the flush.
   q.group_key = (q.instanced_pipeline && q.record_index != ~0u) ? GroupKey(q)
                                                                 : 0;
+  q.batch_key = 0;
+  if (q.pulled_pipeline && q.record_index != ~0u && q.indexed &&
+      q.has_index_buffer) {
+    struct B {
+      const void *pipeline, *ib, *fb;
+      u32 ps, shared, ib_fmt;
+      plume::RenderViewport vp;
+      plume::RenderRect sc;
+      u8 has_vp;
+    } b;
+    std::memset(&b, 0, sizeof(b));
+    b.pipeline = q.pulled_pipeline;
+    b.ib = q.index_view.buffer.ref;
+    b.fb = q.framebuffer;
+    b.ps = q.constant_offsets[1];
+    b.shared = q.constant_offsets[2];
+    b.ib_fmt = u32(q.index_view.format);
+    b.vp = q.viewport;
+    b.sc = q.scissor;
+    b.has_vp = q.has_viewport ? 1 : 0;
+    q.batch_key = XXH3_64bits(&b, sizeof(b)) | 1ull;
+  }
 }
 
 u32 DrawQueueDepth() { return static_cast<u32>(g_queue.size()); }
@@ -454,6 +487,8 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
                                                     : b.pipeline;
               if (pa != pb)
                 return pa < pb;
+              if (a.batch_key != b.batch_key)
+                return a.batch_key < b.batch_key;
               if (a.group_key != b.group_key)
                 return a.group_key < b.group_key;
               return a.sequence < b.sequence;
@@ -483,6 +518,82 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     // A run of consecutive draws sharing this one's group key becomes one
     // instanced draw; its records are committed to the GPU contiguously, in
     // this order, so firstInstance + SV_InstanceID walks them.
+    // Indirect: the run of draws sharing this one's batch key becomes one
+    // drawIndexedIndirect - a command per instancing group inside it, its
+    // records committed contiguously so firstInstance walks them, the index
+    // buffer bound once at offset zero with each command's firstIndex
+    // carrying the mesh's own offset.
+    if (instancing && REXCVAR_GET(bd_draw_indirect) && q.batch_key &&
+        q.pulled_pipeline && VertexPullIndirectOK()) {
+      size_t j = i + 1;
+      while (j < g_queue.size() && g_queue[j].batch_key == q.batch_key &&
+             g_queue[j].pulled_pipeline == q.pulled_pipeline &&
+             g_queue[j].record_index != ~0u)
+        ++j;
+      // The groups inside the batch, each one command.
+      static std::vector<std::pair<size_t, size_t>> spans;
+      spans.clear();
+      records.clear();
+      for (size_t k = i; k < j;) {
+        size_t e = k + 1;
+        while (e < j && g_queue[e].group_key == g_queue[k].group_key)
+          ++e;
+        spans.emplace_back(k, e);
+        for (size_t r = k; r < e; ++r)
+          records.push_back(g_queue[r].record_index);
+        k = e;
+      }
+      u64 byte_offset = 0;
+      IndirectCommand *cmds =
+          VertexPullAllocIndirect(static_cast<u32>(spans.size()), byte_offset);
+      const u32 first =
+          cmds ? CommitInstanceRecords(records.data(),
+                                       static_cast<u32>(records.size()))
+               : ~0u;
+      if (cmds && first != ~0u) {
+        const u32 index_bytes =
+            q.index_view.format == plume::RenderFormat::R32_UINT ? 4u : 2u;
+        u32 running = 0;
+        for (size_t c = 0; c < spans.size(); ++c) {
+          const QueuedDraw &g = g_queue[spans[c].first];
+          const u32 n = static_cast<u32>(spans[c].second - spans[c].first);
+          cmds[c].index_count = g.count;
+          cmds[c].instance_count = n;
+          cmds[c].first_index =
+              static_cast<u32>(g.index_view.buffer.offset / index_bytes) +
+              g.start_index;
+          cmds[c].vertex_offset = g.base_vertex;
+          cmds[c].first_instance = first + running;
+          running += n;
+          if (!g.blended) {
+            opaque += n;
+            if (g.depth < dmin) dmin = g.depth;
+            if (g.depth > dmax) dmax = g.depth;
+          }
+        }
+        QueuedDraw d = q;
+        d.pipeline = q.pulled_pipeline;
+        d.index_view.buffer.offset = 0;
+        d.index_view.size = ~0u;
+        if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
+        if (EmitBindings(cmd, d, st)) {
+          cmd->drawIndexedIndirect(VertexPullIndirectBuffer(), byte_offset,
+                                   static_cast<u32>(spans.size()),
+                                   sizeof(IndirectCommand));
+          ++g_indirect_calls;
+          g_indirect_draws += static_cast<u32>(j - i);
+          g_pulled_draws += static_cast<u32>(spans.size());
+          emitted += static_cast<u32>(spans.size());
+          for (const auto &sp : spans)
+            if (sp.second - sp.first > 1) {
+              ++groups;
+              grouped_draws += static_cast<u32>(sp.second - sp.first);
+            }
+        }
+        i = j;
+        continue;
+      }
+    }
     if (instancing && q.instanced_pipeline && q.record_index != ~0u) {
       size_t j = i + 1;
       while (j < g_queue.size() && g_queue[j].instanced_pipeline &&
@@ -761,11 +872,13 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     acc_grouped += grouped_draws;
     if (n_flush == 300) {
       BD_INFO("[draw-queue] instancing: {} draws in -> {} issued per flush; "
-              "{} groups of >1 covering {} draws; {} issued pulled",
+              "{} groups of >1 covering {} draws; {} issued pulled; indirect: "
+              "{} draws in {} calls",
               acc_in / n_flush, acc_out / n_flush, acc_groups / n_flush,
-              acc_grouped / n_flush, g_pulled_draws / n_flush);
+              acc_grouped / n_flush, g_pulled_draws / n_flush,
+              g_indirect_draws / n_flush, g_indirect_calls / n_flush);
       n_flush = acc_in = acc_out = acc_groups = acc_grouped = 0;
-      g_pulled_draws = 0;
+      g_pulled_draws = g_indirect_calls = g_indirect_draws = 0;
     }
   }
   g_queue.clear();

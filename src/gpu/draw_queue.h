@@ -112,6 +112,10 @@ struct QueuedDraw {
   // The instanced twin that pulls its vertices from the record's streams
   // (gpu/vertex_pull.h); set only when this draw's pull info staged.
   plume::RenderPipeline *pulled_pipeline = nullptr;
+  // Everything an indirect command cannot change: the pulled pipeline,
+  // the material constants, the index buffer and format, the pass
+  // geometry. Consecutive draws sharing it become one indirect call.
+  u64 batch_key = 0;
   u64 group_key = 0;
   bool reorderable = false;
 };

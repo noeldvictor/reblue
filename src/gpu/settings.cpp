@@ -777,6 +777,12 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // Vertex pulling (gpu/vertex_pull.h): instanced draws whose pull info
 // staged go through the pulled pipeline twin, binding no vertex streams.
 // The step before indirect draws; verified on the desktop by capture.
+// Indirect draws over the pulled pipeline: consecutive pulled draws that
+// share pipeline, material, index buffer and pass geometry become one
+// drawIndexedIndirect with a command per instancing group.
+REXCVAR_DEFINE_BOOL(bd_draw_indirect, false, kCvarGroup,
+                    "Batch pulled draws into drawIndexedIndirect calls "
+                    "(needs bd_draw_pull).");
 REXCVAR_DEFINE_BOOL(bd_draw_pull, false, kCvarGroup,
                     "Draw instanced groups through the vertex-pulling "
                     "pipeline twin (no per-mesh stream binds).");
