@@ -37,3 +37,12 @@ unchanged).
   mystery of 2026-08-31, which smells like the per-bind descriptor copy fixed on 09-01.
 - The present: direct present under multiview means the gamma pass reading both layers into
   the eye images, or a two-layer XR swapchain (`XR_FB` array swapchains).
+
+## Quest, layered post chain (00:15)
+
+`bd_stereo_multiview=true,bd_mv_layered_textures=true`, resolve chain still on: the host
+composite runs on the two-layer frame ("composite into 1376x720"), direct present is active,
+**GPU 23.0 ms, CPU 24.2 ms, 378 draws** - the same as before the chain went layered, so the
+guest's post quads were not where multiview's extra 9 ms over side-by-side sit. The capture
+is black again (the resolved-companion site). Next run: `bd_mv_resolve=false` with
+`bd_mv_capture_array` for a stacked capture.
