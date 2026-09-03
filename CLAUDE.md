@@ -106,6 +106,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull only (`bd_cull_distance`); the walk itself is host code since 2026-09-02 (`gpu/scene/host_walk.cpp`, `bd_host_walk`), so a host cull attaches there |
 | Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. Indirect draws not started |
+| Host-issued node draws (`bd_host_draw`) | **village: 350 of 659 node draws a frame issued by the host from templates (2026-09-02, 20:30)**, skinned ones included; every draw of the scene pass carries a node tag (the guest's deferred render list is hooked, `config/hooks/render_list.toml`). Runs on the Quest. The 274 refused a frame are the interpreter runs that only build render-list entries |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
@@ -234,6 +235,19 @@ minification. Keep the chains for the image; do not expect frame time from them.
 against 37.5 before. Its GPU share was small; the rewrite removed the tile-and-resolve
 structure and fifteen guest draws. The frame is the scene pass.
 
+**Most node draws never came from `bdSceneNodeDrawSingle` directly (2026-09-02, 20:40).**
+415 of the village's 599 node keys draw nothing in the interpreter: a sorted or translucent
+material becomes an entry of a global render list that `sub_8227F360` sorts by depth and draws
+later - 319 draws a frame, the majority of the scene pass, untagged until now. A midasm hook at
+that loop's head (`0x8227F524`, jump to the loop tail on true) tags each entry, replays it from a
+template and skips the guest's iteration. Bytes 291 and 294 of the entry move every frame and
+the loop never reads them; keep them out of any identity. **Skinned nodes replay too**: the
+bone upload is a gather of palette slots (`ctx.palette + slot * 64`, table on the interpreter's
+stack for a direct node, at entry+800 for a list draw), so the template stores the slot list and
+the replay gathers the matrices live. `research/20260902_2040_the-render-list-and-the-bones-...md`.
+The Quest run of that build sat at 60 fps (`gpu_total_ms` 18.5 at 481 draws) **in a lighter
+scene than yesterday's** (261 node draws against 535); it is not a comparison.
+
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`):
 
 - **Five threads at 55-75% of a core each are our own PSO precache workers** running the
@@ -319,15 +333,16 @@ Stages, each shipping working:
    guest's draw nodes - same cull hooks, the guest's own visibility test, identical draw count
    and frame. Culling, LOD and the host-issued draw (2b) attach there now.
    **Stage 2b shipped 2026-09-02 evening**: `bd_host_draw` (default on) issues a node's draws
-   from a host template instead of running the 1,935-instruction interpreter, for nodes whose
-   vertex shader reads neither the foliage collision vector (c57) nor a bone palette. The
+   from a host template instead of running the 1,935-instruction interpreter, for direct nodes and (since 20:30)
+   for the guest's deferred render list, skinned nodes included (bone slots stored, matrices
+   gathered live); foliage (c57) waits for the host's vector to be trusted. The
    template holds each sub-draw's host state and the registers the interpreter SETS (the
    setter hooks, not a value diff - a same-value write is still a write); a register that
    moves between frames is taken from the latest interpreted node of the same visual in the
    same frame, and one node per visual per frame is interpreted to keep those fresh. The
    world rows c20-c23 are rebuilt from the palette slot (transposed, translation in .w,
-   verified over 3728 draws). Village: 111 of 420 node draws a frame host-issued, 0 volatile
-   templates. `[node] host-issued N of M` is the number. Replayed draws stay off the
+   verified over 3728 draws). Village: 350 of 659 node draws a frame host-issued (2026-09-02, 20:30; 111 of 420
+   before the render list and the bones), 39 volatile templates. `[node] host-issued N of M` is the number. Replayed draws stay off the
    instance-record path (`bd_host_draw_records`, default off): on it, the village's big rock
    was hidden in some frames while its own node drew every frame, so a replayed draw covers it
    - the mechanism is still unnamed (`bd_node_diag_mesh` logs a node's draws from both
