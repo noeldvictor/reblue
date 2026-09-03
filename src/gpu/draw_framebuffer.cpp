@@ -11,6 +11,7 @@
 #include <atomic>
 #include "gpu/foveation.h"
 #include "gpu/draw_queue.h"
+#include "gpu/format.h"
 #include "gpu/frame.h"
 
 #include <mutex>
@@ -314,14 +315,30 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
   GuestTexture *head = s.fullscreen_chain_head[s.recording_slot()];
   if (!head || head == rt || !head->texture)
     return false;
-  GuestTexture *root = head->aliasOf ? head->aliasOf : head;
+  // Where the head's content actually lives: through its alias, and through a
+  // lazy resolve link (a front texture whose resolve never copied points at
+  // the surface that holds the image).
+  GuestTexture *root = head;
+  for (u32 hops = 0; hops < 4; ++hops) {
+    GuestTexture *next = root->aliasOf ? root->aliasOf
+                         : (root->sourceSurface && root->sourceSurface != root &&
+                            root->sourceSurface->texture)
+                             ? root->sourceSurface
+                             : nullptr;
+    if (!next)
+      break;
+    root = next;
+  }
   if (!root->texture || root == rt || root == s.back_buffer_surface)
     return false;
   if (!FullscreenChainClassLocked(s, head))
     return false;
+  // The format may differ (an 8-bit surface after a 16-bit head): the
+  // pipelines follow the shared texture's format below, and every reader
+  // samples float4. Depth never aliases colour.
   if (root->width != rt->width || root->height != rt->height ||
       root->layers != rt->layers || root->sampleCount != rt->sampleCount ||
-      root->format != rt->format)
+      IsDepthFormat(root->format) != IsDepthFormat(rt->format))
     return false;
   if (rt->sampleCount != plume::RenderSampleCount::COUNT_1)
     return false;

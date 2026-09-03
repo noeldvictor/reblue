@@ -101,10 +101,22 @@ bool CanAliasResolveLocked(const GuestTexture *src, const GuestTexture *dst) {
   // themselves, and a guest draw that samples the texture materialises the
   // scaled copy first (SetTexture). That copy was a full-res pass a frame.
   const bool scale_ok = dst->resolveScale == 1.0f || HostPostActive();
+  // The tail's 16-to-8-bit front conversion (the composite's fp16 surface
+  // resolved into the RGBA8 front texture) is a full-res pass that converts
+  // nothing a reader needs: every reader samples the texture as float4, so
+  // the link can point at the fp16 surface and the conversion never runs.
+  // Colour to colour only, and only while the host owns the post chain
+  // (2026-09-03). A read the substitution cannot reach still materialises
+  // through the shader resolve, which converts.
+  const bool format_ok =
+      src && dst &&
+      (src->format == dst->format ||
+       (HostPostActive() && !IsDepthFormat(src->format) &&
+        !IsDepthFormat(dst->format) && FullscreenChainClassLocked(state(), dst)));
   return src && dst && src != dst && src->texture && dst->texture &&
          src->sampleCount == plume::RenderSampleCount::COUNT_1 &&
          src->width == dst->width && src->height == dst->height &&
-         src->format == dst->format && scale_ok &&
+         format_ok && scale_ok &&
          dst->viewDimension !=
              plume::RenderTextureViewDimension::TEXTURE_CUBE &&
          dst->mipLevels <= 1 && src->descriptorIndex != kInvalidDescriptorIndex;
