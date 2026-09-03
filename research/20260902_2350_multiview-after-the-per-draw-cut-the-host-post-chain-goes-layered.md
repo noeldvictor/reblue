@@ -46,3 +46,15 @@ composite runs on the two-layer frame ("composite into 1376x720"), direct presen
 guest's post quads were not where multiview's extra 9 ms over side-by-side sit. The capture
 is black again (the resolved-companion site). Next run: `bd_mv_resolve=false` with
 `bd_mv_capture_array` for a stacked capture.
+
+## Quest, resolve chain off (00:30)
+
+`bd_mv_resolve=false,bd_mv_capture_array=true`: **GPU 23.0 ms** again, no crash, no 277 ms -
+the 2026-08-31 catastrophe was the per-bind descriptor copy, fixed 09-01. The stacked capture
+(RGBA16F 1376x1440) has both layers non-black at the same exposure; the best horizontal
+alignment between them is 2 px, on a depth-of-field-blurred close-up, so the device stereo
+verdict is still open (the desktop pair is unmistakably stereo with the same code).
+
+Where multiview's 9 ms over side-by-side come from: each layer is the full 1376x720, so a
+multiview frame shades twice the pixels per eye that the side-by-side frame does (688x720 an
+eye). The per-eye size is the next knob, and the target is 1440x1584 an eye either way.
