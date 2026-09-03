@@ -268,8 +268,9 @@ the uploads and Present, and a quarter of its samples were the SDK heap's recurs
 policy gives the big cluster to the Draw Thread. Before those fixes: `other_ms` 18.2,
 `gpu_total_ms` 16.9 at 474 draws, 90% of field frames in one 60 Hz slot. **After (21:05):
 `other_ms` 16.3, `gpu_total_ms` 15.8 at 477 draws, 98% of field frames in one slot - a
-vsync-locked 60 fps in that scene**, side-by-side, shadows and reflections off. The next
-boundary is 72 Hz at 13.9 ms, on both CPU and GPU.
+vsync-locked 60 fps in that scene**, side-by-side, shadows and reflections off. With the
+reflection stub pass skipped by the walk (21:30): draws 378, `gpu_total_ms` 14.8 (p10 13.8),
+99% of field frames in one slot. The next boundary is 72 Hz at 13.9 ms, on both CPU and GPU.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`, 2026-09-01; the
 SDLThread paragraph below is superseded by the profile above):
