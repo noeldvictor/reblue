@@ -30,6 +30,7 @@ REXCVAR_DECLARE(i32, bd_pass_split_draws);
 REXCVAR_DECLARE(bool, bd_draw_instancing);
 REXCVAR_DECLARE(bool, bd_draw_pull);
 REXCVAR_DECLARE(bool, bd_draw_indirect);
+REXCVAR_DECLARE(bool, bd_record_mask);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
 REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
 
@@ -575,6 +576,11 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         d.pipeline = q.pulled_pipeline;
         d.index_view.buffer.offset = 0;
         d.index_view.size = ~0u;
+        if (REXCVAR_GET(bd_record_mask)) {
+          const u32 base_off = UploadVertexBlockFromStaged(records[0]);
+          if (base_off != ~0u)
+            d.constant_offsets[0] = base_off;
+        }
         if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
         if (EmitBindings(cmd, d, st)) {
           cmd->drawIndexedIndirect(VertexPullIndirectBuffer(), byte_offset,
@@ -659,6 +665,13 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
       if (first != ~0u) {
         QueuedDraw d = q;
         d.pipeline = q.instanced_pipeline;
+        // The group's uniform window is its first record's block: the
+        // records' masks were computed against it (bd_record_mask).
+        if (REXCVAR_GET(bd_record_mask)) {
+          const u32 base_off = UploadVertexBlockFromStaged(records[0]);
+          if (base_off != ~0u)
+            d.constant_offsets[0] = base_off;
+        }
         // Pulled when every draw of the group staged its pull info (the
         // group key already fixes the pipeline, so one check per group).
         if (REXCVAR_GET(bd_draw_pull) && q.pulled_pipeline) {

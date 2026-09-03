@@ -119,8 +119,13 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest);
 // instanced group's records are contiguous.
 struct InstanceRecord {
   float regs[256 * 4];
+  // Bit per register: set where this record differs from the group's base
+  // block (the first record's, bound as the uniform window); the shader
+  // reads the record for those and the uniform block for the rest. Written
+  // at commit (CommitInstanceRecords); all ones when bd_record_mask is off.
+  u32 mask[8];
 };
-static_assert(sizeof(InstanceRecord) == 4096);
+static_assert(sizeof(InstanceRecord) == 4096 + 32);
 // Records staged per frame. The GPU region is twice this per frame slot,
 // because the side-by-side path pushes one draw per eye off one record.
 constexpr u32 kInstanceRecordsPerFrame = 2048;

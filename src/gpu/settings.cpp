@@ -780,6 +780,12 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // Indirect draws over the pulled pipeline: consecutive pulled draws that
 // share pipeline, material, index buffer and pass geometry become one
 // drawIndexedIndirect with a command per instancing group.
+// Instance records carry a per-register mask of what differs from the
+// group's uniform block, and the shader reads only those from the record
+// (constant_buffers.h). Off writes all-ones masks: the old whole-record read.
+REXCVAR_DEFINE_BOOL(bd_record_mask, true, kCvarGroup,
+                    "Instance records mask the registers that differ from "
+                    "the group's uniform block.");
 REXCVAR_DEFINE_BOOL(bd_draw_indirect, false, kCvarGroup,
                     "Batch pulled draws into drawIndexedIndirect calls "
                     "(needs bd_draw_pull).");

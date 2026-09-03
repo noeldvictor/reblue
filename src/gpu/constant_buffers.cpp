@@ -43,6 +43,7 @@
 #include "gpu/shaders/shader_cache.h"
 
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
+REXCVAR_DECLARE(bool, bd_record_mask);
 
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -671,12 +672,36 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
   }
   const u32 first = s.cursor * kInstanceRecordsPerSlot + up.recordsCommitted;
   auto *dst = reinterpret_cast<InstanceRecord *>(s.instances.mapped) + first;
+  // The base: the first record's block, which the emitter binds as the
+  // group's uniform window. Each record's mask marks the registers where it
+  // differs, so the shader loads only those from the record.
+  const bool masked = REXCVAR_GET(bd_record_mask) && staged[0] < s.staged.size();
+  const float *base = masked ? s.staged[staged[0]].regs : nullptr;
   for (u32 i = 0; i < n; ++i) {
     const u32 idx = staged[i];
-    if (idx < s.staged.size())
-      dst[i] = s.staged[idx];
-    else
+    if (idx >= s.staged.size()) {
       std::memset(&dst[i], 0, sizeof(InstanceRecord));
+      continue;
+    }
+    const InstanceRecord &r = s.staged[idx];
+    u32 mask[8];
+    if (!base) {
+      for (u32 w = 0; w < 8; ++w)
+        mask[w] = 0xFFFFFFFFu;
+    } else {
+      for (u32 w = 0; w < 8; ++w) {
+        u32 bits = 0;
+        for (u32 b = 0; b < 32; ++b) {
+          const u32 reg = w * 32 + b;
+          if (std::memcmp(r.regs + reg * 4, base + reg * 4, 16) != 0)
+            bits |= 1u << b;
+        }
+        mask[w] = bits;
+      }
+    }
+    // The ring is write-combined: one contiguous write, no read back.
+    std::memcpy(dst[i].regs, r.regs, sizeof(r.regs));
+    std::memcpy(dst[i].mask, mask, sizeof(mask));
   }
   up.recordsCommitted += n;
   bd::gpu::VertexPullCommit(staged, n, first);
