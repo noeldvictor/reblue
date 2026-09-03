@@ -407,7 +407,7 @@ REXCVAR_DEFINE_BOOL(bd_draw_instancing, true, kCvarGroup,
 // uploaded as an ordinary vertex window. Measured on the Quest 2 (2026-09-02):
 // every scene draw through the record path cost 45 ms of GPU against 37.5,
 // the storage-buffer constant reads outweighing the window re-base.
-REXCVAR_DEFINE_BOOL(bd_draw_instancing_singles_plain, true, kCvarGroup,
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_singles_plain, false, kCvarGroup,
                     "Emit single-draw instancing groups through the plain "
                     "pipeline.");
 // ON, and worth 8 ms of GPU: a within-run A/B on the Quest 2 (2026-09-02,
@@ -465,7 +465,7 @@ REXCVAR_DEFINE_INT32(bd_node_diag_mesh, 0, kCvarGroup,
 // Whether a host-issued node draw may stage an instance record (and so join
 // an instancing group). Off: the two configurations in which the village's
 // rock vanished both had replayed draws on the record path.
-REXCVAR_DEFINE_BOOL(bd_host_draw_records, false, kCvarGroup,
+REXCVAR_DEFINE_BOOL(bd_host_draw_records, true, kCvarGroup,
                     "Let host-issued node draws use instance records.");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
                      "Frames a host node draw template is used before the "
@@ -791,10 +791,10 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_record_mask, true, kCvarGroup,
                     "Instance records mask the registers that differ from "
                     "the group's uniform block.");
-REXCVAR_DEFINE_BOOL(bd_draw_indirect, false, kCvarGroup,
+REXCVAR_DEFINE_BOOL(bd_draw_indirect, true, kCvarGroup,
                     "Batch pulled draws into drawIndexedIndirect calls "
                     "(needs bd_draw_pull).");
-REXCVAR_DEFINE_BOOL(bd_draw_pull, false, kCvarGroup,
+REXCVAR_DEFINE_BOOL(bd_draw_pull, true, kCvarGroup,
                     "Draw instanced groups through the vertex-pulling "
                     "pipeline twin (no per-mesh stream binds).");
 REXCVAR_DEFINE_BOOL(bd_host_cull_diag, false, kCvarGroup,
