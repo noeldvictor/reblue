@@ -70,13 +70,29 @@ Two captures came back solid sky blue (88, 198, 255) with 790+ draws in the fram
 camera was on open sky. A legitimate frame, and a reminder that a one-shot capture at a fixed
 time compares scenes, not code, across runs.
 
+## The register mask, shipped (14:10, commit `465e153`, XenosRecomp fork `2df2ff5`)
+
+`BDInstanceRecord` carries `uint4 mask[2]`; `BD_VSC` reads the record only for a register whose
+bit is set and the uniform block otherwise. `CommitInstanceRecords` sets the bits where a
+record differs from the group's base block - its first record's - and the group's (or the
+indirect batch's) uniform window is that base, uploaded as an ordinary window. Identical by
+construction; the default, pulled and indirect configurations rendered correctly. On the
+Quest an instanced vertex then loads the world rows and the palette from storage and takes the
+other twenty-odd constants from preloaded registers, which is the 28 -> 19.5 ms difference
+measured on 2026-09-02. `bd_record_mask=false` writes all-ones masks (the old read).
+
+## The sky-blue captures, settled
+
+The step from 3.4 to 1.13 ms of GPU draw time on one frame, flat for a second and a half,
+recurring about every seven seconds, looked like geometry vanishing. The CSVs of every run of
+the day say otherwise: last night's 02:26 run and this morning's 09:54, before any change,
+spend 13% and 5% of their field frames in the same stretches. It is the autoplay camera's
+cut to a cheap view (the zenith, a uniform blue with no clouds), and a one-shot capture at a
+fixed second lands in it about one time in five. Read `gpu_draw_ms` beside a capture before
+calling it lost, and re-capture rather than reason.
+
 ## What the Quest will need before this ships there
 
-The instanced twin's whole-block record reads were measured on the Quest (2026-09-02): every
-scene draw through them put the scene pass at 28 ms against 19.5, because Adreno preloads
-uniform constants and pays a memory load per storage-buffer read. The pulled and indirect paths
-carry that cost per pulled draw. The fix is a per-record register mask: the record holds only
-the registers that differ from the batch's bound uniform block (the world rows, the palette,
-the foliage vector), `BD_VSC` takes the record for those and the uniform block for the rest.
-That is the next piece of this stage, designed on the desktop, measured once on the Quest with
-the rest of the host-owned frame.
+The register mask above answers the storage-buffer cost. What remains is the replayed draws
+on records (the coverage), and the Quest run itself, which comes with the rest of the
+host-owned frame per the owner's decision.

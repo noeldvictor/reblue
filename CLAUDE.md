@@ -572,15 +572,18 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    (`gpu/vertex_pull.*`), the pulled pipeline twin with a dummy input layout, and
    `drawIndexedIndirect` in the plume fork. `bd_draw_pull` and `bd_draw_indirect` (default
    off): 91 record draws a flush in 35 indirect calls, frame correct, `other_ms` 4.60.
-   Two things before it ships on the Quest: (a) **the per-record register mask** - the
-   instanced twin's whole-block record reads cost 28 ms against 19.5 on the Quest
-   (2026-09-02, Adreno pays a load per storage-buffer read), so the record must hold only
-   the registers that differ from the batch's uniform block (world rows, palette, foliage)
-   and `BD_VSC` take the uniform block for the rest; (b) **the replayed draws on records**
-   (`bd_host_draw_records`), whose intermittent artefact predates this work and needs a
-   per-frame instrument - without them the pulled path covers the interpreted draws and the
-   groups only. A capture trap found on the way: a solid sky-blue capture with 790 draws
-   was the camera on open sky (`gpu_draw_ms` 1.2 against 3.3), not a lost frame.
+   **The per-record register mask shipped at 14:10** (`bd_record_mask`, default on): the
+   record marks the registers that differ from its group's first block, which the group
+   binds as its uniform window, and `BD_VSC` reads the record only for those - the answer
+   to the Quest's 28-against-19.5 ms storage-buffer constant reads of 2026-09-02, identical
+   by construction, verified on the desktop in every configuration. What remains before the
+   Quest: **the replayed draws on records** (`bd_host_draw_records`), whose intermittent
+   artefact predates this work and needs a per-frame instrument - without them the pulled
+   path covers the interpreted draws and the groups only. A capture trap, settled by the
+   day's CSVs: a solid sky-blue capture with 790 draws is the autoplay camera's cut to the
+   zenith (every run of the day, last night's included, spends 5-25% of field frames at
+   1.1 ms of GPU draw time in such stretches); read `gpu_draw_ms` beside a capture and
+   re-capture rather than reason.
    `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md`.
 6. **Assets** (stage 3), then shadows, animation, foveation.
 
