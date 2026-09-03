@@ -104,7 +104,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Post chain (bloom, depth of field) | **host-owned since 2026-09-02** (`gpu/post_chain.cpp`, `bd_host_post`): the guest's 15 tile-and-resolve quads a frame are replaced by host passes into the guest's own textures; image verified on desktop and Quest captures. The composites moved to the host next (one full-res pass); measure that once. |
 | Cel shading | **on the characters (2026-09-03, 00:50)**: `bd_cel_characters` sets a spec constant (`SPEC_CONSTANT_CEL`, XenosRecomp) on every skinned draw, and the recompiled pixel shader bands its lit colour before export; the world is untouched (desktop screenshot `out/shot_cel.png`). Four bands, no outline yet. **In the options menu (01:55)**: a "Cel Shading (Characters)" on/off row on the Graphics page (`settings_rows.cpp`, label in `res/embed/localization.toml`) bound to the cvar; compiled and booted, the row itself not yet looked at (autoplay never opens the menu) |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
-| Occlusion culling | distance cull only (`bd_cull_distance`); the walk itself is host code since 2026-09-02 (`gpu/scene/host_walk.cpp`, `bd_host_walk`), so a host cull attaches there |
+| Occlusion culling | distance cull (`bd_cull_distance`) and, **since 2026-09-03 13:00, the frustum test on the host** (`bd_host_cull`, default on): the guest's own six planes read once per walk, applied to each node's view-space sphere in host floats; `bd_host_cull_diag` runs the guest test beside it and read zero disagreements over 2,897 nodes a frame. The reflection and shadow views (ids 0, 1, 4, 5, 7, 8, 9) still call the guest test (4% of the desktop Draw Thread). Occlusion proper not started |
 | Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. Indirect draws not started |
 | Host-issued node draws (`bd_host_draw`) | **village: 580 of 659 node runs a frame are the host's, 43 templates volatile (2026-09-03, 02:40)** - the 36 texture-volatile ones are real: a slot the interpreter sets in one run and not in another holds whatever the previous node bound, so merging slot sets or reading the texture from the visual painted the rock with the reflection map (reverted, `6911572` undone): draws replayed from templates, skinned ones included, and **the render-list entries built by the host** (`bd_host_list_build`: 306 entries in 217 runs a frame from recorded entry images, the guest's own allocator, a fresh matrix and palette; the matrix source verified on 52,455 runs). Every draw of the scene pass carries a node tag (`config/hooks/render_list.toml`). Side-by-side runs on the Quest; the list build is desktop-verified only (headset offline): a desktop within-run A/B (`bd_ab_flag="bd_host_list_build"`, 03:30) reads **-8.8% CPU per draw** with it on |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
@@ -557,7 +557,24 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
    passes each sample the image they draw over (an input-attachment self-dependency would
    fold them into one pass; later).
-4. **Assets** (stage 3), then shadows, animation, culling, foveation.
+4. **The Draw Thread's own per-draw work, cut (13:20)**: the five items the first
+   symbolised desktop profile named (the ring read-back, per-field translation in the walk,
+   per-sub-draw block swaps in the replay, a per-frame texture-name scan, and the guest
+   visibility test - now `bd_host_cull`); `other_ms` 4.91 -> 4.67 across runs. What is left
+   of the host's per-draw CPU is spread thin (replay 2.4%, shared upload 1.5%, keys ~2%,
+   translation 4%). `research/20260903_1330_the-draw-thread-in-samples-...md`.
+5. **Indirect draws need vertex pulling - measured.** `[draw-queue] indirect diag`: the
+   village's 565 indexed instanced draws fall into **65 groups** by pipeline, material,
+   buffers and strides (one `drawIndexedIndirect` each would be 8.7x fewer draw calls), and
+   **zero** of them can be addressed by a command's single `vertexOffset`: a model's meshes
+   are packed into one block at arbitrary per-stream offsets. So the stage is: a
+   pulled-vertex vertex-shader twin in XenosRecomp (attributes via `RawBufferLoad` from
+   stream addresses in the instance record, the declaration's formats decoded in-shader),
+   the record carrying stream addresses and strides, `drawIndexedIndirect` in the plume
+   fork (none today), the queue writing one command buffer per group. Plain pipeline for
+   everything else. This is the Quest CPU lever (its frame is 18-22 ms of CPU against a
+   13.9 ms budget), and it is stage 8's first half.
+6. **Assets** (stage 3), then shadows, animation, foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 
@@ -701,6 +718,13 @@ files as that day's result. **Never run two device measurements at once.**
 - **`bd_sample_profiler`** samples the guest main, worker and render threads at 1 kHz with
   `SIGPROF` (or `SuspendThread` on Windows), dumps at the capture moment, and
   `tools/symbolize_profile.py` names the `libreblue.so` PCs from the unstripped build.
+  **On the desktop, `bash tools/symbolize_profile_win.sh`** resolves the dump against the
+  PDB (the PCs are RVAs) and prints the hottest functions - against the exe of the same
+  build only. The IO and loader threads are in the profile and are not the frame
+  (`sub_8272BE80`, `sub_8217AE90`); `dropped` is the driver. It found the upload ring being
+  read back (2026-09-03): **never read `alloc.memory` or the ring's mapped pointer** - it
+  is host-visible GPU memory, write-combined BAR on a desktop and uncached on the Quest,
+  and two four-vertex quads read from it cost 0.5 ms a frame.
 - **`bd_renderdoc` + `bd_renderdoc_after_s`** capture headlessly from inside the app;
   `renderdoccmd convert` then `python tools/rdc_outline.py` prints one line per render pass with
   its view mask. Read the view mask, not the layer count. It named the last two multiview bugs

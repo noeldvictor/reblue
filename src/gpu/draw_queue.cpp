@@ -612,6 +612,72 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         std::sort(v.begin(), v.end());
         return static_cast<u32>(std::unique(v.begin(), v.end()) - v.begin());
       };
+      // Indirect draws (2026-09-03): how many draws of this flush one
+      // drawIndexedIndirect could cover. A group shares the instanced
+      // pipeline, the material constants (PS, shared), the index buffer and
+      // format, every stream's buffer and stride, and the pass geometry; the
+      // commands differ in first index, index count and a vertex offset. A
+      // draw is "commandable" when every one of its streams sits at the
+      // group's base offset plus the same whole number of strides.
+      {
+        struct Coarse {
+          const void *pipeline; u32 ps, shared; const void *ib; u32 ib_fmt;
+          const void *vb[16]; u32 stride[16]; u32 first, count; float vp[6]; i32 sc[4];
+        };
+        struct Group { u64 key; u64 base_off[16]; u32 draws = 0, ok = 0; };
+        std::vector<std::pair<u64, const QueuedDraw *>> keyed;
+        for (const QueuedDraw &d : g_queue) {
+          if (!(d.instanced_pipeline && d.record_index != ~0u && d.indexed)) continue;
+          Coarse c{}; std::memset(&c, 0, sizeof(c));
+          c.pipeline = d.instanced_pipeline; c.ps = d.constant_offsets[1];
+          c.shared = d.constant_offsets[2]; c.ib = d.index_view.buffer.ref;
+          c.ib_fmt = u32(d.index_view.format); c.first = d.vertex_first; c.count = d.vertex_count;
+          const u32 end = std::min<u32>(d.vertex_first + d.vertex_count, 16u);
+          for (u32 i = d.vertex_first; i < end; ++i) {
+            c.vb[i] = d.vertex_views[i].buffer.ref; c.stride[i] = d.input_slots[i].stride;
+          }
+          c.vp[0] = d.viewport.x; c.vp[1] = d.viewport.y; c.vp[2] = d.viewport.width;
+          c.vp[3] = d.viewport.height; c.vp[4] = d.viewport.minDepth; c.vp[5] = d.viewport.maxDepth;
+          c.sc[0] = d.scissor.left; c.sc[1] = d.scissor.top; c.sc[2] = d.scissor.right; c.sc[3] = d.scissor.bottom;
+          keyed.emplace_back(XXH3_64bits(&c, sizeof(c)), &d);
+        }
+        std::sort(keyed.begin(), keyed.end(),
+                  [](const auto &a, const auto &b) { return a.first < b.first; });
+        u32 groups = 0, commandable = 0, multi_groups = 0, multi_draws = 0;
+        size_t i = 0;
+        while (i < keyed.size()) {
+          size_t j = i;
+          while (j < keyed.size() && keyed[j].first == keyed[i].first) ++j;
+          ++groups;
+          if (j - i > 1) { ++multi_groups; multi_draws += u32(j - i); }
+          // The group's base: the smallest offset per stream.
+          u64 base[16]; for (auto &b : base) b = ~0ull;
+          for (size_t k = i; k < j; ++k) {
+            const QueuedDraw &d = *keyed[k].second;
+            const u32 end = std::min<u32>(d.vertex_first + d.vertex_count, 16u);
+            for (u32 st = d.vertex_first; st < end; ++st)
+              base[st] = std::min<u64>(base[st], d.vertex_views[st].buffer.offset);
+          }
+          for (size_t k = i; k < j; ++k) {
+            const QueuedDraw &d = *keyed[k].second;
+            const u32 end = std::min<u32>(d.vertex_first + d.vertex_count, 16u);
+            bool ok = true; i64 quot = -1;
+            for (u32 st = d.vertex_first; st < end && ok; ++st) {
+              const u32 stride = d.input_slots[st].stride;
+              const u64 rel = d.vertex_views[st].buffer.offset - base[st];
+              if (!stride || rel % stride) { ok = false; break; }
+              const i64 q = i64(rel / stride);
+              if (quot < 0) quot = q; else if (q != quot) ok = false;
+            }
+            if (ok) ++commandable;
+          }
+          i = j;
+        }
+        BD_INFO("[draw-queue] indirect diag: {} indexed instanced draws in {} "
+                "coarse groups ({} groups of >1 covering {} draws); {} draws "
+                "commandable by vertexOffset",
+                keyed.size(), groups, multi_groups, multi_draws, commandable);
+      }
       BD_INFO("[draw-queue] instancing diag: {} draws, {} eligible, {} "
               "reorderable; distinct mesh {}, +pipeline {}, +shared {}, +ps {}, "
               "+vs {}, full key {}",
