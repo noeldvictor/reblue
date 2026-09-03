@@ -659,17 +659,31 @@ void EvictNativeTexture(u32 guest_va) {
       std::move(it->second));
   g_native_mirrors.erase(it);
   g_native_names.erase(guest_va);
+  ++g_native_name_seq; // the by-name cache keys on it
 }
 
 std::vector<NativeTextureRef> NativeTexturesByName(std::string_view name) {
   const std::string wanted = NormalizeTextureName(name);
-  std::vector<NativeTextureRef> out;
   std::lock_guard<std::mutex> lock(g_mirror_mutex);
+  // The glyph and prompt stamps ask every frame, and the scan compared every
+  // live texture's name each time: 1.6% of the Draw Thread's samples in the
+  // 2026-09-03 desktop profile. The registry's sequence moves on every
+  // insert and erase, so a lookup is repeated only when the registry changed.
+  struct Cached {
+    u64 seq = ~0ull;
+    std::vector<NativeTextureRef> refs;
+  };
+  static std::unordered_map<std::string, Cached> cache;
+  Cached &c = cache[wanted];
+  if (c.seq == g_native_name_seq)
+    return c.refs;
+  c.refs.clear();
   for (const auto &[va, entry] : g_native_names) {
     if (entry.name == wanted)
-      out.push_back({va, entry.seq});
+      c.refs.push_back({va, entry.seq});
   }
-  return out;
+  c.seq = g_native_name_seq;
+  return c.refs;
 }
 
 bool NativeTextureReplace(u32 guest_va, const u8 *blob, size_t size) {

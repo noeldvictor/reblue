@@ -1093,11 +1093,19 @@ bool HostDrawReplay(const NodeTag &tag) {
 
   t_replaying = true;
   MaterialOverride ov;
+  // The live blocks are byte-swapped once per template, not once per
+  // sub-draw: nothing writes the device's constants between the sub-draws of
+  // a replay, and the two 4 KB swaps per draw were 2.7% of the Draw Thread's
+  // samples on the desktop (2026-09-03), scalar on the Quest's ARM64 tail.
+  alignas(16) static thread_local u8 vs_base[kBlockBytes];
+  alignas(16) static thread_local u8 ps_base[kBlockBytes];
+  CopyGuestVertexBlock(device_guest, vs_base);
+  CopyGuestPixelBlock(device_guest, ps_base);
   for (const SubDraw &d : t->draws) {
     // The constant sources: the live files, the template's stable values,
     // the visual's fresh values, and the world rows.
-    CopyGuestVertexBlock(device_guest, t_vs_block);
-    CopyGuestPixelBlock(device_guest, t_ps_block);
+    std::memcpy(t_vs_block, vs_base, kBlockBytes);
+    std::memcpy(t_ps_block, ps_base, kBlockBytes);
     for (const RegDelta &r : d.vs_delta)
       std::memcpy(t_vs_block + r.reg * 16, r.stable ? r.value : v->vs[r.reg], 16);
     for (const RegDelta &r : d.ps_delta)

@@ -521,6 +521,25 @@ void CopyByteSwap32(u8 *dst, u32 guest_va, u32 size) {
   CopyByteSwap32Impl<false>(dst, guest_va, size);
 }
 
+} // namespace
+
+void ByteSwap32ToHost(u8 *dst, const u8 *src, u32 size) {
+  const u32 count = size / 4;
+  const u32 *in = reinterpret_cast<const u32 *>(src);
+  u32 *out = reinterpret_cast<u32 *>(dst);
+  for (u32 i = 0; i < count; ++i) {
+#if defined(_MSC_VER)
+    out[i] = _byteswap_ulong(in[i]);
+#else
+    out[i] = __builtin_bswap32(in[i]);
+#endif
+  }
+  for (u32 i = count * 4; i < size; ++i)
+    dst[i] = src[i];
+}
+
+namespace {
+
 void CopyByteSwap32FlushNaN(u8 *dst, u32 guest_va, u32 size) {
   CopyByteSwap32Impl<true>(dst, guest_va, size);
 }

@@ -769,6 +769,17 @@ REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
 // The host material shaders replace the guest's scene pixel shaders by hash
 // at link time (guest_shaders.cpp): bd_normal_ps first, the family after.
 // Read once per shader link, so a change needs a restart.
+// The host walk's visibility test on the host: the guest's own six planes
+// (its per-pass global table) against each node's sphere, instead of a call
+// into the recompiled test per node (3% of the Draw Thread's samples on the
+// desktop, 2026-09-03). The other view paths (reflection, shadow, the point
+// test) still call the guest.
+REXCVAR_DEFINE_BOOL(bd_host_cull_diag, false, kCvarGroup,
+                    "Run the guest's visibility test beside the host's and "
+                    "log disagreements.");
+REXCVAR_DEFINE_BOOL(bd_host_cull, true, kCvarGroup,
+                    "Host frustum test for the scene walk's default view "
+                    "path, from the guest's own plane table.");
 REXCVAR_DEFINE_BOOL(bd_host_materials, true, kCvarGroup,
                     "Substitute host material shaders for the guest's scene "
                     "pixel shaders (bd_normal_ps family).");

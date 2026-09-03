@@ -19,6 +19,7 @@
 
 #include <rex/graphics/xenos.h>
 #include <rex/cvar.h>
+#include <rex/hash.h>
 #include <rex/hook.h>
 #include <rex/runtime.h>
 #include <rex/types.h>
@@ -809,11 +810,100 @@ bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
   if (!pVertexData || !vertexCount || !vertexStride)
     return false;
   const u32 totalSize = vertexCount * vertexStride;
-  auto alloc = bd::gpu::UploadGuestBytesByteSwap32(pVertexData, totalSize,
-                                                   /*alignment=*/4);
-  if (!alloc.memory)
-    return false;
   const bool text_batch = pVertexData == kTextQuadBatchEA;
+  // The glyph batch is the same bytes frame after frame, and its processing
+  // (the swap, the canvas fit, the half-texel UV inset over every quad) was
+  // the single hottest host function in the 2026-09-03 desktop profile, 6% of
+  // the Draw Thread's samples. Processed once per content change: the raw
+  // bytes are hashed, and a hit uploads the processed copy instead.
+  struct TextBatchCache {
+    u64 hash = 0;
+    u32 size = 0;
+    u32 stride = 0;
+    u32 tex_w = 0;
+    u32 tex_h = 0;
+    float kx = 0.0f;
+    float ky = 0.0f;
+    bool drain = false;
+    std::vector<u8> bytes;
+  };
+  static TextBatchCache text_cache; // guest thread only
+  // Where the inset's time goes: calls and vertices per path, every 300 frames.
+  struct UpDiag {
+    u32 frame = 0;
+    u32 text_calls = 0, text_hits = 0, text_verts = 0, text_max = 0;
+    u32 sprite_calls = 0, sprite_verts = 0, other_calls = 0, other_verts = 0;
+  };
+  static UpDiag diag;
+  {
+    const u32 f = bd::gpu::FrameStatFrameCount();
+    if (f - diag.frame >= 300) {
+      if (diag.frame)
+        BD_INFO("[up] per frame: text {:.1f} calls ({:.1f} hits) {:.0f} verts "
+                "max {} | sprite {:.1f} calls {:.0f} verts | other {:.1f} calls "
+                "{:.0f} verts",
+                diag.text_calls / 300.0, diag.text_hits / 300.0,
+                diag.text_verts / 300.0, diag.text_max,
+                diag.sprite_calls / 300.0, diag.sprite_verts / 300.0,
+                diag.other_calls / 300.0, diag.other_verts / 300.0);
+      diag = UpDiag{};
+      diag.frame = f;
+    }
+    if (text_batch) {
+      ++diag.text_calls;
+      diag.text_verts += vertexCount;
+      diag.text_max = std::max(diag.text_max, vertexCount);
+    } else if (IsScreenSpriteQuad(primitiveType, vertexCount, vertexStride)) {
+      ++diag.sprite_calls;
+      diag.sprite_verts += vertexCount;
+    } else {
+      ++diag.other_calls;
+      diag.other_verts += vertexCount;
+    }
+  }
+  u64 text_hash = 0;
+  const u8 *text_raw = nullptr;
+  u32 tex_w = 0;
+  u32 tex_h = 0;
+  const float kx = bd::gpu::Output::DesignScaleX();
+  const float ky = bd::gpu::Output::DesignScaleY();
+  const bool drain = bd::gpu::Video::DesignCanvasDrain();
+  if (text_batch) {
+    const auto *tex = bd::gpu::state().textures[0];
+    tex_w = tex ? tex->width : 0u;
+    tex_h = tex ? tex->height : 0u;
+    text_raw = bd::mem::at<const u8>(pVertexData);
+    if (text_raw) {
+      text_hash = XXH3_64bits(text_raw, totalSize);
+      if (text_cache.hash == text_hash && text_cache.size == totalSize &&
+          text_cache.stride == vertexStride && text_cache.tex_w == tex_w &&
+          text_cache.tex_h == tex_h && text_cache.kx == kx &&
+          text_cache.ky == ky && text_cache.drain == drain) {
+        auto hit = bd::gpu::UploadHostBytes(text_cache.bytes.data(),
+                                            totalSize, /*alignment=*/4);
+        if (!hit.memory)
+          return false;
+        ++diag.text_hits;
+        bd::gpu::state().overlay2D = true;
+        bd::gpu::Video::SetVertexStream(0, hit.ref, hit.size, vertexStride);
+        return true;
+      }
+    }
+  }
+  // Swapped into a host scratch, fixed up there, uploaded once. The fix-ups
+  // below used to run on the upload ring's mapped memory, which is
+  // host-visible GPU memory: write-combined BAR on a desktop, uncached on the
+  // Quest. Reading it back made two four-vertex quads a frame the hottest
+  // host function in the 2026-09-03 desktop profile (8% of the Draw Thread).
+  static std::vector<u8> scratch; // guest thread only
+  scratch.resize(totalSize);
+  const u8 *raw = bd::mem::at<const u8>(pVertexData);
+  if (!raw)
+    return false;
+  bd::gpu::ByteSwap32ToHost(scratch.data(), raw, totalSize);
+  struct HostAlloc {
+    u8 *memory;
+  } alloc{scratch.data()};
   // Remember whether this is genuinely 2D overlay content - the glyph batch, or
   // a screen sprite - so the stereo path can put it in *both* eyes.
   //
@@ -834,7 +924,21 @@ bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
     InsetQuadUVs(alloc.memory, vertexCount, vertexStride, UVEdges::All);
   else if (IsScreenSpriteQuad(primitiveType, vertexCount, vertexStride))
     InsetQuadUVs(alloc.memory, vertexCount, vertexStride, UVEdges::CellSeam);
-  bd::gpu::Video::SetVertexStream(0, alloc.ref, alloc.size, vertexStride);
+  if (text_batch && text_raw) {
+    text_cache.hash = text_hash;
+    text_cache.size = totalSize;
+    text_cache.stride = vertexStride;
+    text_cache.tex_w = tex_w;
+    text_cache.tex_h = tex_h;
+    text_cache.kx = kx;
+    text_cache.ky = ky;
+    text_cache.drain = drain;
+    text_cache.bytes.assign(alloc.memory, alloc.memory + totalSize);
+  }
+  auto up = bd::gpu::UploadHostBytes(scratch.data(), totalSize, /*alignment=*/4);
+  if (!up.memory)
+    return false;
+  bd::gpu::Video::SetVertexStream(0, up.ref, up.size, vertexStride);
   return true;
 }
 

@@ -186,4 +186,8 @@ ConstantAllocation UploadGuestBytes(u32 guest_va, u32 size, u32 alignment = 4);
 ConstantAllocation UploadHostBytes(const void *host_data, u32 size,
                                    u32 alignment = 4);
 
+// 32-bit byte swap of host bytes into host bytes (no NaN flush), for guest
+// data that is fixed up on the host before it is uploaded.
+void ByteSwap32ToHost(u8 *dst, const u8 *src, u32 size);
+
 } // namespace bd::gpu

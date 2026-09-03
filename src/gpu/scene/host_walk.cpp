@@ -48,11 +48,18 @@
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "gpu/frame_stats.h"
 #include "gpu/device.h"
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
 
 REXCVAR_DECLARE(bool, bd_host_walk);
+REXCVAR_DECLARE(bool, bd_host_cull);
+REXCVAR_DECLARE(bool, bd_host_cull_diag);
+namespace {
+u32 g_cull_walks = 0, g_cull_host_walks = 0, g_cull_tested = 0,
+    g_cull_disagreed = 0;
+} // namespace
 REXCVAR_DECLARE(bool, bd_reflections);
 REXCVAR_DECLARE(bool, bd_walk_skip_stubs);
 
@@ -107,25 +114,74 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   const u32 centre_va = frame + kCentreOffset;
 
   auto &stack = t_stack;
+  // The guest's visibility test, sub_82287788, on the host for its default
+  // path: the cull-off switch clear and a render view other than 0, 1, 4, 5,
+  // 7, 8, 9 (those take their own tables), it builds (x, y, z, r) and asks
+  // sub_821CE028 whether dot((x, y, z, 1), plane) > r for any of the six
+  // planes at the global table. The addresses are the function's own
+  // lis/addi constants; the planes are read once per walk, not per node.
+  const u32 cull_switch_va = u32(u32(-32036) << 16) + u32(-5536) + 520u;
+  const u32 plane_table_va = u32(u32(-32033) << 16) + u32(-30608);
+  bool host_cull = REXCVAR_GET(bd_host_cull) &&
+                   bd::mem::try_load<u32>(cull_switch_va) == 0;
+  float planes[6][4];
+  if (host_cull) {
+    const u32 view = bd::mem::try_load<u32>(kRenderViewIdVa);
+    host_cull = !(view == 0 || view == 1 || view == 4 || view == 5 ||
+                  view == 7 || view == 8 || view == 9);
+    const auto *pp = host_cull
+                         ? bd::mem::try_at<const be_u32>(plane_table_va + 64)
+                         : nullptr;
+    if (!pp)
+      host_cull = false;
+    else
+      for (u32 i = 0; i < 6; ++i)
+        for (u32 k = 0; k < 4; ++k) {
+          const u32 bits = static_cast<u32>(pp[i * 4 + k]);
+          std::memcpy(&planes[i][k], &bits, sizeof(float));
+        }
+  }
+  ++g_cull_walks;
+  if (host_cull)
+    ++g_cull_host_walks;
+  {
+    static u32 last_frame = 0;
+    const u32 f = bd::gpu::FrameStatFrameCount();
+    if (f - last_frame >= 300) {
+      if (last_frame)
+        BD_INFO("[cull] per frame: walks {:.1f}, host-tested walks {:.1f}, nodes "
+                "tested {:.1f}, disagreements {:.2f}",
+                g_cull_walks / 300.0, g_cull_host_walks / 300.0,
+                g_cull_tested / 300.0, g_cull_disagreed / 300.0);
+      g_cull_walks = g_cull_host_walks = g_cull_tested = g_cull_disagreed = 0;
+      last_frame = f;
+    }
+  }
   stack.clear();
   stack.push_back(root);
   while (!stack.empty()) {
     u32 node = stack.back();
     stack.pop_back();
     while (node) {
-      const u32 flags = bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, flags));
-      const u32 next = bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, sibling));
+      // One translation per node, not one per field: try_translate was 5%
+      // of the Draw Thread's samples (2026-09-03 desktop profile), most of
+      // it from here and the replay. An unreadable node ends its sibling
+      // chain, as five null-fallback reads did.
+      const auto *n = bd::mem::try_at<const GuestDrawNode>(node);
+      if (!n)
+        break;
+      const u32 flags = static_cast<u32>(n->flags);
+      const u32 next = static_cast<u32>(n->sibling);
       if (flags & kNodePrune) {
         node = next;
         continue;
       }
-      const u32 child = bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, child));
+      const u32 child = static_cast<u32>(n->child);
       if (!(flags & kNodeNoDraw)) {
-        const u32 mesh = (flags & kNodeHasGeometry)
-                             ? bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, mesh))
-                             : 0;
+        const u32 mesh =
+            (flags & kNodeHasGeometry) ? static_cast<u32>(n->mesh) : 0;
         if (mesh) {
-          const u32 index = bd::mem::try_field<u32>(node, offsetof(GuestDrawNode, matrixIndex));
+          const u32 index = static_cast<u32>(n->matrixIndex);
           const u32 matrix = palette + (index << 6);
           // One translation per object, not one per float: the walk visits
           // every node of every visual, and the per-read validation showed
@@ -155,7 +211,37 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
           ctx.r3.u64 = centre_va;
           bool visible = false;
           if (!bdSceneCullBiasHook(ctx.f1, ctx.r3)) {
-            sub_82287788(ctx, base);
+            if (host_cull) {
+              bool outside = false;
+              float dist[6];
+              for (u32 i = 0; i < 6; ++i) {
+                dist[i] = out[0] * planes[i][0] + out[1] * planes[i][1] +
+                          out[2] * planes[i][2] + planes[i][3];
+                outside = outside || dist[i] > radius;
+              }
+              // Diagnostic: the guest's verdict beside the host's, the
+              // disagreements logged with the numbers (2026-09-03).
+              ++g_cull_tested;
+              if (REXCVAR_GET(bd_host_cull_diag)) {
+                sub_82287788(ctx, base);
+                const bool guest_visible = ctx.r3.s32 != 0;
+                if (guest_visible == outside) {
+                  ++g_cull_disagreed;
+                  static u32 told = 0;
+                  if (told++ < 24)
+                    BD_INFO("[cull] disagree view {} guest {} host {} c ({:.2f} "
+                            "{:.2f} {:.2f}) r {:.3f} d [{:.3f} {:.3f} {:.3f} "
+                            "{:.3f} {:.3f} {:.3f}] mesh {:08X}",
+                            bd::mem::try_load<u32>(kRenderViewIdVa),
+                            guest_visible ? 1 : 0, outside ? 0 : 1, out[0],
+                            out[1], out[2], radius, dist[0], dist[1], dist[2],
+                            dist[3], dist[4], dist[5], mesh);
+                }
+              }
+              ctx.r3.s64 = outside ? 0 : 1;
+            } else {
+              sub_82287788(ctx, base);
+            }
             bdSceneCullDistanceHook(ctx.r3);
             visible = ctx.r3.s32 != 0;
           }
