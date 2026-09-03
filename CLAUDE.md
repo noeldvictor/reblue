@@ -105,7 +105,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Cel shading | **on the characters (2026-09-03, 00:50)**: `bd_cel_characters` sets a spec constant (`SPEC_CONSTANT_CEL`, XenosRecomp) on every skinned draw, and the recompiled pixel shader bands its lit colour before export; the world is untouched (desktop screenshot `out/shot_cel.png`). Four bands, no outline yet. **In the options menu (01:55)**: a "Cel Shading (Characters)" on/off row on the Graphics page (`settings_rows.cpp`, label in `res/embed/localization.toml`) bound to the cvar; compiled and booted, the row itself not yet looked at (autoplay never opens the menu) |
 | Fixed foveated rendering | fragment density map on the app's own pass measured expensive and ineffective; `XR_FB_foveation` needs the scene in the XR swapchain - not started |
 | Occlusion culling | distance cull (`bd_cull_distance`) and, **since 2026-09-03 13:00, the frustum test on the host** (`bd_host_cull`, default on): the guest's own six planes read once per walk, applied to each node's view-space sphere in host floats; `bd_host_cull_diag` runs the guest test beside it and read zero disagreements over 2,897 nodes a frame. The reflection and shadow views (ids 0, 1, 4, 5, 7, 8, 9) still call the guest test (4% of the desktop Draw Thread). Occlusion proper not started |
-| Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. Indirect draws not started |
+| Instancing / indirect draws | **instancing on the deferred queue (2026-09-02)**: every guest vertex shader has an instanced twin reading its whole constant block from an `InstanceRecord`, the queue merges consecutive equal draws (`bd_draw_instancing`, with `bd_draw_instancing_reorder`); **Quest: -8 ms GPU for the pair**, singles stay on the plain pipeline. **Vertex pulling and indirect draws shipped on the desktop 2026-09-03 14:00** (`gpu/vertex_pull.*`, `bd_draw_pull`, `bd_draw_indirect`, both default off until the Quest run): every vertex shader can pull its attributes from the instance record's streams (`SPEC_CONSTANT_PULLED`, a block buffer heap at binding 3 of the texture set, a per-declaration attribute table, a per-record stream table), the pulled twin draws with no stream binds, and batches of pulled draws sharing pipeline, material, index buffer and pass go out as one `drawIndexedIndirect` (plume fork). Village: 91 record draws a flush in 35 calls, frame correct. Coverage is the draws with records; the replayed draws join when `bd_host_draw_records` is trusted. `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md` |
 | Host-issued node draws (`bd_host_draw`) | **village: 580 of 659 node runs a frame are the host's, 43 templates volatile (2026-09-03, 02:40)** - the 36 texture-volatile ones are real: a slot the interpreter sets in one run and not in another holds whatever the previous node bound, so merging slot sets or reading the texture from the visual painted the rock with the reflection map (reverted, `6911572` undone): draws replayed from templates, skinned ones included, and **the render-list entries built by the host** (`bd_host_list_build`: 306 entries in 217 runs a frame from recorded entry images, the guest's own allocator, a fresh matrix and palette; the matrix source verified on 52,455 runs). Every draw of the scene pass carries a node tag (`config/hooks/render_list.toml`). Side-by-side runs on the Quest; the list build is desktop-verified only (headset offline): a desktop within-run A/B (`bd_ab_flag="bd_host_list_build"`, 03:30) reads **-8.8% CPU per draw** with it on |
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
@@ -563,17 +563,25 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    visibility test - now `bd_host_cull`); `other_ms` 4.91 -> 4.67 across runs. What is left
    of the host's per-draw CPU is spread thin (replay 2.4%, shared upload 1.5%, keys ~2%,
    translation 4%). `research/20260903_1330_the-draw-thread-in-samples-...md`.
-5. **Indirect draws need vertex pulling - measured.** `[draw-queue] indirect diag`: the
-   village's 565 indexed instanced draws fall into **65 groups** by pipeline, material,
-   buffers and strides (one `drawIndexedIndirect` each would be 8.7x fewer draw calls), and
-   **zero** of them can be addressed by a command's single `vertexOffset`: a model's meshes
-   are packed into one block at arbitrary per-stream offsets. So the stage is: a
-   pulled-vertex vertex-shader twin in XenosRecomp (attributes via `RawBufferLoad` from
-   stream addresses in the instance record, the declaration's formats decoded in-shader),
-   the record carrying stream addresses and strides, `drawIndexedIndirect` in the plume
-   fork (none today), the queue writing one command buffer per group. Plain pipeline for
-   everything else. This is the Quest CPU lever (its frame is 18-22 ms of CPU against a
-   13.9 ms budget), and it is stage 8's first half.
+5. **Vertex pulling and indirect draws - shipped on the desktop (14:00).** The measurement
+   that settled the design: `[draw-queue] indirect diag` put the village's 565 instanced
+   draws in **65** groups an indirect call could each cover and **zero** addressable by a
+   command's `vertexOffset` (a model's meshes sit in one block at arbitrary offsets). So
+   the shader pulls: `SPEC_CONSTANT_PULLED` on every vertex shader (XenosRecomp fork), a
+   block buffer heap, a declaration attribute table and a per-record stream table
+   (`gpu/vertex_pull.*`), the pulled pipeline twin with a dummy input layout, and
+   `drawIndexedIndirect` in the plume fork. `bd_draw_pull` and `bd_draw_indirect` (default
+   off): 91 record draws a flush in 35 indirect calls, frame correct, `other_ms` 4.60.
+   Two things before it ships on the Quest: (a) **the per-record register mask** - the
+   instanced twin's whole-block record reads cost 28 ms against 19.5 on the Quest
+   (2026-09-02, Adreno pays a load per storage-buffer read), so the record must hold only
+   the registers that differ from the batch's uniform block (world rows, palette, foliage)
+   and `BD_VSC` take the uniform block for the rest; (b) **the replayed draws on records**
+   (`bd_host_draw_records`), whose intermittent artefact predates this work and needs a
+   per-frame instrument - without them the pulled path covers the interpreted draws and the
+   groups only. A capture trap found on the way: a solid sky-blue capture with 790 draws
+   was the camera on open sky (`gpu_draw_ms` 1.2 against 3.3), not a lost frame.
+   `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md`.
 6. **Assets** (stage 3), then shadows, animation, foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
