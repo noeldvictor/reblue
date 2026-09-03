@@ -38,6 +38,7 @@
 #include "gpu/scene/host_draw.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -117,6 +118,12 @@ struct NodeTemplate {
   bool volatile_material = false;
   u32 replays = 0;
   std::vector<SubDraw> draws;
+  // A skinned node's bone palette is a gather: bdSceneNodeDrawSingle copies
+  // palette slot bone_slots[i] (64 bytes at ctx.palette + slot * 64) into a
+  // stack buffer and uploads it at c60 + 4i. The slots come from the mesh's
+  // bone-index tokens and never change; the matrices do, every frame, so the
+  // replay gathers them live from the same palette.
+  std::vector<u16> bone_slots;
 };
 
 // The registers and samplers the interpreter last wrote for a visual, with
@@ -173,6 +180,8 @@ struct Pending {
   u32 vs_set[8] = {};
   u32 ps_set[8] = {};
   std::vector<SubDraw> draws;
+  u32 bone_count = 0;  // matrices uploaded at c60 by this run, 0 if none
+  bool needs_bones = false; // a draw's vertex shader reads c60..c155
 };
 thread_local Pending t_pending;
 thread_local bool t_replaying = false;
@@ -265,13 +274,83 @@ bool VertexShaderReplayable(const PipelineState &st) {
   const u32 *m = vs->shaderCacheEntry->constantRegisterMask;
   if ((m[1] & (1u << 25)) && !FoliageTrusted())   // c57
     return false;
-  if (m[1] & 0xF0000000u)  // c60..c63
-    return false;
-  if (m[2] || m[3])        // c64..c127
-    return false;
-  if (m[4] & 0x00FFFFFFu)  // c128..c151
-    return false;
   return true;
+}
+
+// Whether the vertex shader reads the bone palette, c60..c155.
+bool VertexShaderReadsBones(const PipelineState &st) {
+  const auto *vs = st.vertexShader;
+  if (!vs || !vs->shaderCacheEntry)
+    return false;
+  const u32 *m = vs->shaderCacheEntry->constantRegisterMask;
+  return (m[1] & 0xF0000000u) || m[2] || m[3] || (m[4] & 0x0FFFFFFFu);
+}
+
+constexpr u32 kBoneBase = 60;
+constexpr u32 kBoneMax = 24; // bdSceneNodeDrawSingle refuses more (cmpwi 24)
+constexpr u32 kBoneRegs = kBoneMax * 4;
+
+// A palette slot as the constant file would hold it after the guest's
+// SetVertexShaderConstantFN and the host's byte-swapping copy (NaN flushed).
+void LoadPaletteSlot(u32 va, u32 out[16]) {
+  for (u32 i = 0; i < 16; ++i) {
+    u32 v = bd::mem::try_load<u32>(va + i * 4);
+    if ((v & 0x7F800000u) == 0x7F800000u && (v & 0x007FFFFFu))
+      v = 0;
+    out[i] = v;
+  }
+}
+
+// Recover which palette slots the run's c60.. matrices came from, by value.
+bool RecoverBoneSlots(const NodeTag &tag, const u8 *block, u32 count,
+                      std::vector<u16> &slots) {
+  slots.clear();
+  if (!tag.palette_va || count == 0 || count > kBoneMax)
+    return false;
+  if (tag.bone_table_va) {
+    // The entry names them; check the first against the upload anyway.
+    if (tag.bone_count != count)
+      return false;
+    for (u32 i = 0; i < count; ++i) {
+      const u32 slot = bd::mem::try_load<u32>(tag.bone_table_va + i * 4);
+      if (slot > 4096)
+        return false;
+      slots.push_back(static_cast<u16>(slot));
+    }
+    u32 first[16];
+    LoadPaletteSlot(tag.palette_va + slots[0] * 64u, first);
+    if (std::memcmp(first, block + kBoneBase * 16, 64) != 0) {
+      slots.clear();
+      return false;
+    }
+    return true;
+  }
+  u32 span = bd::mem::try_field<u32>(tag.visual_va, kVisualBoneCount);
+  if (span == 0 || span > 1024)
+    span = 512;
+  std::vector<std::array<u32, 16>> palette(span);
+  for (u32 j = 0; j < span; ++j)
+    LoadPaletteSlot(tag.palette_va + j * 64, palette[j].data());
+  for (u32 i = 0; i < count; ++i) {
+    const u8 *want = block + (kBoneBase + 4 * i) * 16;
+    bool found = false;
+    for (u32 j = 0; j < span && !found; ++j)
+      if (std::memcmp(palette[j].data(), want, 64) == 0) {
+        slots.push_back(static_cast<u16>(j));
+        found = true;
+      }
+    if (!found) {
+      slots.clear();
+      return false;
+    }
+  }
+  return true;
+}
+
+void GatherBones(const NodeTag &tag, const std::vector<u16> &slots, u8 *block) {
+  for (size_t i = 0; i < slots.size(); ++i)
+    LoadPaletteSlot(tag.palette_va + slots[i] * 64u,
+                    reinterpret_cast<u32 *>(block + (kBoneBase + 4 * i) * 16));
 }
 
 void ReadFetch(const D3DDevice *dev, u32 out[32][6]) {
@@ -480,6 +559,8 @@ void NoteConstantsSet(bool vertex, u32 start, u32 count) {
   const u32 end = std::min<u32>(start + count, 256u);
   for (u32 r = start; r < end; ++r)
     set[r / 32] |= 1u << (r % 32);
+  if (vertex && start == kBoneBase)
+    p.bone_count = count / 4;
 }
 
 // One-shot: where the interpreter's constant writes come from, relative to
@@ -524,6 +605,8 @@ void HostDrawSnapshotBefore() {
   p.valid = false;
   p.replayable = true;
   p.set_mask = 0;
+  p.bone_count = 0;
+  p.needs_bones = false;
   p.sampler_mask = 0;
   std::memset(p.vs_set, 0, sizeof(p.vs_set));
   std::memset(p.ps_set, 0, sizeof(p.ps_set));
@@ -593,6 +676,14 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
       }
     }
   }
+  if (VertexShaderReadsBones(s.pipelineState)) {
+    // The palette is gathered live at replay; keep it out of the delta.
+    p.needs_bones = true;
+    std::memset(p.vs + kBoneBase * 16, 0, kBoneRegs * 16);
+    std::memset(t_vs_block + kBoneBase * 16, 0, kBoneRegs * 16);
+    for (u32 r = kBoneBase; r < kBoneBase + kBoneRegs; ++r)
+      p.vs_set[r / 32] &= ~(1u << (r % 32));
+  }
   DiffBlock(p.vs, t_vs_block, p.vs_set, d.vs_delta, true);
   DiffBlock(p.ps, t_ps_block, p.ps_set, d.ps_delta, false);
   ReadFetch(dev, t_fetch);
@@ -652,6 +743,27 @@ void HostDrawCommit(const NodeTag &tag) {
     p.valid = false;
     return;
   }
+  std::vector<u16> bone_slots;
+  if (p.needs_bones) {
+    const u32 device_guest = LastGuestDeviceVa();
+    CopyGuestVertexBlock(device_guest, t_vs_block);
+    if (!RecoverBoneSlots(tag, t_vs_block, p.bone_count, bone_slots)) {
+      static u32 told = 0;
+      if (told++ < 4)
+        BD_INFO("[node] bones not recovered: {} uploaded, palette {:08X}, "
+                "visual {:08X} (list {})",
+                p.bone_count, tag.palette_va, tag.visual_va,
+                tag.from_list ? 1 : 0);
+      st.never[KeyOf(tag)] = FrameStatFrameCount();
+      p.valid = false;
+      return;
+    }
+    static u32 said = 0;
+    if (said++ < 2)
+      BD_INFO("[node] bones recovered: {} slots from palette {:08X} for "
+              "visual {:08X}",
+              p.bone_count, tag.palette_va, tag.visual_va);
+  }
   const u32 frame = FrameStatFrameCount();
 
   // Whatever this run wrote is the visual's freshest word on those registers.
@@ -682,7 +794,7 @@ void HostDrawCommit(const NodeTag &tag) {
       return;
     }
     if (t.captured_frame != frame) {
-      if (!MergeDraws(t.draws, p.draws)) {
+      if (t.bone_slots != bone_slots || !MergeDraws(t.draws, p.draws)) {
         t.volatile_material = true;
         t.draws.clear();
         ++st.volatile_count;
@@ -696,6 +808,7 @@ void HostDrawCommit(const NodeTag &tag) {
   NodeTemplate &t = st.templates[key];
   t.captured_frame = frame;
   t.draws = std::move(p.draws);
+  t.bone_slots = std::move(bone_slots);
   p.draws.clear();
   p.valid = false;
 }
@@ -839,6 +952,8 @@ bool HostDrawReplay(const NodeTag &tag) {
     for (const RegDelta &r : d.ps_delta)
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
     std::memcpy(t_vs_block + 20 * 16, world_rows, sizeof(world_rows));
+    if (!t->bone_slots.empty())
+      GatherBones(tag, t->bone_slots, t_vs_block);
     u32 bools[8];
     std::memcpy(bools, d.bools, sizeof(bools));
     if (has_foliage) {

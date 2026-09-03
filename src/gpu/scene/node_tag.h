@@ -34,6 +34,12 @@ struct NodeTag {
   // direct node draw: mesh_va is then a hash of the entry's draw identity,
   // matrix_va the entry's inline world matrix, ctx_va/palette_va unset.
   bool from_list = false;
+  // A render-list entry names its bones outright: palette_va is the entry's
+  // palette pointer (+268) and bone_table_va its index table (+800, one u32
+  // per bone, bone_count of them from +289). A direct node's table lives on
+  // the interpreter's stack and is recovered by value instead.
+  u32 bone_table_va = 0;
+  u32 bone_count = 0;
   bool valid = false;
 };
 

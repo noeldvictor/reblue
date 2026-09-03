@@ -184,7 +184,10 @@ namespace {
 // Render-list entry layout, from sub_8227F360's loop (reblue_recomp.84.cpp).
 constexpr u32 kEntryWorld = 16;      // 4x4 matrix, bdBuildViewMatrix(entry+16)
 constexpr u32 kEntryNodeIndex = 252; // foliage table index, like r4 of DrawSingle
+constexpr u32 kEntryPalette = 268;   // bone palette base, 64 bytes a slot
 constexpr u32 kEntryVisual = 272;
+constexpr u32 kEntryBoneCount = 289; // s8
+constexpr u32 kEntryBoneTable = 800; // u32 slot indices
 constexpr u32 kEntryDrawParams = 280; // u16 start, count, base, +286 u16
 constexpr u32 kEntryFlags = 288;      // bytes 288..294 select the passes
 constexpr u32 kEntryDecl = 376;
@@ -226,6 +229,12 @@ bd::gpu::scene::NodeTag ListEntryTag(u32 entry) {
   tag.seq = static_cast<u32>(
       g_list_entries.fetch_add(1, std::memory_order_relaxed));
   tag.from_list = true;
+  const i32 bones = static_cast<i8>(bd::mem::try_load<u8>(entry + kEntryBoneCount));
+  if (bones > 0) {
+    tag.palette_va = bd::mem::try_load<u32>(entry + kEntryPalette);
+    tag.bone_table_va = entry + kEntryBoneTable;
+    tag.bone_count = static_cast<u32>(bones);
+  }
   tag.valid = true;
   return tag;
 }
