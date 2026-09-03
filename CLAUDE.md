@@ -587,7 +587,21 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    is what the afternoon's solid sky-blue captures were). **Defaults on since 15:00**:
    replayed draws on records, singles on the record path, pulling, indirect draws.
    `research/20260903_1400_vertex-pulling-and-indirect-draws-on-the-desktop.md`.
-6. **Assets** (stage 3), then shadows, animation, foveation.
+6. **Stage 5's first piece shipped (16:00): the sun shadow frustum fitted to the view**
+   (`gpu/shadow_fit.*`, `bd_shadow_fit`, reach `bd_shadow_fit_distance` = 500). At the
+   host's vertex block fetch, the shadow pass's c32-35 and the scene pass's c36-39 are
+   pre-multiplied by a clip-space recentre-and-zoom onto the camera frustum's near part,
+   the camera taken from the scene pass's own c32-35 a frame earlier; the light matrix is
+   an orthographic box in column convention (clip = M * v), and the PCF scale follows the
+   zoom. On the desktop the frustum out to 300 units sat at ~60% of the guest's box, so a
+   1024 map on the Quest gains that in texel density where the camera looks; shadows
+   beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
+   constant setter was the wrong seam for this: the shadow pass is host-replayed and never
+   calls it. **Two replay guards** joined the surface-slot fix: a render-target slot with no
+   fresh binding this frame refuses the replay, and an ordinary texture whose object was
+   reused since the capture (content hash moved) refuses and recaptures - a 300-frame
+   sequence with templates refreshed every 600 frames shows no patch frame.
+7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 

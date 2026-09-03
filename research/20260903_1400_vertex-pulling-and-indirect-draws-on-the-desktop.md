@@ -112,3 +112,22 @@ on. Village: 258 draws a flush in -> 240 issued -> **80 indirect calls, 235 pull
 300-frame sequence with no artefact frame. Within-run A/Bs: `bd_draw_indirect` -2.9% CPU per
 draw, `bd_draw_pull` (the whole pulled path) -3.2%, GPU flat. The desktop driver's per-draw
 cost is small; the Quest's is what these are for, and that run comes with the host-owned frame.
+
+## Addendum (16:00): the sun frustum fitted to the view, and two more guards
+
+`gpu/shadow_fit.*` (commit `6b2912e`). The guest's constant setter turned out to be the wrong
+seam - under the host-issued draws the shadow pass never calls it, and every view it did see
+was a camera - so the fit lives at the host's vertex block fetch. The diag settled the
+convention: the shadow pass's c32-35 is an orthographic box (row 3 = 0 0 0 1) applied as
+clip = M * v, the camera's c32-35 has the unit view direction and the eye distance in its
+fourth row, and the camera frustum out to 300 units lands at x [-0.72, 0.42], y [-0.95, 0.25]
+of the box. The fit pre-multiplies both light matrices by a clip-space recentre-and-zoom with
+the centre snapped to the map's texel grid; captures at 300 and 150 units show the same
+shadows as the guest's, no corruption, and the PCF scale follows the zoom.
+
+The cyan patch came back once in a one-shot capture after the surface-slot fix, so two more
+guards: a replay whose render-target slot has no binding from the visual's interpreted node
+this frame interprets instead, and a template's ordinary texture pointer is checked against
+the content hash it had at capture (a reused GuestTexture object keeps its pointer). The
+stress: templates refreshed every 600 frames, 300 captured frames, zero frames with 2-60%
+of the artefact colour; the readings near 2% are sky slivers.
