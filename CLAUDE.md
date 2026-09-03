@@ -97,7 +97,7 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | --- | --- |
 | SDK cross-built for android-arm64, APK, VFS over full game data, Vulkan, OpenXR session, Touch controllers as a pad, head pose driving the view | works |
 | `bd_stereo` (side-by-side, submits every draw twice) | **works, correct crossed depth**, the shipping stereo route |
-| `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | **works, correct crossed stereo on the desktop (2026-09-02)**; on the Quest **23.5 ms GPU, 24.3 ms CPU, 379 draws (2026-09-02 22:40, resolve chain on, after the per-draw cut)** against 59 ms in the morning; the host post chain does not run on two-layer targets yet (`BeginGuestTarget` refuses layers != 1), so the guest's fifteen post quads and the five resolve passes are still in that frame, and the capture came back black (the resolved-companion capture site; unverified on the panel). **Fixed on the desktop (23:50-00:10)**: the host post chain runs on two-layer targets (exposure, dof, bloom right), the shadow pass gets multiview pipelines (shadow in both eyes). Quest (00:15-00:30): **23.0 ms GPU with the resolve chain on and 23.0 with it off** (`bd_mv_resolve=false` no longer costs 277 ms - the per-bind descriptor copy was that), stacked capture non-black on both layers, disparity 2 px in a blurred close-up (stereo not confirmed on device). Each layer is a full 1376x720, twice the pixels per eye of side-by-side, which is where the 9 ms over side-by-side sit. **`bd_mv_half_width` (each layer half the guest width, the same pixels per eye as side-by-side) renders a correct pair on the desktop with the layered post chain (03:00, `out/shot_mv_half.png`) and is the Android default now; the old "present chain does not follow" is gone.** Not yet run on the Quest |
+| `bd_stereo_multiview` (one submission, two-layer targets, array bindless heap) | **works, correct crossed stereo on the desktop (2026-09-02)**; on the Quest **23.5 ms GPU, 24.3 ms CPU, 379 draws (2026-09-02 22:40, resolve chain on, after the per-draw cut)** against 59 ms in the morning; the host post chain does not run on two-layer targets yet (`BeginGuestTarget` refuses layers != 1), so the guest's fifteen post quads and the five resolve passes are still in that frame, and the capture came back black (the resolved-companion capture site; unverified on the panel). **Fixed on the desktop (23:50-00:10)**: the host post chain runs on two-layer targets (exposure, dof, bloom right), the shadow pass gets multiview pipelines (shadow in both eyes). Quest (00:15-00:30): **23.0 ms GPU with the resolve chain on and 23.0 with it off** (`bd_mv_resolve=false` no longer costs 277 ms - the per-bind descriptor copy was that), stacked capture non-black on both layers, disparity 2 px in a blurred close-up (stereo not confirmed on device). Each layer is a full 1376x720, twice the pixels per eye of side-by-side, which is where the 9 ms over side-by-side sit. **`bd_mv_half_width` (each layer half the guest width, the same pixels per eye as side-by-side) renders a correct pair on the desktop with the layered post chain (03:00, `out/shot_mv_half.png`) and is the Android default now; the old "present chain does not follow" is gone.** **Quest, 2026-09-03: half width read 39.8 ms** because only the scene surface was halved and the guest resolved each layer back up to a 1376-wide chain (six eager resolves); **halving `Output::LatchedFit` instead puts the whole guest chain at 680x720 a layer: 24.6 ms GPU p50, resolves back to two, stacked capture a correct crossed pair on device** (run 7, `research/20260903_0950_...md`). Side-by-side in the same kind of scene: 20.8. The gap is the scene pass: 14.6 ms of render for the two 688x720 layers against 12-13 for side-by-side's 1376x720 |
 | Field-scene frame rate | **60 fps, vsync-locked** (98% of field frames in one 60 Hz slot, `gpu_total_ms` 15.8, `other_ms` 16.3, 2026-09-02 21:05) on side-by-side with shadows and reflections off, in a lighter scene than the 2026-09-01 one (20 fps then); target 72 fps, see "The direction" |
 | Character-anchored camera modes, diorama in battle | composed and unit-tested; tuning against a capture still wanted |
 | Tourist mode | HP/MP top-up works (desktop); encounter suppression never fires (`bdPlayerField*` family is dead, see closed doors) |
@@ -110,7 +110,27 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 | Sun occlusion descriptor set on Adreno | **back (2026-09-02)**: the layout is four real sets now, see the note in `bindless_allocator.h` |
 | AYN Thor (Adreno 740) | renders a field scene since the constant rewrite; **not a test target** |
 
-## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-02.
+## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
+
+**THE SCENE PASS IS BOUND BY FRAGMENTS x TEXTURE FETCHES (2026-09-03, 09:50).** Nine device
+runs, `research/20260903_0950_device-qualification-...md`. The head build qualified:
+host-built render list live (63 entries in 39 runs a frame, matrix check 5,397 ok / 0 off),
+stereo crossed and correct in every capture, multiview half width a correct pair on device.
+Autoplay lands somewhere different each run - a rock close-up read 20.8 ms GPU on
+side-by-side where last night's village read 13.2 - so only within-run A/Bs and same-build
+traces are compared. What those say: the two-layer 688x720 scene pass renders in **14.6 ms**
+(plus 4.5 of compositor preemption) against 12-13 for side-by-side's 1376x720, the same pixels
+per eye and twice the draws, so multiview's one-submission saving is invisible; the counters
+read 99% fragments, **texture pipes 72% busy, ALUs 21% used, 2.27 fetches per fragment,
+1.26 G fragments a second**; the depth prepass A/B costs **+22.6% GPU** (every draw twice,
+nothing rejected worth having), so the fragments are not hidden ones; and `bd_debug_mip_bias=6`
+blurs the Quest exactly like the desktop **without moving the frame (20.2 vs 20.8)**, so the
+mip chains are sampled on the device and cache misses are not the cost. The "0.9% non-base
+fetches" counter, read as "no mips" on 2026-09-02, does not mean that. The cost is the fetch
+count, at the texture units' throughput. Levers: the number of fragments the visible layers
+produce (the render list's sorted and translucent materials, foliage cards, fog and glow quads
+- `bd_debug_skip_list_draws` / `bd_debug_skip_blended` A/Bs measure their share), fetches per
+fragment, and foveation (stage 7). 1440x1584 a layer is 4.7x today's pixels at this cost.
 
 **THE SCENE PASS IS DRAW-BOUND (2026-09-02, 18:00).** Mono render-stage traces: 535 draws
 render in 19.2-19.7 ms; 332 draws (`bd_cull_distance=20`) in 12.3-14.4 ms - ~36 us of GPU
@@ -426,21 +446,21 @@ stage 7 renders into the runtime's swapchain instead), multiview's 277 ms withou
 chain (not shipped), and `bd_mv_half_width` (62.7 -> 41.7 ms, present chain does not follow;
 superseded by stage 7).
 
-## The next device session, in order (written 2026-09-03 03:10, headset offline)
+## The next device session, in order (written 2026-09-03 09:55; the 03:10 list ran, see the note)
 
-`out/probe/reblue_head.apk` is the current head. Never two runs at once; wait for each
-completion notification.
+`out/probe/reblue_probes.apk` is the current head plus the fragment-census probes. Never two
+runs at once; wait for each completion notification. Autoplay lands in a different scene
+every run: compare within-run A/B arms and same-build traces only.
 
-1. `APK=out/probe/reblue_head.apk bash tools/verify_quest.sh ""` - side-by-side, the defaults:
-   verifies the host-built render list, the delta merge and the menu row on device; expect
-   `[node] ... host-built` in the log and `gpu_total_ms` p50 near 13.2.
-2. `bash tools/gpu_drawtrace_quest.sh` - the pass list of that build.
-3. `... verify_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false,bd_mv_capture_array=true"`
-   - multiview at half width (the Android default now): the parity number against 13.2 ms and
-   a stacked capture for the stereo verdict (`tools/stereo_check.py --stacked`, then look).
-4. `... verify_quest.sh "bd_cel_characters=true"` - the cel look on device.
-5. If multiview is at or under side-by-side: make it the shipping path and start stage 7
-   (`XR_FB_foveation` on the runtime's swapchain); if not, its trace names the pass.
+1. `APK=out/probe/reblue_probes.apk bash tools/verify_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false,bd_ab_flag=bd_debug_skip_list_draws,bd_ab_period=240"`
+   - the render list's (sorted and translucent) share of the scene pass.
+2. The same with `bd_ab_flag=bd_debug_skip_blended` - the blended share.
+3. `bash tools/gpu_drawtrace_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false"`
+   with the class that dominates dropped, to see the scene pass without it.
+4. Then the design: whichever class carries the fragments gets the host treatment (fewer
+   layers, cheaper fetches, cards as instanced billboards, fog as one pass), and stage 7's
+   foveation on top. Multiview is the shipping path once its scene pass is under
+   side-by-side's; today it is 14.6 against 12-13 ms of render for the same pixels.
 
 ## Multiview: where it is and what is left
 

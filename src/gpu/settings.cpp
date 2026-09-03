@@ -475,6 +475,13 @@ REXCVAR_DEFINE_BOOL(bd_host_list_build, true, kCvarGroup,
                     "Emit the guest's deferred render-list entries from a "
                     "host template instead of running the per-node "
                     "interpreter to build them.");
+REXCVAR_DEFINE_BOOL(bd_debug_skip_list_draws, false, kCvarGroup,
+                    "Probe: drop the scene-pass draws that come from the "
+                    "guest's deferred render list (sorted and translucent "
+                    "materials). For a within-run A/B of their GPU share.");
+REXCVAR_DEFINE_BOOL(bd_debug_skip_blended, false, kCvarGroup,
+                    "Probe: drop the scene-pass draws that blend. For a "
+                    "within-run A/B of their GPU share.");
 REXCVAR_DEFINE_DOUBLE(bd_debug_mip_bias, 0.0, kCvarGroup,
                       "Probe: mip LOD bias applied to every guest sampler. "
                       "A large positive value blurs whatever samples a "

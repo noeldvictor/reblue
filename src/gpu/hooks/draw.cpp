@@ -48,6 +48,8 @@
 #include "gpu/shaders/shader_constants.h"
 
 REXCVAR_DECLARE(bool, bd_cel_characters);
+REXCVAR_DECLARE(bool, bd_debug_skip_list_draws);
+REXCVAR_DECLARE(bool, bd_debug_skip_blended);
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -345,6 +347,20 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
           u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u &&
       args.vertexOrIndexCount > 6;
   s.stereoEligible = scene_pass;
+
+  // Fragment census probes, not settings (2026-09-03): the scene pass is
+  // bound by fragments x texture fetches (the Quest's texture pipes at 72%,
+  // unchanged with every fetch on a tiny mip level), and a within-run A/B
+  // that drops one class of scene draw reads that class's GPU share. The
+  // render list carries the guest's sorted and translucent materials; the
+  // blended class is everything drawn with alpha blending on.
+  if (scene_pass) {
+    if (REXCVAR_GET(bd_debug_skip_list_draws) &&
+        bd::gpu::scene::CurrentNodeTag().from_list)
+      return;
+    if (REXCVAR_GET(bd_debug_skip_blended) && s.pipelineState.alphaBlendEnable)
+      return;
+  }
 
   // Flatten any two-layer surface this draw is about to sample.
   //
