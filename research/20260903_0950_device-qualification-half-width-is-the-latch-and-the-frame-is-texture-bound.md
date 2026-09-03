@@ -132,6 +132,27 @@ plus the pass), reflection, scene, the MSAA depth and colour resolves (desktop o
 dof pyramid (5), bloom (3), the tail (composite, UI, front copy, a second 32-bit pass, with
 barriers between) and the present.
 
+## The chain seeds are tile aliases now (desktop, 10:50-11:07)
+
+The tail of the frame was: host composite into the guest's 16-bit surface; a fresh 16-bit
+surface *seeded* with a copy of it for the guest's 2D pass, whose first draw is
+`bd_simple2d_ps` on a four-vertex quad, source-alpha blend, sampling the composite (the
+360's "blit the composite into the tile it will draw over"); a format-converting resolve
+into the 8-bit front texture; a fresh 8-bit surface seeded from that for the guest's last
+2D draws; the present. Seeding off is wrong (stale pool content and a faded title card
+bleed through the partial-alpha quads), so the previous image is genuinely inherited.
+
+The console's own model does not copy: the fresh surface is the same EDRAM tile under a
+new handle. `AliasFreshTargetToChainHeadLocked` (`bd_chain_alias`, default on) makes a
+fresh full-screen surface bound after the chain head *be* the head's texture: the head's
+lazy-linked resolve textures are materialised first (the resolve the guest asked for; it is
+what keeps sampling the previous image while drawing over it defined), the pool holds a
+head while an alias lives, the alias ends on return or reuse. Steady state, multiview
+half width: **seeds 2 -> 0 a frame, barrier calls 44 -> 35, GPU 6.0 -> 5.8 ms**, vsync
+held, image identical to the seeded reference. What is left of the EDRAM residue in the
+tail: the 16-to-8-bit front conversion (one shader resolve), and on the desktop the two
+MSAA resolves.
+
 ## Also seen
 
 - The launch hang (run 3): the process stayed alive with no guest threads and
