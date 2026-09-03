@@ -665,6 +665,13 @@ constexpr SettingRow kGraphicsSettings[] = {
      .smax = 100.0,
      .sstep = 5.0,
      .sfmt = "%.0f%%"},
+    // Cel shading on the characters: the recompiled pixel shaders band their
+    // lit colour under a spec constant the host sets for skinned draws.
+    {.label = "settings.graphics.cel_shading.label",
+     .group = "menu.header.detail",
+     .binding = {.cvar = "bd_cel_characters"},
+     .options = kOnOff,
+     .count = OptCount(kOnOff)},
     {.label = "settings.graphics.vram_budget.label",
      .group = "menu.header.memory",
      .binding = {.get =
