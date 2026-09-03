@@ -161,6 +161,40 @@ morning, image identical. On the Quest, which has no MSAA, the residue of the ta
 zero copies; the reflection stub's 128x72 resolve and one materialise are what is left of
 the EDRAM model in a frame.
 
+## The tail after the aliases (11:15-11:40)
+
+The last 2D pass samples the front texture, so its alias materialises a copy of the image
+it draws over; with the front texture declared RGBA8 that copy was the converting shader
+pass again. A full-screen chain texture of another colour format is now re-backed in the
+source's format the first time it is materialised while the host owns the post chain
+(four textures at startup, never per frame; `[resolve] ... re-backed`). Every copy in the
+tail is a blit from then on. The alias materialises every link along the chain (the front
+links to the last alias, not the root), `TransitionResolveSources` leaves a source that
+shares the bound target's texture alone, and an alias uses its root's framebuffer cache.
+The desktop tail is composite | blit | 2D | blit | 2D | present: 18 passes a frame, image
+identical to the seeded reference. The two 2D passes cannot join the composite: each
+samples the image it draws over, which needs two images, and the copy between them ends
+the pass. The console did that read from the tile itself; the modern equivalent is a
+same-pixel read through an input attachment with a self-dependency, which would put the
+whole tail into one pass with no copies. Later.
+
+Two traps met on the way: the first retype build deadlocked two seconds in (the Park
+helpers take the mutex the copy holds; the objects are pushed into the graveyard by hand
+now), and **frame time must not be read from a `PLUME_FB_TRACE` run**: the unbuffered
+trace makes the frame CPU-bound (51 ms, 20 fps); the same build untraced is vsync-locked
+at 4.9 ms of CPU, with the alias on or off.
+
+## The fragment census (11:40)
+
+The Quest's counters say the scene pass is bound by fragments x fetches; which shaders
+produce the fragments is what the materials stage needs first. plume gained
+pipeline-statistics query pools (fragment shader invocations; Vulkan, fork `6a6f679`+)
+and the host brackets every queued draw with one (`bd_frag_census`, `gpu/frag_census.cpp`,
+the draw's pixel shader hash on the queued draw), folding the counts per pixel shader
+every 300 frames: `[frag] N M fragments a frame over D draws; the top ten`. Desktop only,
+but the geometry, the overdraw and the shaders are the Quest's. The first report is the
+next section.
+
 ## Also seen
 
 - The launch hang (run 3): the process stayed alive with no guest threads and

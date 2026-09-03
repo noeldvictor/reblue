@@ -522,10 +522,15 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
 2. **The passes.** Composite with gamma folded in, into an 8-bit host target that the
    guest's 2D draws overlay, presented without the front copy; under XR straight into the
    layered swapchain (`XR_FB_foveation` attaches there later).
-3. **The materials.** From a desktop RenderDoc capture, the five most common pixel shaders
-   of the tree-walk draws by fragment count (`tools/rdc_outline.py` per draw); host
-   replacements by shader hash (`BloomMaskClampBlob` in `guest_shaders.cpp` is the
-   substitution mechanism), fewer fetches, a lighting-model slot.
+3. **The materials.** `bd_frag_census=true` on a desktop run prints `[frag] ... the top
+   ten` every 300 frames: fragment shader invocations per guest pixel shader from
+   pipeline-statistics queries around every queued draw (`gpu/frag_census.cpp`; the
+   geometry, overdraw and shaders are the Quest's). Host replacements for the top shaders
+   by hash (`BloomMaskClampBlob` in `guest_shaders.cpp` is the substitution mechanism),
+   fewer fetches, a lighting-model slot. The tail of the frame is host-owned now:
+   composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
+   passes each sample the image they draw over (an input-attachment self-dependency would
+   fold them into one pass; later).
 4. **Assets** (stage 3), then shadows, animation, culling, foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
