@@ -270,7 +270,17 @@ policy gives the big cluster to the Draw Thread. Before those fixes: `other_ms` 
 `other_ms` 16.3, `gpu_total_ms` 15.8 at 477 draws, 98% of field frames in one slot - a
 vsync-locked 60 fps in that scene**, side-by-side, shadows and reflections off. With the
 reflection stub pass skipped by the walk (21:30): draws 378, `gpu_total_ms` 14.8 (p10 13.8),
-99% of field frames in one slot. The next boundary is 72 Hz at 13.9 ms, on both CPU and GPU.
+99% of field frames in one slot. **Direct present** (the gamma pass renders into the
+runtime's swapchain image, `bd_xr_direct_present`, 21:50) and **eleven of the fourteen EDRAM
+seed copies gone** (the guest's dropped post draws no longer bind their targets; the composite's
+target is discarded, not seeded; 22:10) left `gpu_total_ms` at 14.6-14.9: seeds 13 -> 3,
+framebuffer binds 21 -> 10, barrier calls 102 -> 51 a frame, and the GPU number did not move,
+so those copies were cheap on the GPU. The render-stage trace's ~3 ms of "Preempt" is the
+compositor's own GPU work between our passes, not ours to remove. What is left of the app's
+GPU: the scene (3.7), the guest's scaled scene resolves (0.25-scale full copy plus two
+half-res copies the host chain overwrites, ~1.5 ms), the shadow stub (1.2, becomes real
+shadows in the target configuration), the post and 2D passes. The next boundary is 72 Hz at
+13.9 ms.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`, 2026-09-01; the
 SDLThread paragraph below is superseded by the profile above):

@@ -99,3 +99,20 @@ per-thread at 150 s: Audio Worker 78%, Draw Thread 52%, five precache workers 33
 no SDLThread in the list
 [node] host-issued 144 of 253 node draws a frame (0 never)
 ```
+
+## Later the same evening: direct present and the seed copies
+
+- **Direct present** (`999482e`): the wrapped XR swapchain images are render targets; the
+  gamma/overlay pass renders into the acquired image, no offscreen frame, no copy. Quest:
+  works, capture identical, `gpu_total_ms` p50 14.6 (14.8 before).
+- **Seeds**: a one-shot `[seed]` listing showed 14 full-surface copies a frame, ten of them
+  the pyramid levels the guest's dropped post draws bound before the intercept dropped them,
+  one the composite's own target. `HostPostProducerSkip` runs before the bind, the composite
+  bind discards (`93bf780`, `c6a9e8d`). Quest: `rs_seed` 13 -> 3, `fb_binds` 21 -> 10,
+  `barrier_calls` 102 -> 51; `gpu_total_ms` p50 14.9 - unchanged within noise.
+- **Eager resolves**, listed once (`[resolve]`): depth (desktop MSAA only), the scene at
+  scale 0.25 into its texture, two half-res scaled copies of the scene into level textures
+  the host chain then overwrites, and the front-buffer copy. On the Quest the half-res one is
+  the 688x360 pass at 0.78 ms.
+- The Draw Thread profile after the CPU fixes: 58% in a syscall (waiting - the frame is
+  vsync-locked), 27% in libreblue; the CPU is not the limiter at 60 Hz.
