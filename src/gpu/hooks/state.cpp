@@ -131,9 +131,16 @@ void D3DDevice_SetRenderTarget_hook(
                          : plume::RenderSampleCount::COUNT_1);
   // Follows the target the same way sampleCount does: a two-layer surface needs
   // multiview pipelines, and a mono one in the same frame must not get them.
+  // A depth-only pass (the shadow map) takes the answer from its depth
+  // target: with the colour target null the pipelines came out mono while
+  // the two-layer depth framebuffer had viewMask 3, and the map's second
+  // layer was never drawn - no sun shadow in the right eye (desktop
+  // multiview screenshot, 2026-09-02).
   bd::gpu::Video::SetDirtyValue<bool>(
       s.dirtyStates.pipelineState, s.pipelineState.multiview,
-      surface != nullptr && surface->layers > 1);
+      surface != nullptr ? surface->layers > 1
+                         : (s.depth_stencil != nullptr &&
+                            s.depth_stencil->layers > 1));
 
   // Foveation follows the target too, and from the same inputs the framebuffer
   // uses - the two render passes must agree or they are incompatible.
@@ -193,6 +200,12 @@ void D3DDevice_SetDepthStencilSurface_hook(
 
   bd::gpu::Video::SetDirtyValue<bd::gpu::GuestTexture *>(
       s.dirtyStates.renderTargetAndDepthStencil, s.depth_stencil, surface);
+  // Depth-only pass: the multiview flag follows this target (see the colour
+  // hook above).
+  if (s.render_target == nullptr)
+    bd::gpu::Video::SetDirtyValue<bool>(
+        s.dirtyStates.pipelineState, s.pipelineState.multiview,
+        surface != nullptr && surface->layers > 1);
   bd::gpu::Video::SetDirtyValue<plume::RenderFormat>(
       s.dirtyStates.pipelineState, s.pipelineState.depthStencilFormat,
       surface != nullptr ? surface->format : plume::RenderFormat::UNKNOWN);
