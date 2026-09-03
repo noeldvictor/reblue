@@ -47,6 +47,7 @@
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/shaders/shader_constants.h"
 
+REXCVAR_DECLARE(bool, bd_cel_characters);
 REXCVAR_DECLARE(i32, bd_debug_max_draws);
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -276,6 +277,16 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   bd::gpu::Video::SetDirtyValue<plume::RenderPrimitiveTopology>(
       s.dirtyStates.pipelineState, s.pipelineState.primitiveTopology,
       MapPrimitiveType(primitive_type));
+  // The lighting-model slot: skinned draws (the characters) get the cel
+  // variant of their pixel shader when asked. Part of the PSO key.
+  {
+    const bool cel = REXCVAR_GET(bd_cel_characters) &&
+                     bd::gpu::scene::PipelineReadsBones(s.pipelineState);
+    const u32 want = cel ? (s.pipelineState.specConstants | bd::gpu::kSpecConstantCel)
+                         : (s.pipelineState.specConstants & ~bd::gpu::kSpecConstantCel);
+    bd::gpu::Video::SetDirtyValue<u32>(s.dirtyStates.pipelineState,
+                                       s.pipelineState.specConstants, want);
+  }
 
   const u64 ps_hash = (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
                           ? s.pixel_shader->shaderCacheEntry->hash

@@ -20,6 +20,10 @@ struct VideoState;
 struct QueuedDraw;
 } // namespace bd::gpu
 
+namespace bd::gpu {
+struct PipelineState;
+} // namespace bd::gpu
+
 namespace bd::gpu::scene {
 
 struct NodeTag;
@@ -68,5 +72,9 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
 // not run. False when there is no usable template - the interpreter runs,
 // and its draw refreshes the template.
 bool HostDrawReplay(const NodeTag &tag);
+
+// Whether a pipeline state's vertex shader reads the bone palette
+// (c60..c155): the draw is a skinned node - a character.
+bool PipelineReadsBones(const bd::gpu::PipelineState &st);
 
 } // namespace bd::gpu::scene

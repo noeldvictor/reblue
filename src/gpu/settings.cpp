@@ -471,6 +471,10 @@ REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
                      "Frames a host node draw template is used before the "
                      "interpreter refreshes it.");
 
+REXCVAR_DEFINE_BOOL(bd_cel_characters, false, kCvarGroup,
+                    "Cel-shade the skinned draws (the characters): the "
+                    "recompiled pixel shaders band their lit colour under a "
+                    "spec constant the host sets for those draws.");
 REXCVAR_DEFINE_BOOL(bd_xr_direct_present, true, kCvarGroup,
                     "Render the present pass straight into the runtime's "
                     "swapchain image instead of an offscreen frame copied "

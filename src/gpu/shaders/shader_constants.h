@@ -25,4 +25,7 @@ inline constexpr u32 kSpecConstantAlphaTest = SPEC_CONSTANT_ALPHA_TEST;
 // vertex shader whose cache entry carries this bit in specConstantsMask has
 // the redirect; the host builds that shader's instanced twin by setting it.
 inline constexpr u32 kSpecConstantInstanced = SPEC_CONSTANT_INSTANCED;
+// Cel banding on the exported colour; set per draw for skinned nodes when
+// bd_cel_characters is on (gpu/hooks/draw.cpp).
+inline constexpr u32 kSpecConstantCel = SPEC_CONSTANT_CEL;
 } // namespace bd::gpu

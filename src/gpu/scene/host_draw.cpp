@@ -543,6 +543,10 @@ void Tally(Store &st, bool replayed, bool from_list) {
 
 bool HostDrawEnabled() { return REXCVAR_GET(bd_host_draw); }
 
+bool PipelineReadsBones(const PipelineState &st) {
+  return VertexShaderReadsBones(st);
+}
+
 bool HostDrawReplaying() { return t_replaying; }
 
 void NoteTextureSet(u32 index) {
