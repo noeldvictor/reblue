@@ -1,8 +1,12 @@
 // bd_normal_ps (0xFB83DD3F5E67CEB7), the lit scene material, as a host
 // shader substituted at link time (guest_shaders.cpp, bd_host_materials).
-// Step 1 (2026-09-03): a verbatim copy of the recompiled shader, so the
-// substitution path is proven on an identical image before the body is
-// rewritten to the four paths the fragment census measured.
+// The recompiled body (dump of 2026-09-03, hash above) with the host's
+// shadow kernel: four gathers instead of thirty texture operations. The
+// rest stays as recompiled on purpose: every other path sits under a
+// uniform boolean and costs nothing when the material does not take it,
+// and a scene outside the census does take it (the detail textures on a
+// building, found when they were dropped). The verbatim copy was
+// verified indistinguishable from the guest shader before this rewrite.
 
 #include "thirdparty/XenosRecomp/XenosRecomp/shader_common.h"
 
@@ -410,104 +414,41 @@ void main(
 	r7.y = ps;
 	if (g_bShadowMap)
 	{
+		// The host shadow kernel (2026-09-03). The guest's was six depth fetches
+		// and six four-load compares, thirty texture operations a fragment, on
+		// taps spread +-1.3/1024 of the map times g_ShadowPcfScale (the host
+		// holds that penumbra constant in world space, constant_buffers.h).
+		// Four GatherRed calls of the D32 map at the corners of a quad half that
+		// wide, each a bilinear compare, cover the same penumbra with sixteen
+		// texels for four fetches. The projection (uv from the second set, v
+		// flipped as D3D does), the depth-proportional and slope-scaled biases
+		// and the "outside the map is lit" rule are the recompiled ones; r7.y
+		// leaves this block as the lit fraction, which the diffuse block consumes.
 		ps = clamp(rcp(r5.w), FLT_MIN, FLT_MAX);
 		r7.x = ps;
 		r3.yzw = r7.xxx * r5.zyx;
-		r7.zw = r6.yx * c250.yy;
 		r7.y = saturate(dot(r8.xzy, -g_vLightDir1.zxy));
 		ps = clamp(rcp(r6.w), FLT_MIN, FLT_MAX);
 		r7.x = ps;
-		r0.zw = r7.zw * r7.xx;
-		ps = c252.x - r7.y;
-		r3.x = ps;
+		r0.zw = r6.yx * c250.yy * r7.xx;
+		r3.x = c252.x - r7.y;
 		r5.xyzw = r3.xyzw * g_vShadowEpsilon.xxwz;
-	}
-	if (g_bShadowMap)
-	{
-		r7.yz = frac(r5.wz);
-		ps = c250.y + r0.w;
-		r7.w = ps;
-		r0.xy = r7.yz + r7.yz;
-		ps = c250.y + r0.z;
-		r7.z = ps;
-		r10.xyzw = r0.yyyy * c252.zzzz + c254.xyzw;
-		r3.y = r10.x + -r7.z;
-		ps = c252.z * r0.x;
-		r7.y = ps;
-		r3.x = r7.w + r7.y;
-		ps = max(r10.w, r10.w);
-		r11.y = r10.z + -r7.z;
-		ps = -r7.z + ps;
-		r3.w = ps;
-	}
-	if (g_bShadowMap)
-	{
-		r7.y = r7.y + r0.w;
-		ps = max(r10.y, r10.y);
-		r11.x = r7.y + c251.w;
-		ps = -r7.z + ps;
-		r6.w = ps;
-		r10.w = max(r6.w, r6.w);
-		ps = c250.z + r7.y;
-		r6.y = ps;
-		r10.y = max(r11.y, r11.y);
-		ps = c252.w + r7.y;
-		r10.z = ps;
-		r3.z = max(r3.x, r3.x);
-		ps = c255.x + r7.y;
-		r10.x = ps;
-		shadowTapUV[0] = r11.xy;
-		r6.x = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r11.xy, float2(0, 0)).x;
-	}
-	if (g_bShadowMap)
-	{
-		shadowTapUV[1] = r6.yw;
-		r6.y = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r6.yw, float2(0, 0)).x;
-		shadowTapUV[2] = r3.xy;
-		r6.w = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r3.xy, float2(0, 0)).x;
-		shadowTapUV[3] = r10.zw;
-		r3.x = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r10.zw, float2(0, 0)).x;
-		shadowTapUV[4] = r10.xy;
-		r3.y = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r10.xy, float2(0, 0)).x;
-		shadowTapUV[5] = r3.zw;
-		r3.z = tfetch2D(ShadowTexture_Texture2DDescriptorIndex, ShadowTexture_SamplerDescriptorIndex, r3.zw, float2(0, 0)).x;
-		r7.x = r7.x * r6.z + -r5.y;
-	}
-	if (g_bShadowMap)
-	{
-		r7.y = -r5.x * c251.y + r7.x;
-		r5.x = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[3], r7.y);
-		r5.y = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[4], r7.y);
-		r5.z = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[5], r7.y);
-		r7.x = dot(r0.yy, c252.zz) + -r7.z;
-		r3.x = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[0], r7.y);
-		r3.y = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[1], r7.y);
-		r3.z = shadowCmp2D(ShadowTexture_Texture2DDescriptorIndex, shadowTapUV[2], r7.y);
-		r7.y = dot(r0.xxww, c252.zzxx);
-		r7.w = r7.x + c252.x;
-		ps = r3.z + r3.y;
-		r5.w = ps;
-	}
-	if (g_bShadowMap)
-	{
-		r7.x = dot(r5.xyzw, c252.xxxx);
-		ps = max(r7.w, r7.w);
-		r7.x = r7.x + r3.x;
-		ps = -r7.z + ps;
-		r7.w = ps;
-		r7.yz = r7.yw * r7.yw;
-		r7.z = dot(r7.yz, r7.yz) + c252.y;
-		ps = c250.w * r7.x;
-		r7.y = ps;
-		r7.x = min(r7.z, c252.x);
-		ps = c252.x - r7.y;
-		r7.z = ps;
-	}
-	if (g_bShadowMap)
-	{
-		r7.y = r7.z * r7.x + r7.y;
-		r7.x = r7.x == c252.x;
-		r7.y = select(r7.x == 0.0, r7.y, c252.x);
+		float shadow_ref = r7.x * r6.z - r5.y - r5.x * c251.y;
+		float2 shadow_uv = float2(c250.y + r0.w, c250.y - r0.z);
+		BD_TEX2D shadow_tex = g_Texture2DDescriptorHeap[ShadowTexture_Texture2DDescriptorIndex];
+		float2 shadow_dim = float2(getTexture2DDimensions(shadow_tex));
+		float shadow_o = 0.65 * c252.z; // c252.z is (1/1024) * g_ShadowPcfScale
+		r7.y = 0.0;
+		[unroll] for (int shadow_i = 0; shadow_i < 4; ++shadow_i)
+		{
+			float2 tap_uv = shadow_uv + float2((shadow_i & 1) ? shadow_o : -shadow_o, (shadow_i & 2) ? shadow_o : -shadow_o);
+			float4 shadow_taps = shadow_tex.GatherRed(g_SamplerDescriptorHeap[ShadowTexture_SamplerDescriptorIndex], BD_UV(tap_uv));
+			float4 shadow_lit = select(shadow_taps > shadow_ref.xxxx, float4(1.0, 1.0, 1.0, 1.0), float4(0.0, 0.0, 0.0, 0.0));
+			float2 shadow_f = frac(tap_uv * shadow_dim - 0.5);
+			r7.y += 0.25 * lerp(lerp(shadow_lit.w, shadow_lit.z, shadow_f.x), lerp(shadow_lit.x, shadow_lit.y, shadow_f.x), shadow_f.y);
+		}
+		if (any(shadow_uv < 0.0) || any(shadow_uv > 1.0))
+			r7.y = c252.x;
 	}
 	r7.x = c250.y > g_vLightPos1.w;
 	p0 = r7.x == 0.0;
