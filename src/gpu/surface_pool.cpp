@@ -310,6 +310,9 @@ bool EvictVictimLocked(Pool &p, u64 wanted_key,
     if (hot && !allow_hot)
       continue;
     for (size_t i = 0; i < bucket.size(); ++i) {
+      // A parked head whose texture a live alias still draws into cannot go.
+      if (bucket[i].surface->aliasedBy != nullptr)
+        continue;
       const u64 epoch = bucket[i].epoch;
       const bool better =
           !found || (surplus && !best_surplus) ||
@@ -419,6 +422,9 @@ bool ReturnLocked(GuestTexture *surface, std::vector<GuestTexture *> &evicted) {
 void ResetPooled(GuestTexture *pooled, u32 guest_format, bool is_depth) {
   InitResourceHeader(pooled->x360.as_surface.resource,
                      D3DResourceType::kSurface);
+  // A parked surface may still be an alias of a chain head, or the head of
+  // an alias that ended: its own texture and format come back first.
+  Video::UnaliasSurface(pooled);
   Video::ScrubPooledSurfaceLinks(pooled);
   pooled->sourceSurface = nullptr;
   pooled->destinationTextures.clear();
@@ -671,11 +677,23 @@ GuestTexture *SurfacePool::Acquire(u32 width, u32 height, u32 guest_format,
                        sample_count, is_depth);
     ks.last_acquire_epoch = p.next_epoch;
     auto it = p.free.find(key);
-    if (it != p.free.end() && !it->second.empty()) {
+    // A parked head whose texture a live alias still draws into stays parked.
+    size_t pick = 0;
+    bool have = false;
+    if (it != p.free.end()) {
+      for (size_t i = it->second.size(); i > 0; --i) {
+        if (it->second[i - 1].surface->aliasedBy == nullptr) {
+          pick = i - 1;
+          have = true;
+          break;
+        }
+      }
+    }
+    if (have) {
       // LIFO: reuse the freshest parked surface so the working set keeps a
       // current epoch and survives eviction.
-      pooled = it->second.back().surface;
-      it->second.pop_back();
+      pooled = it->second[pick].surface;
+      it->second.erase(it->second.begin() + static_cast<std::ptrdiff_t>(pick));
       --p.free_count;
       ++p.hits;
       ++ks.hits;

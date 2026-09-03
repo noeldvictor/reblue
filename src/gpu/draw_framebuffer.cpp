@@ -30,6 +30,7 @@
 REXCVAR_DECLARE(bool, bd_dump_passes);
 REXCVAR_DECLARE(bool, bd_barrier_hoist);
 REXCVAR_DECLARE(bool, bd_seed_targets);
+REXCVAR_DECLARE(bool, bd_chain_alias);
 REXCVAR_DECLARE(bool, bd_mv_test_clear);
 
 namespace bd::gpu {
@@ -293,6 +294,71 @@ void TransitionTargetsToWrite(VideoState &s, GuestTexture *rt, GuestTexture *ds,
   MarkInter(s.command_list);
 }
 
+// Tile aliasing, the console's own model of the post-composite chain: a fresh
+// full-screen surface bound after the chain head is the head's EDRAM tile
+// under a new handle, so it becomes the head's texture rather than a copy of
+// it. Anything that had a lazy link into the head (the resolve textures the
+// next pass samples) is materialised first - that copy is the resolve the
+// guest asked for, and it is what keeps "sample the previous image while
+// drawing over it" well defined. Replaces SeedFreshColorTarget for the
+// full-screen chain; the copy path stays for everything else (2026-09-03).
+bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
+  if (!rt || !rt->texture || rt->aliasOf || rt->aliasedBy)
+    return false;
+  if (rt->layout != plume::RenderTextureLayout::UNKNOWN)
+    return false; // not fresh: it holds its own content
+  if (rt == s.held_clear_rt || s.clear_pending)
+    return false; // a clear is bound for it; the load op wants its own image
+  if (!FullscreenChainClassLocked(s, rt))
+    return false;
+  GuestTexture *head = s.fullscreen_chain_head[s.recording_slot()];
+  if (!head || head == rt || !head->texture)
+    return false;
+  GuestTexture *root = head->aliasOf ? head->aliasOf : head;
+  if (!root->texture || root == rt || root == s.back_buffer_surface)
+    return false;
+  if (!FullscreenChainClassLocked(s, head))
+    return false;
+  if (root->width != rt->width || root->height != rt->height ||
+      root->layers != rt->layers || root->sampleCount != rt->sampleCount ||
+      root->format != rt->format)
+    return false;
+  if (rt->sampleCount != plume::RenderSampleCount::COUNT_1)
+    return false;
+  // The previous image leaves through its resolve textures before the alias
+  // draws over it.
+  MaterializeOutboundLocked(s, head);
+  if (root != head)
+    MaterializeOutboundLocked(s, root);
+  if (rt->ownFormat == plume::RenderFormat::UNKNOWN)
+    rt->ownFormat = rt->format;
+  rt->texture = root->texture;
+  rt->format = root->format;
+  rt->layout = root->layout;
+  rt->textureView.reset(); // BindTextureSRV rebuilds against the shared image
+  rt->framebuffers.clear();
+  rt->aliasOf = root;
+  root->aliasedBy = rt;
+  if (head != root)
+    head->aliasedBy = nullptr; // the chain moves on; only the newest alias counts
+  Video::SetDirtyValue<plume::RenderFormat>(s.dirtyStates.pipelineState,
+                                            s.pipelineState.renderTargetFormat,
+                                            rt->format);
+  NoteResolveOp(ResolveOp::DeadElide);
+  {
+    static u32 told = 0;
+    const u32 frame = FrameStatFrameCount();
+    if (frame > 3000 && told < 6) {
+      ++told;
+      BD_INFO("[alias] frame {} fresh {}x{} fmt {} layers {} -> head's tile "
+              "(root {}x{} fmt {}), no seed copy",
+              frame, rt->width, rt->height, u32(rt->format), rt->layers,
+              root->width, root->height, u32(root->format));
+    }
+  }
+  return true;
+}
+
 // BD's posteff blends each composite onto the prior pass, still sitting in the
 // reused EDRAM tile on X360. With no EDRAM, the tile's prior content is rebuilt
 // from the resolve BD already does per pass.
@@ -413,6 +479,30 @@ void DrainPendingClear(VideoState &s, const GuestTexture *rt,
 
 } // namespace
 
+void Video::UnaliasSurface(GuestTexture *surface) {
+  if (!surface)
+    return;
+  if (surface->aliasedBy) {
+    // The head of an alias that is still live: the alias keeps drawing into
+    // this texture, so the head must not be reused yet; the pool checks the
+    // same field. Nothing to restore on the head itself.
+    if (surface->aliasedBy->aliasOf != surface)
+      surface->aliasedBy = nullptr; // stale: the alias already ended
+  }
+  if (!surface->aliasOf)
+    return;
+  GuestTexture *root = surface->aliasOf;
+  if (root->aliasedBy == surface)
+    root->aliasedBy = nullptr;
+  surface->aliasOf = nullptr;
+  surface->texture = surface->textureHolder.get();
+  if (surface->ownFormat != plume::RenderFormat::UNKNOWN)
+    surface->format = surface->ownFormat;
+  surface->layout = plume::RenderTextureLayout::UNKNOWN;
+  surface->textureView.reset();
+  surface->framebuffers.clear();
+}
+
 bool Video::BindDrawFramebuffer() {
   std::lock_guard lock(state().mutex);
   return BindDrawFramebufferLocked();
@@ -482,6 +572,13 @@ bool Video::BindDrawFramebufferLocked() {
     }
     return false;
   }
+
+  // The console's tile model, before any transition: a fresh full-screen
+  // surface after the chain head shares the head's texture (see
+  // AliasFreshTargetToChainHeadLocked). It then carries the head's layout and
+  // is not discarded or seeded below.
+  if (REXCVAR_GET(bd_chain_alias) && !s.bind_overwrites)
+    AliasFreshTargetToChainHeadLocked(s, rt);
 
   bool discard_rt = false;
   bool discard_ds = false;

@@ -247,6 +247,9 @@ public:
   // destinationTextures (the CreateSurface invariant guard). Takes
   // state().mutex, and the caller's plain field resets follow.
   static void ScrubPooledSurfaceLinks(GuestTexture *pooled);
+  // Ends a tile alias (GuestTexture::aliasOf): the surface's own texture and
+  // format come back, the head forgets it. Called by the pool on reuse.
+  static void UnaliasSurface(GuestTexture *surface);
 
   // ALPHAREF feeds the SharedConstants cbuffer. Set by bdSetRenderState (arg
   // 100), and read when SharedConstants is rebuilt.

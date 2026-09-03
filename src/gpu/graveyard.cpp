@@ -66,6 +66,11 @@ void DestroyResourceNow(u32 guest_va, ResourceType type) {
     // A pooled surface keeps its framebuffers and bindless slot: the same
     // pairs re-form on reacquire.
     Video::NotifyTextureDestroyed(tex, /*retire_bindings=*/!is_surface);
+    // A surface that was an alias of the chain head goes back to the pool as
+    // its own texture; a head with a live alias keeps its marker so the pool
+    // holds it until the alias ends (GuestTexture::aliasOf).
+    if (is_surface)
+      Video::UnaliasSurface(tex);
     // RT/DS surfaces are re-created at identical dims every frame, so park
     // them in the pool for reuse (fence-gated). pendingGPURead waits a cycle:
     // the materialize copy recorded moments ago still reads it.

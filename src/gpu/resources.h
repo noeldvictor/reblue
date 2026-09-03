@@ -56,6 +56,19 @@ struct GuestTexture {
   std::unique_ptr<plume::RenderTexture> textureHolder;
   plume::RenderTexture *texture = nullptr;
   std::unique_ptr<plume::RenderTextureView> textureView;
+  // --- tile aliasing --------------------------------------------------------
+  //
+  // On a Xenon the surfaces of the post-composite chain are the same EDRAM
+  // tile under new handles, and a pass inherits what the last one wrote. The
+  // host reproduced that with a full-surface copy into each fresh surface
+  // ("seeding"). It now does what the console did: a fresh full-screen surface
+  // bound after the chain head *is* the head's texture (aliasOf), and the head
+  // remembers it (aliasedBy) so the pool never hands the shared texture to
+  // another role or evicts it while the alias lives. ownFormat is what the
+  // guest declared, restored when the alias ends (2026-09-03).
+  GuestTexture *aliasOf = nullptr;
+  GuestTexture *aliasedBy = nullptr;
+  plume::RenderFormat ownFormat = plume::RenderFormat::UNKNOWN;
   u32 width = 0;
   u32 height = 0;
   // 2 when this is a multiview scene target. Everything downstream - the

@@ -753,6 +753,14 @@ REXCVAR_DEFINE_BOOL(bd_mv_resolve, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
                     "Seed freshly acquired colour targets from their "
                     "predecessor (EDRAM persistence emulation).");
+// The console's own model instead of the copy: a fresh full-screen surface
+// bound after the chain head shares the head's texture, the way both were one
+// EDRAM tile. Removes the two chain seed copies of the frame's tail; the
+// image the next pass samples is materialised from the head first, which is
+// the resolve the guest asked for (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
+                    "Alias a fresh full-screen surface to the chain head's "
+                    "texture instead of seeding it with a copy.");
 // Clears the layered scene target magenta inside its own render pass. With
 // bd_mv_capture_array it answers whether anything at all reaches a viewMask=3
 // attachment. Destroys the scene; a diagnostic only.
