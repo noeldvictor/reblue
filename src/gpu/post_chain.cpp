@@ -115,6 +115,7 @@ struct Scratch {
   u32 width = 0;
   u32 height = 0;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
+  u32 layers = 1; // 2 under multiview: the passes render both eyes at once
   u32 slot = kInvalidDescriptorIndex;
   plume::RenderTextureLayout layout = plume::RenderTextureLayout::UNKNOWN;
   // Two per size: a blur is two passes and the second reads the first.
@@ -183,8 +184,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
 }
 
 plume::RenderPipeline *Pipeline(VideoState &s, Chain &c, Shader which,
-                                plume::RenderFormat format) {
-  const u64 key = (u64(which) << 32) | u64(format);
+                                plume::RenderFormat format, bool layered) {
+  const u64 key = (u64(which) << 32) | u64(format) | (layered ? (u64(1) << 63) : 0);
   auto it = c.pipelines.find(key);
   if (it != c.pipelines.end())
     return it->second.get();
@@ -203,6 +204,9 @@ plume::RenderPipeline *Pipeline(VideoState &s, Chain &c, Shader which,
   desc.renderTargetFormat[0] = format;
   desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
   desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
+  // Under multiview every host pass draws both layers in one go; the pixel
+  // shaders pick the source layer by SV_ViewID.
+  desc.viewMask = layered ? 0x3u : 0u;
   auto pipe = CreateHostGraphicsPipeline(s.device.get(), desc, "host-post");
   if (!pipe) {
     BD_ERROR("[post] pipeline {} for format {} failed; chain disabled",
@@ -216,27 +220,30 @@ plume::RenderPipeline *Pipeline(VideoState &s, Chain &c, Shader which,
 }
 
 Scratch *GetScratch(VideoState &s, Chain &c, u32 width, u32 height,
-                    plume::RenderFormat format, u32 role) {
+                    plume::RenderFormat format, u32 role, u32 layers) {
   for (auto &sc : c.scratch)
     if (sc->width == width && sc->height == height && sc->format == format &&
-        sc->role == role)
+        sc->role == role && sc->layers == layers)
       return sc.get();
   auto sc = std::make_unique<Scratch>();
   sc->width = width;
   sc->height = height;
   sc->format = format;
   sc->role = role;
-  sc->texture = CreateHostTexture(
-      s.device.get(), plume::RenderTextureDesc::ColorTarget(width, height, format),
-      "host-post-scratch");
+  sc->layers = layers;
+  plume::RenderTextureDesc desc =
+      plume::RenderTextureDesc::ColorTarget(width, height, format);
+  desc.arraySize = layers; // plume's default view is a 2D array past 1 layer
+  sc->texture = CreateHostTexture(s.device.get(), desc, "host-post-scratch");
   if (!sc->texture) {
     BD_ERROR("[post] scratch {}x{} failed; chain disabled", width, height);
     c.failed = true;
     return nullptr;
   }
   const plume::RenderTexture *attachments[1] = {sc->texture.get()};
-  sc->framebuffer = s.device->createFramebuffer(
-      plume::RenderFramebufferDesc(attachments, 1));
+  plume::RenderFramebufferDesc fb_desc(attachments, 1);
+  fb_desc.viewMask = layers > 1 ? 0x3u : 0u;
+  sc->framebuffer = s.device->createFramebuffer(fb_desc);
   if (!sc->framebuffer) {
     BD_ERROR("[post] scratch framebuffer failed; chain disabled");
     c.failed = true;
@@ -293,7 +300,7 @@ GuestTexture *Content(GuestTexture *t) {
 
 bool Readable(GuestTexture *t) {
   return t && t->texture && t->descriptorIndex != kInvalidDescriptorIndex &&
-         t->layers == 1;
+         t->layers <= 2;
 }
 
 // Content, transitioned for sampling; null when it cannot be sampled.
@@ -318,7 +325,7 @@ float SourceScale(const GuestTexture *t) {
 // pointing into it (the host content replaces what the copy would bring) and
 // make it a colour attachment.
 plume::RenderFramebuffer *BeginGuestTarget(VideoState &s, GuestTexture *dst) {
-  if (!dst || !dst->texture || dst->layers != 1)
+  if (!dst || !dst->texture || dst->layers > 2)
     return nullptr;
   DetachSourceSurfaceLocked(s, dst);
   plume::RenderFramebuffer *fb = GetFramebuffer(s, dst, nullptr);
@@ -360,7 +367,8 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   GuestTexture *scene = Source(s, s.textures[1]);
   if (!scene)
     return false;
-  auto *dual = Pipeline(s, c, Shader::DualDown, scene->format);
+  const bool layered = scene->layers > 1;
+  auto *dual = Pipeline(s, c, Shader::DualDown, scene->format, layered);
   if (!dual)
     return false;
   u32 prev_slot = scene->descriptorIndex;
@@ -373,14 +381,15 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   u32 filled = 0;
   for (u32 slot = 2; slot <= 6; ++slot) {
     GuestTexture *dst = s.textures[slot];
-    if (!dst || !dst->texture || dst->layers != 1 || dst->width == 0)
+    if (!dst || !dst->texture || dst->layers != scene->layers ||
+        dst->width == 0)
       break;
     plume::RenderFramebuffer *fb = BeginGuestTarget(s, dst);
     if (!fb)
       break;
     auto *pipe = dst->format == scene->format
                      ? dual
-                     : Pipeline(s, c, Shader::DualDown, dst->format);
+                     : Pipeline(s, c, Shader::DualDown, dst->format, layered);
     if (!pipe)
       break;
     // A level the size of its predecessor (the guest's 80x45 pair) just
@@ -418,18 +427,19 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
 GuestTexture *BuildBloomMask(VideoState &s, Chain &c, GuestTexture *scene,
                              u32 device_guest) {
   GuestTexture *dst = s.textures[1];
-  if (!scene || !dst || !dst->texture || dst->layers != 1 || dst->width == 0 ||
-      dst->width > scene->width)
+  if (!scene || !dst || !dst->texture || dst->layers != scene->layers ||
+      dst->width == 0 || dst->width > scene->width)
     return nullptr;
+  const bool layered = scene->layers > 1;
   const float threshold = GuestPixelConstant(device_guest, 27, 0);
   const float intensity = GuestPixelConstant(device_guest, 27, 1);
   const u32 w = dst->width;
   const u32 h = dst->height;
   const plume::RenderFormat fmt = dst->format;
-  auto *bright = Pipeline(s, c, Shader::Bright, fmt);
-  auto *blur = Pipeline(s, c, Shader::Blur, fmt);
-  Scratch *a = GetScratch(s, c, w, h, fmt, 0);
-  Scratch *b = GetScratch(s, c, w, h, fmt, 1);
+  auto *bright = Pipeline(s, c, Shader::Bright, fmt, layered);
+  auto *blur = Pipeline(s, c, Shader::Blur, fmt, layered);
+  Scratch *a = GetScratch(s, c, w, h, fmt, 0, scene->layers);
+  Scratch *b = GetScratch(s, c, w, h, fmt, 1, scene->layers);
   if (!bright || !blur || !a || !b)
     return nullptr;
   const u32 ratio = scene->width >= w * 2 ? scene->width / w : 1;
@@ -463,7 +473,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene || !bloom)
     return false;
   GuestTexture *rt = s.render_target;
-  if (!rt || !rt->texture || rt->layers != 1)
+  if (!rt || !rt->texture || rt->layers > 2)
     return false;
   GuestTexture *depth = Source(s, c.dof.depth);
   if (!depth)
@@ -492,7 +502,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   auto alloc = UploadHostConstants(&k, sizeof(k));
   if (!alloc.memory)
     return false;
-  auto *pipe = Pipeline(s, c, Shader::Composite, rt->format);
+  const bool layered = rt->layers > 1;
+  auto *pipe = Pipeline(s, c, Shader::Composite, rt->format, layered);
   if (!pipe)
     return false;
   Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);

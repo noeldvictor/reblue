@@ -13,7 +13,8 @@
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
     Texture2DArray<float4> src = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
     uint w, h, layers;
@@ -28,7 +29,7 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
         for (int x = 0; x < ratio; ++x)
         {
             const int2 p = int2(min(base.x + x, int(w) - 1), min(base.y + y, int(h) - 1));
-            rgb += src.Load(int4(p, 0, 0)).xyz;
+            rgb += src.Load(int4(p, viewId, 0)).xyz;
         }
     }
     rgb /= float(ratio * ratio);

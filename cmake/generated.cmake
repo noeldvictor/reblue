@@ -41,7 +41,7 @@ endforeach()
 # and bright mask, producing the guest's pyramid textures without the tile.
 foreach(shader IN ITEMS post_down_ps post_blur_ps post_bright_ps
                         post_dual_down_ps post_composite_ps)
-    reblue_host_shader(${shader} ps_6_0)
+    reblue_host_shader(${shader} ps_6_1)
 endforeach()
 
 if(REBLUE_BUILD_INSTALLER)

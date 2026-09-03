@@ -14,7 +14,8 @@
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 [[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
     Texture2DArray<float4> src = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
     SamplerState smp = g_SamplerDescriptorHeap[0];
@@ -24,20 +25,20 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
     const float2 t = (2.0 / float2(max(w, 1u), max(h, 1u))) * max(g_PushConstants.Param0, 0.25);
     const float2 uv = texCoord;
 
-    float4 a = src.SampleLevel(smp, float3(uv + float2(-t.x, -t.y), 0.0), 0.0);
-    float4 b = src.SampleLevel(smp, float3(uv + float2( 0.0, -t.y), 0.0), 0.0);
-    float4 c = src.SampleLevel(smp, float3(uv + float2( t.x, -t.y), 0.0), 0.0);
-    float4 d = src.SampleLevel(smp, float3(uv + float2(-t.x,  0.0), 0.0), 0.0);
-    float4 e = src.SampleLevel(smp, float3(uv, 0.0), 0.0);
-    float4 f = src.SampleLevel(smp, float3(uv + float2( t.x,  0.0), 0.0), 0.0);
-    float4 g = src.SampleLevel(smp, float3(uv + float2(-t.x,  t.y), 0.0), 0.0);
-    float4 hh = src.SampleLevel(smp, float3(uv + float2( 0.0,  t.y), 0.0), 0.0);
-    float4 i = src.SampleLevel(smp, float3(uv + float2( t.x,  t.y), 0.0), 0.0);
+    float4 a = src.SampleLevel(smp, float3(uv + float2(-t.x, -t.y), float(viewId)), 0.0);
+    float4 b = src.SampleLevel(smp, float3(uv + float2( 0.0, -t.y), float(viewId)), 0.0);
+    float4 c = src.SampleLevel(smp, float3(uv + float2( t.x, -t.y), float(viewId)), 0.0);
+    float4 d = src.SampleLevel(smp, float3(uv + float2(-t.x,  0.0), float(viewId)), 0.0);
+    float4 e = src.SampleLevel(smp, float3(uv, float(viewId)), 0.0);
+    float4 f = src.SampleLevel(smp, float3(uv + float2( t.x,  0.0), float(viewId)), 0.0);
+    float4 g = src.SampleLevel(smp, float3(uv + float2(-t.x,  t.y), float(viewId)), 0.0);
+    float4 hh = src.SampleLevel(smp, float3(uv + float2( 0.0,  t.y), float(viewId)), 0.0);
+    float4 i = src.SampleLevel(smp, float3(uv + float2( t.x,  t.y), float(viewId)), 0.0);
     const float2 ht = t * 0.5;
-    float4 j = src.SampleLevel(smp, float3(uv + float2(-ht.x, -ht.y), 0.0), 0.0);
-    float4 k = src.SampleLevel(smp, float3(uv + float2( ht.x, -ht.y), 0.0), 0.0);
-    float4 l = src.SampleLevel(smp, float3(uv + float2(-ht.x,  ht.y), 0.0), 0.0);
-    float4 m = src.SampleLevel(smp, float3(uv + float2( ht.x,  ht.y), 0.0), 0.0);
+    float4 j = src.SampleLevel(smp, float3(uv + float2(-ht.x, -ht.y), float(viewId)), 0.0);
+    float4 k = src.SampleLevel(smp, float3(uv + float2( ht.x, -ht.y), float(viewId)), 0.0);
+    float4 l = src.SampleLevel(smp, float3(uv + float2(-ht.x,  ht.y), float(viewId)), 0.0);
+    float4 m = src.SampleLevel(smp, float3(uv + float2( ht.x,  ht.y), float(viewId)), 0.0);
 
     float4 acc = (j + k + l + m) * 0.125;
     acc += (a + b + d + e) * 0.03125;

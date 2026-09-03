@@ -21,13 +21,17 @@
 [[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
 [[vk::binding(1, 2)]] cbuffer PixelShaderConstantsBuf : register(b1, space4) { float4 g_PSC[224]; };
 
+static uint g_ViewId = 0u;
+
 float4 Tap(uint index, float2 uv)
 {
-    return g_Texture2DDescriptorHeap[index].SampleLevel(g_SamplerDescriptorHeap[0], float3(uv, 0.0), 0.0);
+    return g_Texture2DDescriptorHeap[index].SampleLevel(g_SamplerDescriptorHeap[0], float3(uv, float(g_ViewId)), 0.0);
 }
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
+    g_ViewId = viewId;
     const float dofX = g_PSC[0].x;
     const float dofY = g_PSC[0].y;
     const float focus = g_PSC[0].z;

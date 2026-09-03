@@ -11,7 +11,8 @@
 
 static const float kWeights[5] = { 0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216 };
 
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
     Texture2DArray<float4> src = g_Texture2DDescriptorHeap[g_PushConstants.ResourceDescriptorIndex];
     uint w, h, layers;
@@ -19,13 +20,13 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : S
     const int2 limit = int2(int(w) - 1, int(h) - 1);
     const int2 p = int2(position.xy);
     const int2 dir = int2(int(round(g_PushConstants.Param0)), int(round(g_PushConstants.Param1)));
-    float4 acc = src.Load(int4(min(p, limit), 0, 0)) * kWeights[0];
+    float4 acc = src.Load(int4(min(p, limit), viewId, 0)) * kWeights[0];
     [unroll]
     for (int i = 1; i < 5; ++i)
     {
         const int2 a = clamp(p + dir * i, int2(0, 0), limit);
         const int2 b = clamp(p - dir * i, int2(0, 0), limit);
-        acc += (src.Load(int4(a, 0, 0)) + src.Load(int4(b, 0, 0))) * kWeights[i];
+        acc += (src.Load(int4(a, viewId, 0)) + src.Load(int4(b, viewId, 0))) * kWeights[i];
     }
     return acc;
 }
