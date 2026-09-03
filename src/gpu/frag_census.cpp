@@ -38,12 +38,32 @@ struct Slot {
   bool saturated = false;
 };
 
+// A pixel shader and the boolean constant words it was drawn with: one path
+// through an uber-shader.
+struct PathKey {
+  u64 ps = 0;
+  u32 bools[4] = {};
+  bool operator==(const PathKey &o) const {
+    return ps == o.ps && bools[0] == o.bools[0] && bools[1] == o.bools[1] &&
+           bools[2] == o.bools[2] && bools[3] == o.bools[3];
+  }
+};
+struct PathKeyHash {
+  size_t operator()(const PathKey &k) const {
+    u64 h = k.ps;
+    for (u32 b : k.bools)
+      h = (h ^ (u64(b) + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2)));
+    return size_t(h);
+  }
+};
+
 struct Census {
   Slot slots[kNumFrames];
   u32 active = ~0u;
   bool unsupported = false;
   // Accumulated over the report window.
   std::unordered_map<u64, u64> per_shader;
+  std::unordered_map<PathKey, u32, PathKeyHash> per_path; // draws per path
   u64 total = 0;
   u32 frames = 0;
   u32 draws_counted = 0;
@@ -157,10 +177,40 @@ void FragCensusCollect(u32 slot) {
             count / frames / 1.0e6,
             c.total ? 100.0 * static_cast<double>(count) / c.total : 0.0);
   }
+  // The paths: which boolean constant words each of the top shaders is drawn
+  // with, and how often. A host material implements exactly these.
+  std::vector<std::pair<PathKey, u32>> paths(c.per_path.begin(),
+                                             c.per_path.end());
+  std::sort(paths.begin(), paths.end(),
+            [](const auto &a, const auto &b) { return a.second > b.second; });
+  BD_INFO("[frag] {} distinct (pixel shader, bool words) paths; the top twelve "
+          "by draws a frame:",
+          paths.size());
+  shown = 0;
+  for (const auto &[key, draws] : paths) {
+    if (shown++ >= 12)
+      break;
+    BD_INFO("[frag]   ps {:016X} bools {:08X} {:08X} {:08X} {:08X}: {:.1f} "
+            "draws a frame",
+            key.ps, key.bools[0], key.bools[1], key.bools[2], key.bools[3],
+            draws / frames);
+  }
   c.per_shader.clear();
+  c.per_path.clear();
   c.total = 0;
   c.frames = 0;
   c.draws_counted = 0;
+}
+
+void FragCensusNoteDraw(u64 ps_hash, const u32 bools[4]) {
+  auto &c = census();
+  if (c.active >= kNumFrames)
+    return; // the census is off this frame
+  PathKey k;
+  k.ps = ps_hash;
+  for (u32 i = 0; i < 4; ++i)
+    k.bools[i] = bools ? bools[i] : 0u;
+  ++c.per_path[k];
 }
 
 } // namespace bd::gpu

@@ -27,5 +27,9 @@ void FragCensusEnd(plume::RenderCommandList *cmd);
 // After the slot's fence: reads the counts, folds them per pixel shader, and
 // prints the top shaders every few hundred frames.
 void FragCensusCollect(u32 slot);
+// Per dispatched draw: the pixel shader and the guest's four pixel-shader
+// boolean constant words, which steer the uber-shaders' paths. Reported with
+// the fragment report as the paths a host material has to implement.
+void FragCensusNoteDraw(u64 ps_hash, const u32 bools[4]);
 
 } // namespace bd::gpu

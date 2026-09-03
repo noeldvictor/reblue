@@ -34,6 +34,7 @@
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/format.h"
+#include "gpu/frag_census.h"
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 #include "gpu/host_resource_heap.h"
@@ -146,6 +147,17 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   bd::gpu::NoteDraw();
   bd::gpu::NoteDrawVertices(args.vertexOrIndexCount);
   bd::gpu::state().current_draw_count = args.vertexOrIndexCount;
+  // The fragment census's path census: this draw's pixel shader and the
+  // boolean constant words that steer it (bd_frag_census).
+  if (const auto *dev = bd::mem::at<const bd::gpu::D3DDevice>(device_guest)) {
+    const auto *ps = bd::gpu::state().pixel_shader;
+    const u32 bools[4] = {
+        u32(dev->psBoolConstants[0]), u32(dev->psBoolConstants[1]),
+        u32(dev->psBoolConstants[2]), u32(dev->psBoolConstants[3])};
+    bd::gpu::FragCensusNoteDraw(
+        (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0ull,
+        bools);
+  }
   // bd_dump_post_draws: name every post-effect draw of the next N frames by
   // its pixel shader, with the target it writes, the textures it samples and
   // the two parameter registers the bd_pe_* shaders read (c26 g_vCount, c27
