@@ -88,11 +88,13 @@ struct FetchDelta {
 struct SubDraw {
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
-  // The content hash each ordinary texture had at capture: a GuestTexture
-  // object freed and reallocated for another texture keeps its pointer, and
-  // a replay through the stale pointer samples the new texture until the
-  // refresh (2026-09-03). A hash that moved refuses the replay.
-  u64 tex_hash[16]{};
+  // The guest address each ordinary texture had at capture: a GuestTexture
+  // object freed and reallocated for another texture keeps its host
+  // pointer, and a replay through the stale pointer samples the new texture
+  // until the refresh (2026-09-03). An address that moved refuses the
+  // replay. (contentHash is a marker - 1 for a mirrored texture, 0 for the
+  // rest - not a hash, so it neither identifies a texture nor a surface.)
+  u32 tex_va[16]{};
   u32 tex_mask = 0; // slots SetTexture bound by this draw
   // Of those, the slots holding a render surface rather than an asset (a
   // shadow map, a reflection). A surface is pooled and re-pointed between
@@ -774,9 +776,14 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   d.surface_mask = 0;
   for (u32 i = 0; i < 16; ++i) {
     d.textures[i] = s.textures[i];
-    d.tex_hash[i] = s.textures[i] ? s.textures[i]->contentHash : 0ull;
+    d.tex_va[i] = s.textures[i] ? s.textures[i]->selfVa : 0u;
+    // A render-target or depth surface by its resource type: the pooled
+    // ones change host pointer every frame. Classifying by contentHash
+    // filed every non-mirrored texture here and inherited it from the last
+    // draw - the flat cyan skirt at the village rock's base (2026-09-03).
     if (((d.tex_mask >> i) & 1u) && s.textures[i] &&
-        s.textures[i]->contentHash == 0)
+        (s.textures[i]->type == ResourceType::RenderTarget ||
+         s.textures[i]->type == ResourceType::DepthStencil))
       d.surface_mask |= 1u << i;
   }
   for (u32 i = 0; i < 16; ++i) {
@@ -1073,7 +1080,7 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
         // An ordinary texture whose object was reused since the capture.
         if (((d.tex_mask & ~d.surface_mask) >> k) & 1u && d.textures[k] &&
-            d.textures[k]->contentHash != d.tex_hash[k]) {
+            d.textures[k]->selfVa != d.tex_va[k]) {
           ++st.stale_tex;
           it->second.captured_frame = 0; // recapture on the next sighting
           return false;
