@@ -279,8 +279,14 @@ so those copies were cheap on the GPU. The render-stage trace's ~3 ms of "Preemp
 compositor's own GPU work between our passes, not ours to remove. What is left of the app's
 GPU: the scene (3.7), the guest's scaled scene resolves (0.25-scale full copy plus two
 half-res copies the host chain overwrites, ~1.5 ms), the shadow stub (1.2, becomes real
-shadows in the target configuration), the post and 2D passes. The next boundary is 72 Hz at
-13.9 ms.
+shadows in the target configuration), the post and 2D passes. **The guest's scene resolves
+then went too (22:50-23:30)**: the two half-res scaled copies had no reader under the host chain,
+and the x0.25 full-res copy is an alias now, the scale applied by the host passes (the composite
+reads the scene as the dof draw saw it; the first attempt read the guest's re-resolved dof
+target, a seeded unscaled copy, and the frame came out four times too bright). Quest:
+`gpu_total_ms` p50 **13.2** (p10 12.1), `rs_eager` 1, seeds 2, 99% of field frames in one
+60 Hz slot - the median is under the 72 Hz boundary of 13.9 ms for the first time; the p90 is
+not.
 
 **What is left on the CPU, per thread** (`out/device/profile_setmove.txt`, 2026-09-01; the
 SDLThread paragraph below is superseded by the profile above):
