@@ -495,6 +495,15 @@ A/B (`bd_debug_skip_list_draws`, run 11): **-1.2% GPU** with the guest's sorted 
 translucent draws dropped, so the fragment cost is in the tree-walk materials - terrain,
 rock, buildings - not in the translucent layering. The blended-class A/B was not run.
 
+**Done 10:05-10:45 (desktop, `PLUME_FB_TRACE`):** the scene pass was eight render passes
+and is one: plume no longer ends a pass for a rebind of the open framebuffer (fork
+`0bf3d63`/`6a6f679`), the sun-occlusion counter's copies moved out of the pass to the
+list's begin and submit, and the resolve-source barrier goes ahead of the queued draws
+instead of flushing them first. 26 passes a frame -> 19, image unchanged. The trace is the
+instrument for the rest: run the desktop with `PLUME_FB_TRACE=<path>` set, read one frame
+between two `1920x1080` present passes; `pass ended by barriers` lines name the texture,
+`host surface|texture guest .. plume ..` lines name the guest object behind it.
+
 1. **Stage 4, the host owns the targets.** Start in `gpu/draw_framebuffer.cpp` and
    `gpu/resolve.cpp`: a host scene target per render view (colour+depth, two layers under
    multiview) bound when the guest binds the scene surface; the guest's resolve of the scene

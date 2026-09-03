@@ -117,10 +117,20 @@ fp16+depth target; on the Quest each is a compositor preemption point, which is 
 plume (fork `0bf3d63`): a rebind of the framebuffer whose pass is open is a no-op when no
 clear is pending. Desktop: **21 passes, the scene in 3 sub-passes**, image identical. The
 PC GPU frame did not move (6.0 vs 5.5 ms; a desktop GPU does not pay for pass boundaries),
-which is why the PC never showed this. The three that remain are ended by barriers, and
-the sun-occlusion query issues two of them inside the scene pass (its counter zeroing and
-readback are buffer copies bracketed by barriers); those moved to the command list's
-begin and submit. Result in the next section.
+which is why the PC never showed this. The three that remain are ended by barriers. The
+sun-occlusion query issues one inside the scene pass (its counter zeroing and readback are
+buffer copies bracketed by barriers); those moved to the command list's begin and submit:
+scene in 2. The last one, once plume's trace named textures at creation and the host named
+the guest object behind each (`PLUME_FB_TRACE` had also been truncating the host's lines:
+plume opened it with "w" after the host had written), was the **reflection surface**
+flipped to shader-read on the first water draw by `TransitionResolveSources` - which
+flushed the queued scene draws first (plume opened the pass on them) and then issued the
+barrier. The barrier goes ahead of the queued draws now; they do not touch the surfaces it
+flips. **Desktop: 19 passes a frame, the scene pass one pass, image unchanged** (capture
+10:44). What is left of the frame's structure on the desktop: shadow (a held-clear flush
+plus the pass), reflection, scene, the MSAA depth and colour resolves (desktop only), the
+dof pyramid (5), bloom (3), the tail (composite, UI, front copy, a second 32-bit pass, with
+barriers between) and the present.
 
 ## Also seen
 
