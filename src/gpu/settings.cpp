@@ -471,6 +471,11 @@ REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
                      "Frames a host node draw template is used before the "
                      "interpreter refreshes it.");
 
+REXCVAR_DEFINE_BOOL(bd_xr_direct_present, true, kCvarGroup,
+                    "Render the present pass straight into the runtime's "
+                    "swapchain image instead of an offscreen frame copied "
+                    "into it (one full-frame copy and a preemption slot "
+                    "fewer per frame).");
 REXCVAR_DEFINE_BOOL(bd_walk_skip_stubs, true, kCvarGroup,
                     "With reflections off, the host walk skips the 128x72 "
                     "reflection stub pass instead of rendering it.");

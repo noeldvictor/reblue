@@ -55,6 +55,7 @@ REXCVAR_DECLARE(bool, bd_debug_present_clear);
 REXCVAR_DECLARE(bool, bd_mv_debug_layer_diff);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 REXCVAR_DECLARE(f64, bd_xr_present_scale);
+REXCVAR_DECLARE(bool, bd_xr_direct_present);
 
 namespace bd::gpu {
 
@@ -217,7 +218,9 @@ GuestTexture *SelectPresentSource(VideoState &s, GuestTexture *frontBuffer,
 // -> PRESENT.
 void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
                        plume::RenderTexture *back,
-                       plume::RenderFramebuffer *back_fb) {
+                       plume::RenderFramebuffer *back_fb,
+                       plume::RenderTextureLayout final_layout =
+                           plume::RenderTextureLayout::PRESENT) {
   BD_GPU_ZONE("RecordPresentPass");
 
   // Flatten a still-dirty multiview target, because nothing else will.
@@ -475,9 +478,10 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
                       plume::RenderTextureLayout::COLOR_WRITE);
   }
 
-  s.command_list->barriers(
-      plume::RenderBarrierStage::GRAPHICS,
-      plume::RenderTextureBarrier(back, plume::RenderTextureLayout::PRESENT));
+  // PRESENT for a swapchain image of our own; the runtime's image goes back
+  // to COLOR_WRITE, the layout OpenXR requires a released image to be in.
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS,
+                           plume::RenderTextureBarrier(back, final_layout));
 }
 
 } // namespace
@@ -974,101 +978,166 @@ void EndXrFrame() {
   g_xr_stats.lastReport = now;
 }
 
+// The runtime's swapchain images, wrapped for plume: as copy destinations
+// (the offscreen path) and as render targets (the direct path), with a
+// framebuffer each.
+std::vector<std::unique_ptr<plume::VulkanTexture>> g_xr_textures;
+std::vector<std::unique_ptr<plume::RenderFramebuffer>> g_xr_fbs;
+bool g_xr_targets_ready = false;
+// The image acquired for direct present this frame, -1 when the offscreen
+// path is in use. Set before RecordPresentPass, consumed by RecordXrQuad.
+i32 g_xr_direct_index = -1;
+
+bool EnsureXrTargets(VideoState &s, u32 sw, u32 sh) {
+  if (g_xr_targets_ready)
+    return true;
+  auto &session = bd::xr::Session::Get();
+  if (!sw || !sh)
+    XrPresentSize(s, nullptr, sw, sh);
+  if (!session.CreateSwapchain(sw, sh))
+    return false;
+  auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
+  for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
+    auto image = reinterpret_cast<VkImage>(session.SwapchainImage(i));
+    auto tex = std::make_unique<plume::VulkanTexture>(vk_device, image);
+    // The VkImage constructor sets only the handle and the device - desc,
+    // imageFormat and the subresource range are all left zeroed, because
+    // plume normally fills them in from the swapchain that owns the image.
+    // Without them copyTexture computes a 0x0 region and copies nothing,
+    // which is a black layer rather than any kind of error.
+    tex->desc.width = session.SwapchainWidth();
+    tex->desc.height = session.SwapchainHeight();
+    tex->desc.depth = 1;
+    tex->desc.mipLevels = 1;
+    tex->desc.arraySize = 1;
+    tex->desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
+    tex->desc.format = kPresentBackFormat;
+    tex->desc.flags = plume::RenderTextureFlag::RENDER_TARGET;
+    tex->imageFormat = static_cast<VkFormat>(session.SwapchainFormat());
+    tex->imageSubresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    // A view, so the image can be a framebuffer attachment.
+    tex->createImageView(tex->imageFormat);
+    const plume::RenderTexture *attachments[1] = {tex.get()};
+    auto fb = s.device->createFramebuffer(
+        plume::RenderFramebufferDesc(attachments, 1));
+    if (!fb) {
+      BD_ERROR("[xr] framebuffer over swapchain image {} failed", i);
+      return false;
+    }
+    g_xr_textures.push_back(std::move(tex));
+    g_xr_fbs.push_back(std::move(fb));
+  }
+  g_xr_targets_ready = true;
+  BD_INFO("[xr] quad swapchain ready, {} images wrapped as render targets",
+          g_xr_textures.size());
+  return true;
+}
+
+// Acquire the runtime's image as this frame's present target. False leaves
+// the offscreen path to run; true has the image acquired, and RecordXrQuad
+// releases it.
+bool AcquireXrTargetDirect(VideoState &s, u32 w, u32 h,
+                           plume::RenderTexture **back,
+                           plume::RenderFramebuffer **back_fb) {
+  auto &session = bd::xr::Session::Get();
+  if (!session.Running())
+    return false;
+  if (!EnsureXrTargets(s, w, h))
+    return false;
+  if (session.SwapchainWidth() != w || session.SwapchainHeight() != h) {
+    static bool logged = false;
+    if (!logged) {
+      logged = true;
+      BD_INFO("[xr] direct present off: frame {}x{}, swapchain {}x{}", w, h,
+              session.SwapchainWidth(), session.SwapchainHeight());
+    }
+    return false;
+  }
+  const i32 index = session.AcquireSwapchainImage();
+  if (index < 0 || static_cast<size_t>(index) >= g_xr_textures.size()) {
+    ++g_xr_stats.noImage;
+    return false;
+  }
+  g_xr_direct_index = index;
+  *back = g_xr_textures[index].get();
+  *back_fb = g_xr_fbs[index].get();
+  static bool told = false;
+  if (!told) {
+    told = true;
+    BD_INFO("[xr] direct present: the gamma pass renders into the runtime's "
+            "{}x{} swapchain image", w, h);
+  }
+  return true;
+}
+
 void RecordXrQuad(VideoState &s, plume::RenderTexture *back) {
   auto &session = bd::xr::Session::Get();
-  if (!session.Running() || !g_xr_frame_open || !g_xr_frame.shouldRender)
-    return;
-
-  // Created once, at the size the game is already presenting at.
-  static bool swapchain_ready = false;
-  static std::vector<std::unique_ptr<plume::VulkanTexture>> xr_textures;
-  if (!swapchain_ready) {
-    // The size of what the present blits into. The session can turn Running
-    // between the top of Present and here, so on that first frame there is no
-    // offscreen target yet and the size is computed the way it will be.
-    u32 sw = g_offscreen_w;
-    u32 sh = g_offscreen_h;
-    if (!sw || !sh)
-      XrPresentSize(s, nullptr, sw, sh);
-    if (!session.CreateSwapchain(sw, sh))
-      return;
-    auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
-    for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
-      auto image = reinterpret_cast<VkImage>(session.SwapchainImage(i));
-      auto tex = std::make_unique<plume::VulkanTexture>(vk_device, image);
-      // The VkImage constructor sets only the handle and the device - desc,
-      // imageFormat and the subresource range are all left zeroed, because
-      // plume normally fills them in from the swapchain that owns the image.
-      // Without them copyTexture computes a 0x0 region and copies nothing,
-      // which is a black layer rather than any kind of error.
-      tex->desc.width = session.SwapchainWidth();
-      tex->desc.height = session.SwapchainHeight();
-      tex->desc.depth = 1;
-      tex->desc.mipLevels = 1;
-      tex->desc.arraySize = 1;
-      tex->desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
-      tex->desc.format = plume::RenderFormat::R8G8B8A8_UNORM;
-      tex->imageFormat = static_cast<VkFormat>(session.SwapchainFormat());
-      tex->imageSubresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
-      xr_textures.push_back(std::move(tex));
-    }
-    swapchain_ready = true;
-    BD_INFO("[xr] quad swapchain ready, {} images wrapped", xr_textures.size());
-  }
-
-  const i32 index = session.AcquireSwapchainImage();
-  if (index < 0 || static_cast<size_t>(index) >= xr_textures.size()) {
-    // No image means this frame reaches xrEndFrame with no layer at all, and
-    // the compositor has nothing to show. That is the flicker, if it happens.
-    ++g_xr_stats.noImage;
-    return;
-  }
-
-  plume::RenderTexture *dst = xr_textures[index].get();
-  {
-    // The copy takes the destination's extent; a source of another size (the
-    // window, on the frame the session turned Running) would copy a corner.
-    const auto *src = static_cast<const plume::VulkanTexture *>(back);
-    if (src->desc.width != session.SwapchainWidth() ||
-        src->desc.height != session.SwapchainHeight()) {
-      static bool logged = false;
-      if (!logged) {
-        logged = true;
-        BD_INFO("[xr] frame {}x{} skipped: swapchain is {}x{}", src->desc.width,
-                src->desc.height, session.SwapchainWidth(),
-                session.SwapchainHeight());
-      }
+  const i32 direct = g_xr_direct_index;
+  g_xr_direct_index = -1;
+  if (!session.Running() || !g_xr_frame_open || !g_xr_frame.shouldRender) {
+    // An image acquired for a frame that is not rendered still has to be
+    // handed back, or the next acquire fails.
+    if (direct >= 0)
       session.ReleaseSwapchainImage();
+    return;
+  }
+
+  if (direct < 0) {
+    if (!EnsureXrTargets(s, g_offscreen_w, g_offscreen_h))
+      return;
+    const i32 index = session.AcquireSwapchainImage();
+    if (index < 0 || static_cast<size_t>(index) >= g_xr_textures.size()) {
       ++g_xr_stats.noImage;
       return;
     }
-  }
-  const plume::RenderTextureBarrier to_copy[] = {
-      plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COPY_DEST),
-      plume::RenderTextureBarrier(back, plume::RenderTextureLayout::COPY_SOURCE),
-  };
-  s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0, to_copy, 2);
-  s.command_list->copyTexture(dst, back);
 
-  // Both images have to be handed back in the layout their owner expects.
-  // OpenXR requires a released swapchain image to be in the layout implied by
-  // its usage flags - COLOR_ATTACHMENT_OPTIMAL for a colour attachment - and
-  // leaving it in COPY_DEST is undefined, which on Quest shows as a black
-  // layer rather than an error. The back buffer goes back to PRESENT for the
-  // flat present that follows.
-  // The runtime's image always goes back to COLOR_WRITE. Ours goes back to
-  // whatever its owner expects next: PRESENT for a real swapchain image, and
-  // COLOR_WRITE for the offscreen target, which is never presented and would
-  // be left in an undefined layout for next frame's render pass otherwise.
-  const plume::RenderTextureBarrier restore[] = {
-      plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COLOR_WRITE),
-      plume::RenderTextureBarrier(back,
-                                  XrCompositorPacing()
-                                      ? plume::RenderTextureLayout::COLOR_WRITE
-                                      : plume::RenderTextureLayout::PRESENT),
-  };
-  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
-                           restore, 2);
+    plume::RenderTexture *dst = g_xr_textures[index].get();
+    {
+      const auto *src = static_cast<const plume::VulkanTexture *>(back);
+      if (src->desc.width != session.SwapchainWidth() ||
+          src->desc.height != session.SwapchainHeight()) {
+        static bool logged = false;
+        if (!logged) {
+          logged = true;
+          BD_INFO("[xr] frame {}x{} skipped: swapchain is {}x{}",
+                  src->desc.width, src->desc.height, session.SwapchainWidth(),
+                  session.SwapchainHeight());
+        }
+        session.ReleaseSwapchainImage();
+        ++g_xr_stats.noImage;
+        return;
+      }
+    }
+    const plume::RenderTextureBarrier to_copy[] = {
+        plume::RenderTextureBarrier(dst, plume::RenderTextureLayout::COPY_DEST),
+        plume::RenderTextureBarrier(back,
+                                    plume::RenderTextureLayout::COPY_SOURCE),
+    };
+    s.command_list->barriers(plume::RenderBarrierStage::COPY, nullptr, 0,
+                             to_copy, 2);
+    s.command_list->copyTexture(dst, back);
+
+    // Both images have to be handed back in the layout their owner expects.
+    // OpenXR requires a released swapchain image to be in the layout implied
+    // by its usage flags - COLOR_ATTACHMENT_OPTIMAL for a colour attachment -
+    // and leaving it in COPY_DEST is undefined, which on Quest shows as a
+    // black layer rather than an error. Ours goes back to whatever its owner
+    // expects next: PRESENT for a real swapchain image, and COLOR_WRITE for
+    // the offscreen target, which is never presented and would be left in an
+    // undefined layout for next frame's render pass otherwise.
+    const plume::RenderTextureBarrier restore[] = {
+        plume::RenderTextureBarrier(dst,
+                                    plume::RenderTextureLayout::COLOR_WRITE),
+        plume::RenderTextureBarrier(back,
+                                    XrCompositorPacing()
+                                        ? plume::RenderTextureLayout::COLOR_WRITE
+                                        : plume::RenderTextureLayout::PRESENT),
+    };
+    s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, nullptr, 0,
+                             restore, 2);
+  }
+  // The direct path rendered into the image and left it in COLOR_WRITE (the
+  // present pass's final layout for it), which is what the release needs.
 
   session.ReleaseSwapchainImage();
 
@@ -1142,27 +1211,29 @@ void Video::Present(GuestTexture *frontBuffer) {
     // Matches the swapchain format picked in device.cpp. plume's RenderTexture
     // does not expose its desc, and the copy into the runtime's image needs
     // both sides to agree, so the choice is repeated rather than queried.
-#if defined(__ANDROID__)
-    constexpr auto kBackFormat = plume::RenderFormat::R8G8B8A8_UNORM;
-#else
-    constexpr auto kBackFormat = plume::RenderFormat::B8G8R8A8_UNORM;
-#endif
     u32 present_w = 0;
     u32 present_h = 0;
     XrPresentSize(s, frontBuffer, present_w, present_h);
-    if (!EnsureOffscreen(s, present_w, present_h, kBackFormat)) {
-      AbandonFrame(s, lock);
-      return;
-    }
-    back = g_offscreen.get();
-    back_fb = g_offscreen_fb.get();
-    // Acquire the flat swapchain too when mirroring, so the offscreen image can
-    // be copied into it below. Failing to acquire is not fatal - the headset
-    // still gets its frame, the window just stays stale.
-    if (REXCVAR_GET(bd_xr_mirror)) {
-      mirroring = s.swap_chain->acquireTexture(
-          s.acquire_semaphores[s.frame.load(std::memory_order_relaxed)].get(),
-          &texture_index);
+    // Straight into the runtime's swapchain image when it can be: the
+    // offscreen frame and the copy into the image were a full-frame blit and
+    // a preemption slot every frame (render-stage trace, 2026-09-02). The
+    // mirror keeps the offscreen path, whose image the window can copy.
+    if (!(REXCVAR_GET(bd_xr_direct_present) && !REXCVAR_GET(bd_xr_mirror) &&
+          AcquireXrTargetDirect(s, present_w, present_h, &back, &back_fb))) {
+      if (!EnsureOffscreen(s, present_w, present_h, kPresentBackFormat)) {
+        AbandonFrame(s, lock);
+        return;
+      }
+      back = g_offscreen.get();
+      back_fb = g_offscreen_fb.get();
+      // Acquire the flat swapchain too when mirroring, so the offscreen
+      // image can be copied into it below. Failing to acquire is not fatal -
+      // the headset still gets its frame, the window just stays stale.
+      if (REXCVAR_GET(bd_xr_mirror)) {
+        mirroring = s.swap_chain->acquireTexture(
+            s.acquire_semaphores[s.frame.load(std::memory_order_relaxed)].get(),
+            &texture_index);
+      }
     }
   } else {
     BD_CPU_ZONE("AcquireTexture");
@@ -1205,7 +1276,10 @@ void Video::Present(GuestTexture *frontBuffer) {
 
   // Reopens a closed list, so end() below always has one.
   BeginCommandList(s);
-  RecordPresentPass(s, rt, chosen, back, back_fb);
+  RecordPresentPass(s, rt, chosen, back, back_fb,
+                    g_xr_direct_index >= 0
+                        ? plume::RenderTextureLayout::COLOR_WRITE
+                        : plume::RenderTextureLayout::PRESENT);
 #if defined(REBLUE_OPENXR)
   BeginXrFrame();
   RecordXrQuad(s, back);

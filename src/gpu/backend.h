@@ -62,6 +62,17 @@ inline constexpr u32 kTextureDescriptorSetIndex = 0;
 inline constexpr u32 kSamplerDescriptorSetIndex = 1;
 inline constexpr u32 kConstantDescriptorSetIndex = 2;
 inline constexpr u32 kOcclusionDescriptorSetIndex = 3;
+
+// The format the present-time passes (gamma, cel, the overlay) render into:
+// the flat swapchain's on Windows, and on Android both the offscreen headset
+// frame and the runtime's swapchain images (VK_FORMAT_R8G8B8A8_UNORM, 37).
+// The pipelines are built for this format; a mismatch with the framebuffer
+// is undefined under Vulkan even where Adreno tolerates it.
+#if defined(__ANDROID__)
+constexpr auto kPresentBackFormat = plume::RenderFormat::R8G8B8A8_UNORM;
+#else
+constexpr auto kPresentBackFormat = plume::RenderFormat::B8G8R8A8_UNORM;
+#endif
 #endif
 
 } // namespace bd::gpu

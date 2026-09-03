@@ -405,6 +405,7 @@ bool BuildCopyPipeline(VideoState &s) {
   }
 
   // Present-time gamma pass: copy_color plus a pow(color, Gamma) PS.
+  pipe_desc.renderTargetFormat[0] = kPresentBackFormat;
   pipe_desc.pixelShader = s.gamma_correction_ps.get();
   s.gamma_correction_pipeline =
       CreateHostGraphicsPipeline(s.device.get(), pipe_desc, "gamma-correction");

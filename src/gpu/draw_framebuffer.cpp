@@ -331,6 +331,20 @@ void SeedFreshColorTarget(VideoState &s, GuestTexture *rt, u32 slot,
   }
   if (seed_src && CopySurfaceToTextureLocked(s, seed_src, rt, seed_tag)) {
     NoteResolveOp(ResolveOp::Seed);
+    // What is being seeded, listed once in a field scene: every entry is a
+    // full-surface copy that exists to emulate EDRAM persistence.
+    {
+      static u32 listed = 0;
+      const u32 frame = FrameStatFrameCount();
+      if (frame > 3000 && listed < 24) {
+        ++listed;
+        BD_INFO("[seed] frame {} {}: {}x{} fmt {} <- {}x{} fmt {} (pending "
+                "clear {})",
+                frame, seed_tag, rt->width, rt->height, u32(rt->format),
+                seed_src->width, seed_src->height, u32(seed_src->format),
+                s.clear_pending ? 1 : 0);
+      }
+    }
     // The copy moved rt off COLOR_WRITE, so re-assert it for the composite
     // draw.
     if (rt->layout != plume::RenderTextureLayout::COLOR_WRITE) {
