@@ -426,6 +426,22 @@ stage 7 renders into the runtime's swapchain instead), multiview's 277 ms withou
 chain (not shipped), and `bd_mv_half_width` (62.7 -> 41.7 ms, present chain does not follow;
 superseded by stage 7).
 
+## The next device session, in order (written 2026-09-03 03:10, headset offline)
+
+`out/probe/reblue_head.apk` is the current head. Never two runs at once; wait for each
+completion notification.
+
+1. `APK=out/probe/reblue_head.apk bash tools/verify_quest.sh ""` - side-by-side, the defaults:
+   verifies the host-built render list, the delta merge and the menu row on device; expect
+   `[node] ... host-built` in the log and `gpu_total_ms` p50 near 13.2.
+2. `bash tools/gpu_drawtrace_quest.sh` - the pass list of that build.
+3. `... verify_quest.sh "bd_stereo_multiview=true,bd_mv_layered_textures=true,bd_mv_resolve=false,bd_mv_capture_array=true"`
+   - multiview at half width (the Android default now): the parity number against 13.2 ms and
+   a stacked capture for the stereo verdict (`tools/stereo_check.py --stacked`, then look).
+4. `... verify_quest.sh "bd_cel_characters=true"` - the cel look on device.
+5. If multiview is at or under side-by-side: make it the shipping path and start stage 7
+   (`XR_FB_foveation` on the runtime's swapchain); if not, its trace names the pass.
+
 ## Multiview: where it is and what is left
 
 The array bindless heap landed 2026-08-31 (`Texture2DArray`, every 2D read carries
