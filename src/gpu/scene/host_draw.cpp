@@ -394,15 +394,39 @@ void DiffBlock(const u8 *before, const u8 *now, const u32 *set,
 
 // Same register set: the structure. Values that moved turn the register's
 // stable flag off in `have`.
+// The union of the two sightings' registers, in register order. A register
+// in one sighting only is kept as it is: a delta records a register that was
+// written or moved, so one absent from a sighting kept the value it had -
+// the render-list loop sets the camera block c0-c4 on the first entry of a
+// visual and not on the next, and which entry comes first follows the depth
+// sort (2026-09-03; it made 26 list templates volatile).
 bool MergeDelta(std::vector<RegDelta> &have, const std::vector<RegDelta> &now) {
-  if (have.size() != now.size())
-    return false;
-  for (size_t i = 0; i < have.size(); ++i) {
-    if (have[i].reg != now[i].reg)
-      return false;
-    if (std::memcmp(have[i].value, now[i].value, 16) != 0)
-      have[i].stable = false;
+  std::vector<RegDelta> merged;
+  merged.reserve(have.size() + now.size());
+  size_t i = 0, j = 0;
+  while (i < have.size() || j < now.size()) {
+    if (j >= now.size() || (i < have.size() && have[i].reg < now[j].reg)) {
+      // Seen in one sighting only: not a constant of the node. The replay
+      // takes it from the visual's fresh values (the first entry of the
+      // visual writes the camera block every frame); replayed as a stable
+      // value it was the capture frame's camera, and the rock vanished.
+      RegDelta r = have[i++];
+      r.stable = false;
+      merged.push_back(r);
+    } else if (i >= have.size() || now[j].reg < have[i].reg) {
+      RegDelta r = now[j++];
+      r.stable = false;
+      merged.push_back(r);
+    } else {
+      RegDelta r = have[i];
+      if (std::memcmp(r.value, now[j].value, 16) != 0)
+        r.stable = false;
+      merged.push_back(r);
+      ++i;
+      ++j;
+    }
   }
+  have.swap(merged);
   return true;
 }
 
