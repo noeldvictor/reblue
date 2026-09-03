@@ -392,7 +392,8 @@ What "removed" means, each verified on a desktop capture, in this order:
    with gamma folded in straight into the runtime's swapchain (multiview, two layers), the
    guest's 2D and effects as one overlay pass. Five or six passes, not twenty.
 3. **The host owns the materials.** The dominant material families get host shaders (fewer
-   fetches, fog per vertex, a lighting-model slot: guest look or cel); the render list's
+   fetches, fog per vertex, a lighting-model slot: guest look or cel) - **started 2026-09-03,
+   the normal and wind shaders with a four-gather shadow kernel, see "The next steps"**; the render list's
    "sorted" materials that are opaque cutouts draw opaque; the rest of the Xenos shaders
    stay only for what is not yet converted. The two `bd_debug_skip_*` A/Bs (last device
    runs) say which class carries the fragments.
@@ -531,12 +532,28 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    family is 79%.** The path census (`[frag] ... paths`, draws per shader and boolean
    words) says the lit material runs under four paths in the field: colour texture on or
    off, normal map on or off, shadow map on or off, always fog and diffuse; environment
-   map, specular and the detail textures never. **The host lit material is those four
-   paths and nothing else**: colour texture times one directional diffuse light plus
-   ambient, optional normal map, one to four shadow taps instead of six, fog; a
-   lighting-model slot (guest look, cel). Substituted for `bd_normal_ps` by hash
-   (`BloomMaskClampBlob` in `guest_shaders.cpp` is the mechanism), then the wind and
-   unlit variants; verified against a capture of the same frame with the guest shader. The tail of the frame is host-owned now:
+   map, specular and the detail textures never. **Shipped 12:30 (`bd_host_materials`,
+   default on): `bd_normal_ps` and `bd_normal_ps_wind` are host shaders**
+   (`gpu/shaders/hlsl/bd_normal_lit.hlsl`, `bd_normal_wind_lit.hlsl`, built by
+   `reblue_host_shader` and substituted by hash at link time - `BloomMaskClampBlob` in
+   `guest_shaders.cpp`; `[material] host shader substituted for guest ps` in the log).
+   What the rewrite is, and is not: **the shadow kernel is the host's** - the guest's was
+   six depth fetches plus six four-load `shadowCmp2D` compares, thirty texture operations
+   a shadowed fragment; four `GatherRed` calls of the D32 map at the corners of a quad
+   half the guest kernel's width (`g_ShadowPcfScale` keeps the penumbra constant in world
+   space) are sixteen texels for four fetches. **Everything else stays as recompiled on
+   purpose**: the untaken paths sit under uniform booleans and cost nothing, and dropping
+   them broke a building's detail layer in a scene the census had not covered (reverted).
+   The "four paths and nothing else" plan of 10:05 is withdrawn for that reason. The cel
+   slot is the existing `SPEC_CONSTANT_CEL` band at export. Verification and its limit:
+   a verbatim host copy first (on/off diff 10.8-12% of pixels under the on/on run-to-run
+   noise of 16.6% - wind, clouds and the shadow band all move between runs), then the
+   kernel by looking at crops (shadows attach to their casters, penumbra comparable).
+   Placement cannot be compared across runs: the whole shadow band moves between any two.
+   The other kernels (barrier, dir, spot, toon, caustics) differ per shader in registers
+   and constant slots and are under 1% of the field's fragments; `tools`-less generator
+   in the session scratchpad, `make_lit.py`, transplants only byte-identical blocks.
+   `research/20260903_1230_the-host-shadow-kernel-...md`. The tail of the frame is host-owned now:
    composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
    passes each sample the image they draw over (an input-attachment self-dependency would
    fold them into one pass; later).
