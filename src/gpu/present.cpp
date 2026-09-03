@@ -1372,8 +1372,16 @@ void Video::Present(GuestTexture *frontBuffer) {
     s.queue->waitForCommandFence(s.fences[cur].get());
     ResolveCapture(kCaptureIsBgra);
     g_captured_in_pass = false;
+    // That wait consumed the fence (plume resets it), so the slot must not be
+    // waited again when the ring comes back round to it: marked submitted, it
+    // hung the render thread in AdvanceAndWaitReused on every capture run of
+    // 2026-09-02 (the log stops at "[capture] wrote", the profile never dumps).
+    // Its GPU work is complete, which is what "not submitted" means here.
+    s.command_list_submitted[cur] = false;
+    CollectGPUTimings(cur);
+  } else {
+    s.command_list_submitted[cur] = true;
   }
-  s.command_list_submitted[cur] = true;
   ApplyVsync(s);
   if (uses_swapchain) {
     BD_CPU_ZONE("PresentSwap");
