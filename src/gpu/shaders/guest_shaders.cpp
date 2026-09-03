@@ -35,11 +35,13 @@ REXCVAR_DECLARE(bool, bd_host_materials);
 #include "src/gpu/shaders/hlsl/bd_pe_ps_brightpass_clamp.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/bd_pe_ps_ms_bright_clamp.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/bd_normal_lit.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/bd_normal_wind_lit.hlsl.dxil.h"
 #include <miniz.h>
 #else
 #include "src/gpu/shaders/hlsl/bd_pe_ps_brightpass_clamp.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/bd_pe_ps_ms_bright_clamp.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/bd_normal_lit.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/bd_normal_wind_lit.hlsl.spirv.h"
 #include <smolv.h>
 #endif
 
@@ -162,6 +164,12 @@ bool BloomMaskClampBlob(u64 hash, const void *&blob, size_t &size) {
       return false;
     blob = REBLUE_BLOB_SYMBOL(bd_normal_lit);
     size = sizeof(REBLUE_BLOB_SYMBOL(bd_normal_lit));
+    return true;
+  case 0xBEE9FB4516ADF0EFull: // bd_normal_ps_wind
+    if (!REXCVAR_GET(bd_host_materials))
+      return false;
+    blob = REBLUE_BLOB_SYMBOL(bd_normal_wind_lit);
+    size = sizeof(REBLUE_BLOB_SYMBOL(bd_normal_wind_lit));
     return true;
   default:
     return false;
