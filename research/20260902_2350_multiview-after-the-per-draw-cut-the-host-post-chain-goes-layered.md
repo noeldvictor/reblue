@@ -80,3 +80,9 @@ a layer (`out/shot_mv_half.png`) - exposure, depth of field, bloom and the sun s
 eyes. The 2026-08-31 note that "the present chain does not follow" half width described the
 guest's post chain on layered targets; the host chain follows. Android default now; the Quest
 run is the parity measurement against side-by-side's 13.2 ms.
+
+## The host-built render list, desktop A/B (03:30)
+
+`bd_perf_csv=true, bd_ab_flag="bd_host_list_build", bd_ab_period=240`, one 300 s run, 9719
+field frames: arm 0 (interpreter builds the entries) 6.41 us of CPU per draw, arm 1 (host)
+5.84 - **-8.8%**. The desktop CPU is ~3x a Quest core, so the ratio is what transfers.
