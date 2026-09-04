@@ -531,6 +531,23 @@ A modest four fewer interpreter runs a frame. The 16 left have not yet reached t
 eight-sighting threshold or alternate between drawing and not, and alternating nodes must
 keep interpreting.
 
+## The day, soaked (2026-09-05, 00:40)
+
+Everything shipped on 2026-09-04 running together, 240 consecutive captured frames:
+
+| | |
+| --- | --- |
+| crashes | 0 |
+| neighbour jumps over 6% | **0 of 239 pairs** |
+| cyan artefact frames | **0** - median 0.011%, max 0.02%, no patch or whole-frame hits |
+| field frames measured | 6,364 |
+| frame | 5.29 ms CPU, 5.70 ms GPU, 762 draws |
+
+The cyan detector is the one that matters for this file's subject: it is the instrument that
+found the village-rock patch, and it reads clean across four times the usual window with the
+entry-sourced materials, the 64-frame refresh, the volatile-and-empty fix and the
+draws-nothing templates all live at once.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
