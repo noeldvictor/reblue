@@ -66,11 +66,15 @@ preserve BC/RGBA data, mips, cube faces and volume slices with address-free
 content IDs. The SDK-independent mip cooker persists missing chains; subsequent
 loads use a versioned recipe cache without regenerating them. `bd_native_textures`
 is on by default. See [the native texture contract](NATIVE_TEXTURE_FORMAT.md).
-CPU assets are shared and budgeted; GPU images/descriptors still use the
-temporary resource bridge. Native material/texture binding, GPU image sharing,
-asset-level scene loading and guest draw/pass replacement remain required.
+CPU assets are shared and budgeted. A device-owned native GPU store now shares
+images, views and descriptors by content ID, with native handles and fence-gated
+retirement independent of guest wrappers. The remaining resource bridge only
+borrows those bindings. Native material/texture associations, asset-level scene
+loading and guest draw/pass replacement remain required.
 Cold/warm desktop and independent-loader evidence is recorded in
 `research/20260904_1833_native-textures-and-persistent-mips.md`.
+Shared GPU lifetime tests, runtime reuse/retirement and flat/multiview captures
+are recorded in `research/20260904_1854_shared-native-texture-gpu-ownership.md`.
 
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.

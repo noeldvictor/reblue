@@ -46,7 +46,7 @@ union GuestTextureX360 {
 };
 static_assert(sizeof(GuestTextureX360) == 52);
 
-namespace scene { struct NativeTextureAsset; }
+namespace scene { struct NativeTextureGpu; }
 
 struct GuestTexture {
   // First 52 bytes: X360 header layout the engine reads. Never read past 52.
@@ -56,9 +56,9 @@ struct GuestTexture {
   u32 selfVa = 0; // our own guest VA, populated by HostResourceHeap::Alloc
 
   std::unique_ptr<plume::RenderTexture> textureHolder;
-  // Temporary guest-facing bridge pins an address-free native asset. GPU
-  // images/descriptors still follow this bridge's existing fence lifetime.
-  std::shared_ptr<const scene::NativeTextureAsset> nativeAsset;
+  // Non-owning guest-facing adapter to a shared native image/view/descriptor.
+  // The device's native store, not this wrapper, owns fence-gated residency.
+  std::shared_ptr<const scene::NativeTextureGpu> nativeGpu;
   plume::RenderTexture *texture = nullptr;
   std::unique_ptr<plume::RenderTextureView> textureView;
   // --- tile aliasing --------------------------------------------------------

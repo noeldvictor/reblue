@@ -34,6 +34,8 @@ class Window;
 
 namespace bd::gpu {
 
+namespace scene { struct NativeTextureGpuStore; }
+
 class Video {
 public:
   template <typename T>
@@ -667,6 +669,9 @@ struct VideoState {
   // A resource released while frame N records is queued here and torn down only
   // after that slot's fence is awaited at reuse. See DrainSlot.
   DeferredDestroyQueue deferred_destroy[kNumFrames];
+
+  // Native asset residency is device-owned, independent of guest wrappers.
+  std::shared_ptr<scene::NativeTextureGpuStore> native_texture_gpu;
 
   // Cleared in DrainSlot on the slot's fence, which on a single queue also
   // covers the other slot's earlier submission.

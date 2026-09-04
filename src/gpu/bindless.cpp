@@ -16,6 +16,7 @@
 
 #include "core/logging.h"
 #include "gpu/bindless_allocator.h"
+#include "gpu/scene/native_texture_gpu.h"
 
 namespace bd::gpu {
 
@@ -72,6 +73,10 @@ void ReleaseTextureSRVLocked(VideoState &s, GuestTexture *tex) {
     return;
   const u32 slot = tex->descriptorIndex;
   tex->descriptorIndex = kInvalidDescriptorIndex;
+  // This adapter borrowed the native binding. Other wrappers/scene handles
+  // may still use it; only the native store can retire the descriptor.
+  if (tex->nativeGpu)
+    return;
   u32 null_index = kNullTexture2DDescriptorIndex;
   switch (tex->viewDimension) {
   case plume::RenderTextureViewDimension::TEXTURE_3D:
@@ -89,6 +94,13 @@ void ReleaseTextureSRVLocked(VideoState &s, GuestTexture *tex) {
 u32 BindTextureSRVLocked(VideoState &s, GuestTexture *tex) {
   if (!tex || !tex->texture || !s.texture_descriptor_set) {
     return kInvalidDescriptorIndex;
+  }
+  if (tex->nativeGpu) {
+    const auto &gpu = *tex->nativeGpu;
+    if (tex->texture != gpu.image.get())
+      return kInvalidDescriptorIndex;
+    tex->descriptorIndex = gpu.descriptor;
+    return gpu.descriptor;
   }
   // A view built against an image this surface no longer owns samples whatever
   // that old image holds - which for a pooled multiview target means a layer

@@ -27,6 +27,7 @@ set(reblue_backend_only
     gpu/present.cpp
     gpu/resolve.cpp
     gpu/sampler_cache.cpp
+    gpu/scene/native_texture_gpu.cpp
     gpu/shaders/guest_shaders.cpp
     gpu/texture_upload.cpp
     gpu/vertex_declaration.cpp

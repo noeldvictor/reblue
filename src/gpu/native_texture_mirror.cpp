@@ -546,7 +546,7 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va, u32 name_va) {
     const u64 level0 = u64(layout.aligned_w) * layout.aligned_h *
                        layout.bytes_per_block;
     const size_t bytes = static_cast<size_t>(std::min<u64>(level0, 4u << 20));
-    if (!tex->nativeAsset) tex->contentHash =
+    if (!tex->nativeGpu) tex->contentHash =
         XXH3_64bits(&fetch, sizeof(fetch)) ^
         (bytes ? XXH3_64bits(src, bytes) * 0x9E3779B97F4A7C15ull : 0);
     if (!tex->contentHash)

@@ -28,6 +28,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/gpu_timing.h"
 #include "gpu/texture_upload.h"
+#include "gpu/scene/native_texture_gpu.h"
 
 REXCVAR_DECLARE(bool, bd_native_textures);
 
@@ -61,15 +62,6 @@ scene::NativeTextureFormat NativeFormat(plume::RenderFormat format) {
   case plume::RenderFormat::BC3_UNORM: return scene::NativeTextureFormat::BC3;
   case plume::RenderFormat::R8G8B8A8_UNORM: return scene::NativeTextureFormat::RGBA8;
   default: return scene::NativeTextureFormat(0);
-  }
-}
-plume::RenderFormat HostFormat(scene::NativeTextureFormat format) {
-  switch (format) {
-  case scene::NativeTextureFormat::BC1: return plume::RenderFormat::BC1_UNORM;
-  case scene::NativeTextureFormat::BC2: return plume::RenderFormat::BC2_UNORM;
-  case scene::NativeTextureFormat::BC3: return plume::RenderFormat::BC3_UNORM;
-  case scene::NativeTextureFormat::RGBA8: return plume::RenderFormat::R8G8B8A8_UNORM;
-  default: return plume::RenderFormat::UNKNOWN;
   }
 }
 
@@ -149,8 +141,7 @@ u8 ScanBCAlpha(plume::RenderFormat format, const void *data, size_t size) {
 
 GuestTexture *UploadTextureBridge(const BCMirrorDesc &d,
                                   const BCSubresourceUpload *uploads,
-                                  u32 upload_count,
-                                  scene::NativeTextureHandle asset = {}) {
+                                  u32 upload_count) {
   auto &s = state();
   std::lock_guard lock(s.mutex);
   if (!s.ready)
@@ -160,8 +151,6 @@ GuestTexture *UploadTextureBridge(const BCMirrorDesc &d,
     return nullptr;
 
   auto *t = new GuestTexture(d.resource_type);
-  t->nativeAsset = std::move(asset);
-  if (t->nativeAsset) t->contentHash = t->nativeAsset->id;
   t->width = d.width;
   t->height = d.height;
   t->depth = d.depth;
@@ -280,36 +269,28 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
 } // namespace
 
 GuestTexture *BuildNativeTexture(const scene::NativeTextureHandle &asset) {
-  if (!asset || !scene::ValidateNativeTexture(asset->data)) return nullptr;
+  auto gpu = scene::AcquireNativeTextureGpu(asset);
+  if (!gpu)
+    return nullptr;
   const auto &data = asset->data;
-  BCMirrorDesc d{};
   const bool volume = data.dimension == scene::NativeTextureDimension::Volume;
-  const bool cube = data.dimension == scene::NativeTextureDimension::Cube;
-  d.resource_type = volume ? ResourceType::VolumeTexture : ResourceType::Texture;
-  d.tex_dim = volume ? plume::RenderTextureDimension::TEXTURE_3D : plume::RenderTextureDimension::TEXTURE_2D;
-  d.view_dim = volume ? plume::RenderTextureViewDimension::TEXTURE_3D :
-      (cube ? plume::RenderTextureViewDimension::TEXTURE_CUBE : plume::RenderTextureViewDimension::TEXTURE_2D);
-  d.format = HostFormat(data.format);
-  d.width = data.width; d.height = data.height; d.depth = volume ? data.depth : 0;
-  d.mip_levels = data.mip_levels; d.array_size = scene::NativeTextureLayers(data);
-  d.flags = cube ? plume::RenderTextureFlag::CUBE : plume::RenderTextureFlag::NONE;
-  d.caller_name = "BuildNativeTexture";
-  std::vector<std::vector<uint8_t>> staging(data.images.size());
-  std::vector<BCSubresourceUpload> uploads(data.images.size());
-  const auto edge = scene::NativeTextureBlockEdge(data.format);
-  const auto block = scene::NativeTextureBlockBytes(data.format);
-  for (u32 i = 0; i < data.images.size(); ++i) {
-    const u32 mip = i % data.mip_levels;
-    const u32 w = std::max(data.width >> mip, 1u), h = std::max(data.height >> mip, 1u);
-    const u32 depth = std::max(data.depth >> mip, 1u), rows = (h + edge - 1) / edge;
-    const u32 tight = ((w + edge - 1) / edge) * block, pitch = (tight + 255u) & ~255u;
-    auto &bytes = staging[i];
-    bytes.resize(uint64_t(pitch) * rows * depth);
-    for (uint64_t row = 0; row < uint64_t(rows) * depth; ++row)
-      std::memcpy(bytes.data() + row * pitch, data.images[i].data() + row * tight, tight);
-    uploads[i] = {bytes.data(), bytes.size(), w, h, depth, (pitch / block) * edge, mip, i / data.mip_levels};
-  }
-  return UploadTextureBridge(d, uploads.data(), u32(uploads.size()), asset);
+  auto *texture = new GuestTexture(volume ? ResourceType::VolumeTexture
+                                           : ResourceType::Texture);
+  texture->width = data.width;
+  texture->height = data.height;
+  texture->depth = volume ? data.depth : 0;
+  texture->mipLevels = data.mip_levels;
+  texture->format = gpu->format;
+  texture->viewDimension = gpu->dimension;
+  texture->texture = gpu->image.get();
+  texture->textureViewOf = gpu->image.get();
+  texture->textureViewLayers = scene::NativeTextureLayers(data);
+  texture->descriptorIndex = gpu->descriptor;
+  texture->alphaOpaque = gpu->alpha_opaque;
+  texture->layout = plume::RenderTextureLayout::SHADER_READ;
+  texture->contentHash = asset->id;
+  texture->nativeGpu = std::move(gpu);
+  return texture;
 }
 
 GuestTexture *BuildNativeMipTexture(u32 width, u32 height, u32 guest_format, const BCMipLevel &base) {

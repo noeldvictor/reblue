@@ -21,7 +21,8 @@ namespace bd::gpu {
 struct BCMipLevel;
 
 // Native asset input; no Xenos format/fetch constant is needed to upload it.
-// Return type is a temporary bridge to the remaining guest-facing draw path.
+// Return type is a temporary adapter borrowing a shared native GPU binding.
+// Native scene callers use AcquireNativeTextureGpu (native_texture_gpu.h).
 GuestTexture *BuildNativeTexture(const scene::NativeTextureHandle &asset);
 GuestTexture *BuildNativeMipTexture(u32 width, u32 height, u32 guest_format,
                                     const BCMipLevel &base);

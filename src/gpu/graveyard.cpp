@@ -36,6 +36,9 @@ namespace bd::gpu {
 void ParkTextureGPUObjects(GuestTexture *tex) {
   if (!tex)
     return;
+  // Dropping one adapter is not an image/descriptor release. The native store
+  // observes the last handle at slot-end and awaits that slot's next fence.
+  tex->nativeGpu.reset();
   if (tex->textureHolder) {
     Video::ParkTextureUntilFence(std::move(tex->textureHolder));
   }

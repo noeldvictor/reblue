@@ -31,6 +31,7 @@
 #include "gpu/occlusion_cull.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
+#include "gpu/scene/native_texture_gpu.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/surface_pool.h"
 
@@ -196,6 +197,7 @@ void DrainSlot(VideoState &s, u32 slot) {
   // before any park.
   {
     std::lock_guard lock(s.mutex);
+    scene::DrainNativeTextureGpuLocked(s, slot);
     s.texture_view_graveyard[slot].clear();
     s.texture_graveyard[slot].clear();
     s.buffer_graveyard[slot].clear();
@@ -248,6 +250,10 @@ void DrainSlot(VideoState &s, u32 slot) {
   {
     BD_CPU_ZONE("DrainPhysGraveyard");
     DrainBufferGraveyard(slot);
+  }
+  {
+    std::lock_guard lock(s.mutex);
+    scene::MarkUnusedNativeTextureGpuLocked(s, slot);
   }
 }
 

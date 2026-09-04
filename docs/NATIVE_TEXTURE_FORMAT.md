@@ -62,13 +62,28 @@ used entries; a full pinned library refuses growth. Invalid files, write
 failures and budget refusals are counted. These bounds are not a whole-game
 CPU/GPU budget or proof of the 1.5 GB headset asset target.
 
-The desktop path is enabled by `bd_native_textures`. `BuildNativeTexture`
-uploads solely from a native asset and derives ordinary host footprints.
-Its return value is still a temporary `GuestTexture` bridge: GPU image/view/
-descriptor lifetime and draw binding still follow the existing fence-safe
-resource path. This does **not** yet deduplicate GPU images, replace the guest
-draw producers, or provide independent native scene/material texture bindings.
-Unsupported/failed imports retain the tracked compatibility path.
+The desktop path is enabled by `bd_native_textures`. Native scene code can use
+`AcquireNativeTextureGpu(asset)` directly: it returns a shared native image,
+view and bindless descriptor, with no guest resource object or format. Matching
+content IDs reuse the same GPU objects and avoid another upload. The temporary
+`BuildNativeTexture` adapter borrows this binding for the existing draw path;
+destroying one adapter does not retire another owner's descriptor.
+
+The GPU store belongs to the host device. It accounts a 256 MiB image-payload
+budget and 8192 entries, including images waiting for a fence. These bytes do
+not include driver allocation alignment/metadata. Unpinned entries are marked
+after a frame slot's entry drain and released only at that slot's next completed
+fence. Reacquisition cancels retirement. Descriptor nulling/free precedes view
+and image destruction. Native handles must remain live through command
+recording; callers reacquire by asset through the renderer lock, not by promoting
+weak references concurrently with reclamation. Each padded upload subresource
+is limited to 64 MiB of staging scratch.
+
+Standalone tests exercise that same residency implementation, with instrumented
+image destruction and descriptor lifetime. This does **not** replace the guest
+draw/pass producers or supply asset-level native scene/material texture bindings.
+Unsupported/failed imports retain the tracked compatibility path. Runtime GPU
+uploads, reuse, retirement and refusals are reported separately from CPU cooking.
 
 ## Standalone tool
 
