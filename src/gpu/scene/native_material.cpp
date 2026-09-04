@@ -9,6 +9,7 @@
 #include <cstring>
 #include <limits>
 #include <unordered_map>
+#include <rex/runtime.h>
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/frame_stats.h"
@@ -19,14 +20,29 @@ namespace bd::gpu::scene {
 namespace {
 struct Decoded {
   std::vector<NativeMaterialRange> ranges;
+  std::vector<NativeMaterialHandle> materials;
   bool valid = false;
 };
-// A discovery cache, not the final persistent asset loader. Only the boundary
-// indexes by guest address; NativeMaterialProperties contains none.
+// Only this temporary discovery cache indexes by guest address. Material
+// ownership and persistent identities live in the independent native library.
 thread_local std::unordered_map<uint32_t, Decoded> decoded;
+thread_local size_t discovery_bytes = 0;
+constexpr size_t kDiscoveryBudget = 8u << 20;
 thread_local uint64_t generation = 0;
 thread_local uint32_t checked[3]{}, wrong[3]{}, last_report = 0;
 thread_local uint32_t composed[3]{};
+
+NativeMaterialLibrary &Library() {
+  static NativeMaterialLibrary library([] {
+    std::filesystem::path root;
+    if (auto *runtime = rex::Runtime::instance())
+      root = runtime->cache_root();
+    if (root.empty())
+      root = std::filesystem::current_path();
+    return root / "native_materials" / "v1";
+  }());
+  return library;
+}
 
 Decoded ReadCommands(uint32_t source) {
   Decoded result;
@@ -55,6 +71,11 @@ Decoded ReadCommands(uint32_t source) {
         return result;
     if (command == 0xff) {
       result.valid = DecodeMeshMaterials(words, result.ranges);
+      if (result.valid) {
+        result.materials.reserve(result.ranges.size());
+        for (const auto &range : result.ranges)
+          result.materials.push_back(Library().Resolve({range.material}));
+      }
       return result;
     }
   }
@@ -62,7 +83,7 @@ Decoded ReadCommands(uint32_t source) {
 }
 } // namespace
 
-std::optional<NativeMaterialProperties> ImportNativeMaterial(
+NativeMaterialHandle ImportNativeMaterial(
     const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
     uint32_t first_index, uint32_t index_count) {
   // Technique 11 selects visual-specific colours on texture tokens. Phase 1
@@ -73,14 +94,23 @@ std::optional<NativeMaterialProperties> ImportNativeMaterial(
   const uint64_t now = PhysicalBufferGeneration();
   if (generation != now) {
     decoded.clear();
+    discovery_bytes = 0;
     generation = now;
   }
   const uint32_t tokens = bd::mem::try_load<uint32_t>(tag.mesh_va);
   auto it = decoded.find(tokens);
   if (it == decoded.end()) {
-    if (decoded.size() >= 4096)
+    auto imported = ReadCommands(tokens);
+    const size_t bytes = imported.ranges.capacity() * sizeof(NativeMaterialRange) +
+                         imported.materials.capacity() * sizeof(NativeMaterialHandle);
+    if (bytes > kDiscoveryBudget)
+      return {};
+    if (decoded.size() >= 4096 || discovery_bytes + bytes > kDiscoveryBudget) {
       decoded.clear();
-    it = decoded.emplace(tokens, ReadCommands(tokens)).first;
+      discovery_bytes = 0;
+    }
+    discovery_bytes += bytes;
+    it = decoded.emplace(tokens, std::move(imported)).first;
   }
   if (!it->second.valid)
     return {};
@@ -88,8 +118,9 @@ std::optional<NativeMaterialProperties> ImportNativeMaterial(
   const uint32_t vb = bd::mem::try_load<uint32_t>(tag.mesh_va + 16);
   if (!ib || !vb)
     return {};
-  std::optional<NativeMaterialProperties> found;
-  for (const auto &range : it->second.ranges) {
+  NativeMaterialHandle found;
+  for (size_t i = 0; i < it->second.ranges.size(); ++i) {
+    const auto &range = it->second.ranges[i];
     if (range.first_index != first_index || range.index_count != index_count ||
         range.stream != 0 || range.index_record == 0xffff ||
         range.vertex_record == 0xffff)
@@ -97,15 +128,16 @@ std::optional<NativeMaterialProperties> ImportNativeMaterial(
     if (bd::mem::try_load<uint32_t>(ib + range.index_record * 8 + 4) != index_va ||
         bd::mem::try_load<uint32_t>(vb + 4 + range.vertex_record * 12 + 8) != stream_va)
       continue;
-    if (found && *found != range.material)
+    const auto &material = it->second.materials[i];
+    if (!material || (found && found->id != material->id))
       return {}; // repeated geometry under different materials is ambiguous
-    found = range.material;
+    found = material;
   }
   return found;
 }
 
 uint32_t EvaluateNativeMaterial(const NodeTag &tag,
-                               const NativeMaterialProperties &material,
+                               const NativeMaterialAsset &material,
                                std::array<float, 4> values[3]) {
   if (!tag.visual_va || tag.from_list || !tag.ctx_va || tag.tech == 11 ||
       bd::mem::try_load<uint32_t>(tag.ctx_va + 16, uint32_t(-1)) != 0)
@@ -118,9 +150,9 @@ uint32_t EvaluateNativeMaterial(const NodeTag &tag,
       return 0;
     object_colour[i] = float(*component);
   }
-  return ComposeNativeMaterial(material, object_colour,
+  return ComposeNativeMaterialAsset(material, object_colour,
       bd::mem::try_load<uint32_t>(tag.visual_va + 3044) != 0,
-      values[0], values[1], values[2]);
+      values);
 }
 
 void NativeMaterialCheck(uint32_t mask, const std::array<float, 4> values[3],
@@ -153,6 +185,11 @@ void NativeMaterialNoteReplay(uint32_t mask) {
             "replay fields composed {}/{}/{}",
             wrong[0], checked[0], wrong[1], checked[1], wrong[2], checked[2],
             decoded.size(), composed[0], composed[1], composed[2]);
+    const auto assets = Library().Stats();
+    BD_INFO("[native-material-assets] {} cooked, {} loaded, {} resident, {} memory hits; "
+            "{} invalid, {} write failures, {} budget refusals; {} discovery bytes",
+            assets.cooked, assets.loaded, assets.resident, assets.memory_hits,
+            assets.invalid, assets.write_failures, assets.budget_refusals, discovery_bytes);
     last_report = frame;
   }
 }

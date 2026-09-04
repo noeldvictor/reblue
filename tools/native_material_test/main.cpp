@@ -1,15 +1,18 @@
 #include "gpu/scene/native_material_data.h"
 #include <cmath>
 #include <iostream>
+#include <fstream>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 using namespace bd::gpu::scene;
+void TestMaterialAssets();
 void Check(bool good) {
   if (!good)
     throw std::runtime_error("native material check failed");
 }
-int main() {
+int main(int argc, char **argv) {
   // 0xff inside bone/colour operands must not terminate the stream. Two
   // strips share geometry records but carry different material properties.
   const std::vector<uint16_t> words = {
@@ -17,6 +20,17 @@ int main() {
       0x0100, 0x9080, 0x4020, 0x040c, 0x9326, 0x1f0d,
       0x9400, 0x8040, 0x2010, 0x1000, 8, 4,
       0x0400, 0x0101, 0x2000, 5, 14, 0xff};
+  if (argc == 3 && std::string(argv[1]) == "--commands-fixture") {
+    std::ofstream output(argv[2], std::ios::binary | std::ios::trunc);
+    for (uint16_t word : words) {
+      const char bytes[]{char(word >> 8), char(word & 0xff)};
+      output.write(bytes, 2);
+    }
+    output.close();
+    return output ? 0 : 1;
+  }
+  if (argc != 1)
+    return 1;
   std::vector<NativeMaterialRange> ranges;
   Check(DecodeMeshMaterials(words, ranges));
   Check(ranges.size() == 2);
@@ -60,5 +74,6 @@ int main() {
                                   0x1000, 1, 0, 0xff};
   Check(DecodeMeshMaterials(repeated_power, ranges));
   Check(ranges[0].material.specular_colour == std::array<float, 3>{1, 1, 1});
+  TestMaterialAssets();
   std::cout << "native material decoding and composition passed\n";
 }

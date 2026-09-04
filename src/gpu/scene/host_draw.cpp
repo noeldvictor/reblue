@@ -114,7 +114,7 @@ struct FetchDelta {
 
 // One of a node's draws.
 struct SubDraw {
-  std::optional<NativeMaterialProperties> native_material;
+  NativeMaterialHandle native_material;
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
   // The guest address each ordinary texture had at capture: a GuestTexture
@@ -1258,7 +1258,7 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
                                              d.start_index, d.count);
     if (d.native_material && REXCVAR_GET(bd_native_materials_verify)) {
       std::array<float, 4> values[3];
-      const u32 mask = EvaluateNativeMaterial(tag, *d.native_material, values);
+      const u32 mask = EvaluateNativeMaterial(tag, d.native_material->asset, values);
       NativeMaterialCheck(mask, values, t_ps_block);
     }
   }
@@ -1789,7 +1789,7 @@ bool HostDrawReplay(const NodeTag &tag) {
       auto &values = native_values[i];
       values.mask = 0;
       if (REXCVAR_GET(bd_native_materials) && t->draws[i].native_material)
-        values.mask = EvaluateNativeMaterial(tag, *t->draws[i].native_material,
+        values.mask = EvaluateNativeMaterial(tag, t->draws[i].native_material->asset,
                                               values.values);
     }
     // Every moving value must have been written by an interpreted node of

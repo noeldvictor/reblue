@@ -61,7 +61,7 @@ Quest-ready release.
 | Area | Implemented | Still required |
 | --- | --- | --- |
 | Native mesh assets | Versioned persistent `.bdmesh` cache, triangle lists, shared host GPU buffers and existing generated LOD support; enabled by default | Asset-level discovery/loading, independent native layouts/materials, dynamic geometry and cache streaming/eviction |
-| Material properties | Host-decoded diffuse, specular/shininess and reflection colours for supported direct-tree draws; enabled by default | Persistent material assets, native texture/lighting definitions, remaining draw recipes and replacement of the shader-register compatibility boundary |
+| Material properties | Shared, content-keyed `.bdmat` assets for supported diffuse/specular/reflection recipes, independent cooker/loader and bounded residency; enabled by default | Native texture/lighting definitions, asset-level scene bindings, remaining draw recipes and replacement of the shader-register compatibility boundary |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
@@ -71,6 +71,8 @@ The mesh/capture evidence and its limits are recorded in
 [the native mesh research note](research/20260904_1713_native-mesh-assets-and-capture-ownership.md);
 [the native material note](research/20260904_1748_native-material-properties.md)
 records material-source checks and flat/multiview correctness comparisons.
+The persistent material contract and standalone cooker are documented in
+[Native material assets](docs/NATIVE_MATERIAL_FORMAT.md).
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 
