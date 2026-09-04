@@ -351,7 +351,6 @@ bd::gpu::GuestBuffer *RegisterPhysicalGeometry(u32 struct_va, u32 base_va,
 // The guest block memory is the engine's, freed by the following
 // XPhysicalFree.
 void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
-  g_physical_generation.fetch_add(1, std::memory_order_relaxed);
   if (!block_base || !block_size)
     return;
   const u32 block_end = block_base + block_size;
@@ -386,6 +385,11 @@ void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
       it = g_physicalBuffers.erase(it);
       ++evicted;
     }
+    // Only an actual eviction moves a resolved pointer; the destroy hook
+    // calls this for blocks with nothing registered too, and a bump there
+    // emptied the replay's stream cache every frame (2026-09-04).
+    if (evicted)
+      g_physical_generation.fetch_add(1, std::memory_order_relaxed);
     // Exact base: the destroy hook passes the same obj+0x18 the build hook
     // registered.
     u32 block_buffers = 0, block_meshes = 0;
@@ -393,6 +397,7 @@ void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
         ait != g_physicalBlocks.end()) {
       PhysicalBlock &block = ait->second;
       block_meshes = static_cast<u32>(block.meshes.size());
+      g_physical_generation.fetch_add(1, std::memory_order_relaxed);
       if (block.buffer) {
         plume::RenderBuffer *block_buf = block.buffer.get();
         for (auto sit = g_physicalBufferStructs.begin();

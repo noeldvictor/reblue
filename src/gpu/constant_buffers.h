@@ -110,7 +110,10 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
 // record never touches the uniform window, so the window is left where it is
 // and the guest's dirty flag survives for the next plain draw.
 void SnapshotVertexShaderConstants(u32 device_guest);
-ConstantAllocation UploadPixelShaderConstants(u32 device_guest);
+// register_mask: the pixel shader's declared constant registers (eight words)
+// or null for all; the content key and the unchanged test cover only those.
+ConstantAllocation UploadPixelShaderConstants(u32 device_guest,
+                                              const u32 *register_mask = nullptr);
 
 // One scene node's whole vertex constant block, as the instanced vertex
 // shader variant reads it (shader_common.h BDInstanceRecord, bit-exact with

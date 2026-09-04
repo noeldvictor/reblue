@@ -495,7 +495,13 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     }
 
     if (s.dirtyStates.pixelShaderConstants) {
-      auto ps_alloc = UploadPixelShaderConstants(device_guest);
+      auto ps_alloc = UploadPixelShaderConstants(
+          device_guest,
+          (s.pipelineState.pixelShader &&
+           s.pipelineState.pixelShader->shaderCacheEntry)
+              ? s.pipelineState.pixelShader->shaderCacheEntry
+                    ->constantRegisterMask
+              : nullptr);
       if (ps_alloc.size) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(ps_alloc.ref, 1);

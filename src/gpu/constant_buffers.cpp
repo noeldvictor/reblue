@@ -128,6 +128,7 @@ struct UploadState {
   // (2026-09-02). Swapped into scratch first, so a hit costs no ring space.
   alignas(16) u8 lastVS[kConstantBlockBytes]{};
   alignas(16) u8 lastPS[kConstantBlockBytes]{};
+  u64 lastPSMaskId = 0; // the register mask lastPS was compared under
   // scratchVS also holds this draw's vertex block for StageInstanceRecord,
   // uploaded or not, so the two stages keep separate scratch.
   alignas(16) u8 scratchVS[kConstantBlockBytes]{};
@@ -1003,7 +1004,8 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
   return alloc;
 }
 
-ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
+ConstantAllocation UploadPixelShaderConstants(u32 device_guest,
+                                              const u32 *register_mask) {
   BD_CPU_ZONE("UploadPSConstants");
   auto &s = upload_state();
   if (!device_guest)
@@ -1011,11 +1013,20 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest) {
   u8 *block = s.scratchPS;
   FetchPixelBlock(s, device_guest);
   PinScreenUVScaleReg(block);
-  if (s.psBound && std::memcmp(block, s.lastPS, kConstantBlockBytes) == 0) {
+  // Only the registers the shader declares matter to the draw: the unchanged
+  // test and the content key cover those (the full 4 KB hash was 116 of
+  // 6,932 profile samples, 2026-09-04). The mask is part of the key, so two
+  // shaders never share an allocation by accident; the unchanged test also
+  // requires the same mask, since a different shader reads other registers.
+  const RegisterMask mask = VertexMask(register_mask);
+  const u64 mask_id = register_mask ? XXH3_64bits(register_mask, 32) : 0ull;
+  if (s.psBound && s.lastPSMaskId == mask_id &&
+      MaskedEqual(block, s.lastPS, mask)) {
     NoteConstantUpload(false, false);
     return {};
   }
-  const u64 h = XXH3_64bits(block, kConstantBlockBytes);
+  s.lastPSMaskId = mask_id;
+  const u64 h = MaskedHash(block, mask);
   if (auto it = s.psOffsets.find(h); it != s.psOffsets.end()) {
     const u32 off = it->second;
     std::memcpy(s.lastPS, block, kConstantBlockBytes);
