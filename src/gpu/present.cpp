@@ -1559,7 +1559,10 @@ void Video::Present(GuestTexture *frontBuffer) {
   const bool can_capture_here =
       resolved_rt || multiview_rt || (force_array && rt && rt->texture);
   const bool capturing =
-      can_capture_here && CaptureDue() &&
+      // A multi-frame sequence can admit both capture sites in one frame.
+      // Once the present pass recorded a copy, keep that readback alive and
+      // do not replace it with a guest surface before the GPU executes it.
+      !g_captured_in_pass && can_capture_here && CaptureDue() &&
       (resolved_rt
            ? RecordCapture(s, rt->resolvedTexture, rt->width, rt->height,
                            rt->format, 1,

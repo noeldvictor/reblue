@@ -209,22 +209,35 @@ def disparity(img, w, h, bands, search, stacked=False):
     depths, and the global SAD minimum then jumps between features instead of
     tracking one.
     """
-    from PIL import ImageChops
+    from PIL import ImageChops, ImageStat
     left, right, ew, h = eyes(img, w, h, stacked)
     patch = min(520, ew - 40)
+    if patch < 2:
+        return []
     x0 = (ew - patch) // 2
+    search = min(search, x0, ew - x0 - patch)
     out = []
     for frac in bands:
         top = int(h * frac)
         bottom = min(top + 90, h)
         lb = left.crop((x0, top, x0 + patch, bottom))
+        # Letterboxes and horizontally uniform sky have no horizontal match.
+        # Their SAD ties at every shift; choosing -search used to turn black
+        # bottom bands into a confidently "correct" -90 px near disparity.
+        horizontal = ImageChops.difference(
+            lb.crop((1, 0, patch, bottom - top)),
+            lb.crop((0, 0, patch - 1, bottom - top)))
+        if ImageStat.Stat(horizontal).mean[0] < 0.5:
+            continue
         best, best_sad = 0, None
         for s in range(-search, search + 1):
             rb = right.crop((x0 + s, top, x0 + patch + s, bottom))
             sad = sum(ImageChops.difference(lb, rb).getdata())
             if best_sad is None or sad < best_sad:
                 best, best_sad = s, sad
-        out.append((frac, best))
+        # A minimum at the edge is a clipped search, not a measured shift.
+        if abs(best) < search:
+            out.append((frac, best))
     return out
 
 
@@ -314,6 +327,11 @@ def report(img, w, h, search, stacked=False):
     for frac, shift in rows:
         print("   %4.0f%%        %+5d" % (frac * 100, shift))
 
+    if len(rows) < 2:
+        print("\nINCONCLUSIVE: fewer than two textured bands have a bounded "
+              "match. Black bars and uniform sky cannot establish stereo depth.")
+        sys.exit(2)
+
     far = rows[0][1]
     near = rows[-1][1]
     spread = max(s for _, s in rows) - min(s for _, s in rows)
@@ -322,10 +340,10 @@ def report(img, w, h, search, stacked=False):
           % (far, near, delta, spread))
 
     if spread < 6:
-        print("\nFLAT. The eye offset is not producing depth - the classic cause "
-              "is\napplying it as separation * clip.z, which divides out to a "
-              "constant\nsideways slide. It must be a constant added to clip.x.")
-        sys.exit(1)
+        print("\nINCONCLUSIVE: this view has too little disparity variation to "
+              "establish depth. Capture textured near and distant geometry "
+              "before diagnosing the eye projection.")
+        sys.exit(2)
     if delta > 0:
         print("\nINVERTED (uncrossed). Near geometry is separating the wrong "
               "way, so the\nscene renders pseudoscopic - the world inside out. "
