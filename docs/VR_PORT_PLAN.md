@@ -1,5 +1,11 @@
 # Blue Dragon VR port plan
 
+> Historical plan. The active scope and completion gate are in
+> [HOST_RENDERER_TRANSITION.md](HOST_RENDERER_TRANSITION.md), and shared agent
+> instructions are in [AGENTS.md](../AGENTS.md). The dated status and phase order
+> below are retained for reference, not current priorities or permission to
+> resume Quest testing.
+
 ## Current state, 2026-08-30: the frame is GPU-bound and two X360 patterns own it
 
 Stereo works and is verified on the headset. Speed is the whole remaining problem, and the
