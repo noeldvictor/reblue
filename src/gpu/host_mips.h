@@ -5,9 +5,9 @@
  * Two thirds of Blue Dragon's texture data - the 1024x1024 and 2048x1024
  * world textures in DXT1/3/5 - comes with no mip chain (measured 2026-09-02:
  * 43.1 M texels without against 21.0 M with), so every fragment sampled the
- * base level and the Quest's texture pipes ran at 66% with a quarter of the
- * fetches missing the cache. The chain is built here at upload: decode the
- * blocks, box-filter each level, re-encode with stb_dxt.
+ * base level. The legacy upload adapter is declared here; the SDK-independent
+ * cooker is in host_mips.cpp and native_texture_data.h. Native texture assets
+ * persist its output and reuse it without generation on later loads.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.

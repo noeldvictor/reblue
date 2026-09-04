@@ -13,6 +13,10 @@
 #include <memory>
 #include <mutex>
 #include <vector>
+#include <cstring>
+#include <atomic>
+#include <rex/cvar.h>
+#include <rex/runtime.h>
 
 #include <plume_render_interface.h>
 
@@ -25,9 +29,49 @@
 #include "gpu/gpu_timing.h"
 #include "gpu/texture_upload.h"
 
+REXCVAR_DECLARE(bool, bd_native_textures);
+
 namespace bd::gpu {
 
 namespace {
+
+scene::NativeTextureLibrary &TextureAssets() {
+  static scene::NativeTextureLibrary library([] {
+    std::filesystem::path root;
+    if (auto *runtime = rex::Runtime::instance()) root = runtime->cache_root();
+    if (root.empty()) root = std::filesystem::current_path();
+    return root / "native_textures" / "v1";
+  }());
+  return library;
+}
+void NoteNativeTexture() {
+  static std::atomic<uint32_t> requests{0};
+  const auto n = ++requests;
+  if (n != 1 && n % 64) return;
+  const auto a = TextureAssets().Stats();
+  BD_INFO("[native-texture] {} cooked, {} loaded, {} resident, {} bytes, {} memory hits; "
+          "mips {} generated / {} cached; {} invalid, {} write failures, {} budget refusals",
+          a.cooked, a.loaded, a.resident, a.bytes, a.memory_hits, a.generated_mips, a.cached_mips,
+          a.invalid, a.write_failures, a.budget_refusals);
+}
+scene::NativeTextureFormat NativeFormat(plume::RenderFormat format) {
+  switch (format) {
+  case plume::RenderFormat::BC1_UNORM: return scene::NativeTextureFormat::BC1;
+  case plume::RenderFormat::BC2_UNORM: return scene::NativeTextureFormat::BC2;
+  case plume::RenderFormat::BC3_UNORM: return scene::NativeTextureFormat::BC3;
+  case plume::RenderFormat::R8G8B8A8_UNORM: return scene::NativeTextureFormat::RGBA8;
+  default: return scene::NativeTextureFormat(0);
+  }
+}
+plume::RenderFormat HostFormat(scene::NativeTextureFormat format) {
+  switch (format) {
+  case scene::NativeTextureFormat::BC1: return plume::RenderFormat::BC1_UNORM;
+  case scene::NativeTextureFormat::BC2: return plume::RenderFormat::BC2_UNORM;
+  case scene::NativeTextureFormat::BC3: return plume::RenderFormat::BC3_UNORM;
+  case scene::NativeTextureFormat::RGBA8: return plume::RenderFormat::R8G8B8A8_UNORM;
+  default: return plume::RenderFormat::UNKNOWN;
+  }
+}
 
 // Dims + per-subresource upload list describing one host BC/RGBA mirror. The
 // four BuildBCMirror* wrappers fill this and delegate to BuildBCMirrorCore.
@@ -103,9 +147,10 @@ u8 ScanBCAlpha(plume::RenderFormat format, const void *data, size_t size) {
   }
 }
 
-GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
-                                const BCSubresourceUpload *uploads,
-                                u32 upload_count) {
+GuestTexture *UploadTextureBridge(const BCMirrorDesc &d,
+                                  const BCSubresourceUpload *uploads,
+                                  u32 upload_count,
+                                  scene::NativeTextureHandle asset = {}) {
   auto &s = state();
   std::lock_guard lock(s.mutex);
   if (!s.ready)
@@ -115,6 +160,8 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
     return nullptr;
 
   auto *t = new GuestTexture(d.resource_type);
+  t->nativeAsset = std::move(asset);
+  if (t->nativeAsset) t->contentHash = t->nativeAsset->id;
   t->width = d.width;
   t->height = d.height;
   t->depth = d.depth;
@@ -194,7 +241,92 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
   return t;
 }
 
+GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
+                               const BCSubresourceUpload *uploads, u32 upload_count) {
+  if (REXCVAR_GET(bd_native_textures) && uploads && upload_count == d.mip_levels * d.array_size) {
+    scene::NativeTextureData data;
+    data.format = NativeFormat(d.format);
+    data.dimension = d.depth ? scene::NativeTextureDimension::Volume :
+        (d.array_size == 6 ? scene::NativeTextureDimension::Cube : scene::NativeTextureDimension::Image2D);
+    data.width = d.width; data.height = d.height; data.depth = std::max(d.depth, 1u);
+    data.mip_levels = d.mip_levels;
+    data.images.resize(upload_count);
+    const auto edge = scene::NativeTextureBlockEdge(data.format);
+    bool valid = scene::NativeTextureBlockBytes(data.format) != 0;
+    for (u32 i = 0; valid && i < upload_count; ++i) {
+      const auto &u = uploads[i];
+      const auto index = u.array_index * d.mip_levels + u.subresource;
+      if (!u.data || u.subresource >= d.mip_levels || u.array_index >= d.array_size ||
+          u.width != std::max(d.width >> u.subresource, 1u) ||
+          u.height != std::max(d.height >> u.subresource, 1u) ||
+          u.fp_depth != std::max(data.depth >> u.subresource, 1u) || !data.images[index].empty()) {
+        valid = false; break;
+      }
+      const uint64_t pitch = uint64_t(u.row_width_texels / edge) * scene::NativeTextureBlockBytes(data.format);
+      valid = scene::ImportNativeTextureImage(data.format, u.width, u.height, u.fp_depth,
+          {static_cast<const uint8_t *>(u.data), u.size}, pitch,
+          pitch * ((u.height + edge - 1) / edge), data.images[index]);
+    }
+    if (valid) {
+      auto asset = TextureAssets().Resolve(std::move(data));
+      NoteNativeTexture();
+      if (asset)
+        if (auto *texture = BuildNativeTexture(asset)) return texture;
+    }
+  }
+  return UploadTextureBridge(d, uploads, upload_count);
+}
+
 } // namespace
+
+GuestTexture *BuildNativeTexture(const scene::NativeTextureHandle &asset) {
+  if (!asset || !scene::ValidateNativeTexture(asset->data)) return nullptr;
+  const auto &data = asset->data;
+  BCMirrorDesc d{};
+  const bool volume = data.dimension == scene::NativeTextureDimension::Volume;
+  const bool cube = data.dimension == scene::NativeTextureDimension::Cube;
+  d.resource_type = volume ? ResourceType::VolumeTexture : ResourceType::Texture;
+  d.tex_dim = volume ? plume::RenderTextureDimension::TEXTURE_3D : plume::RenderTextureDimension::TEXTURE_2D;
+  d.view_dim = volume ? plume::RenderTextureViewDimension::TEXTURE_3D :
+      (cube ? plume::RenderTextureViewDimension::TEXTURE_CUBE : plume::RenderTextureViewDimension::TEXTURE_2D);
+  d.format = HostFormat(data.format);
+  d.width = data.width; d.height = data.height; d.depth = volume ? data.depth : 0;
+  d.mip_levels = data.mip_levels; d.array_size = scene::NativeTextureLayers(data);
+  d.flags = cube ? plume::RenderTextureFlag::CUBE : plume::RenderTextureFlag::NONE;
+  d.caller_name = "BuildNativeTexture";
+  std::vector<std::vector<uint8_t>> staging(data.images.size());
+  std::vector<BCSubresourceUpload> uploads(data.images.size());
+  const auto edge = scene::NativeTextureBlockEdge(data.format);
+  const auto block = scene::NativeTextureBlockBytes(data.format);
+  for (u32 i = 0; i < data.images.size(); ++i) {
+    const u32 mip = i % data.mip_levels;
+    const u32 w = std::max(data.width >> mip, 1u), h = std::max(data.height >> mip, 1u);
+    const u32 depth = std::max(data.depth >> mip, 1u), rows = (h + edge - 1) / edge;
+    const u32 tight = ((w + edge - 1) / edge) * block, pitch = (tight + 255u) & ~255u;
+    auto &bytes = staging[i];
+    bytes.resize(uint64_t(pitch) * rows * depth);
+    for (uint64_t row = 0; row < uint64_t(rows) * depth; ++row)
+      std::memcpy(bytes.data() + row * pitch, data.images[i].data() + row * tight, tight);
+    uploads[i] = {bytes.data(), bytes.size(), w, h, depth, (pitch / block) * edge, mip, i / data.mip_levels};
+  }
+  return UploadTextureBridge(d, uploads.data(), u32(uploads.size()), asset);
+}
+
+GuestTexture *BuildNativeMipTexture(u32 width, u32 height, u32 guest_format, const BCMipLevel &base) {
+  plume::RenderFormat host_format;
+  if (!BCFormatFromGuestByte(guest_format, host_format) || !base.data) return nullptr;
+  scene::NativeTextureData data;
+  data.format = NativeFormat(host_format); data.width = width; data.height = height;
+  data.images.resize(1);
+  const auto edge = scene::NativeTextureBlockEdge(data.format);
+  const uint64_t pitch = uint64_t(base.row_width_texels / edge) * scene::NativeTextureBlockBytes(data.format);
+  if (!scene::ImportNativeTextureImage(data.format, width, height, 1,
+      {static_cast<const uint8_t *>(base.data), base.size}, pitch,
+      pitch * ((height + edge - 1) / edge), data.images[0])) return nullptr;
+  auto asset = TextureAssets().Resolve(std::move(data), true);
+  NoteNativeTexture();
+  return asset ? BuildNativeTexture(asset) : nullptr;
+}
 
 GuestTexture *BuildBCMirrorTexture(u32 width, u32 height, u32 format,
                                           const void *block_data,

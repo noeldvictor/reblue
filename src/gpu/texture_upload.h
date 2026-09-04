@@ -15,8 +15,16 @@
 #include <rex/types.h>
 
 #include "gpu/resources.h"
+#include "gpu/scene/native_texture_library.h"
 
 namespace bd::gpu {
+struct BCMipLevel;
+
+// Native asset input; no Xenos format/fetch constant is needed to upload it.
+// Return type is a temporary bridge to the remaining guest-facing draw path.
+GuestTexture *BuildNativeTexture(const scene::NativeTextureHandle &asset);
+GuestTexture *BuildNativeMipTexture(u32 width, u32 height, u32 guest_format,
+                                    const BCMipLevel &base);
 
 // Copy a texture's mappedMemory scratch into subresource 0 through the upload
 // ring and copyTextureRegion.

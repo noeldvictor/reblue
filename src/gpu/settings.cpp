@@ -468,6 +468,8 @@ REXCVAR_DEFINE_BOOL(bd_native_meshes, true, kCvarGroup,
                     "and shared host geometry buffers.");
 REXCVAR_DEFINE_BOOL(bd_native_materials, true, kCvarGroup,
                     "Compose model material properties from decoded assets.");
+REXCVAR_DEFINE_BOOL(bd_native_textures, true, kCvarGroup,
+                    "Cook and load native texture assets with persistent mip chains.");
 REXCVAR_DEFINE_BOOL(bd_native_materials_verify, false, kCvarGroup,
                     "Compare decoded material properties with interpreted draws.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both

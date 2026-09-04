@@ -46,6 +46,8 @@ union GuestTextureX360 {
 };
 static_assert(sizeof(GuestTextureX360) == 52);
 
+namespace scene { struct NativeTextureAsset; }
+
 struct GuestTexture {
   // First 52 bytes: X360 header layout the engine reads. Never read past 52.
   GuestTextureX360 x360;
@@ -54,6 +56,9 @@ struct GuestTexture {
   u32 selfVa = 0; // our own guest VA, populated by HostResourceHeap::Alloc
 
   std::unique_ptr<plume::RenderTexture> textureHolder;
+  // Temporary guest-facing bridge pins an address-free native asset. GPU
+  // images/descriptors still follow this bridge's existing fence lifetime.
+  std::shared_ptr<const scene::NativeTextureAsset> nativeAsset;
   plume::RenderTexture *texture = nullptr;
   std::unique_ptr<plume::RenderTextureView> textureView;
   // --- tile aliasing --------------------------------------------------------
@@ -131,10 +136,9 @@ struct GuestTexture {
   u32 mipLevels = 1;
   plume::RenderFormat format = plume::RenderFormat::UNKNOWN;
   u32 guestFormat = 0;
-  // Content identity for a native mirror (the fetch constant plus the tiled
-  // level-0 payload), set by GetOrCreateNativeMirror; 0 for surfaces and
-  // host textures. The scene recorder's texture key: a guest VA is recycled
-  // within a session and asset names collide, this does neither.
+  // Native asset ID when converted; legacy mirrors still hash the fetch
+  // constant plus tiled base level. Only native IDs exclude guest addresses
+  // and cover all mips/faces/slices. Zero for surfaces/non-asset textures.
   u64 contentHash = 0;
   // Whether every texel of the base level has alpha one, read off the BC
   // blocks at upload (texture_upload.cpp): 1 yes, 2 some texel has partial or

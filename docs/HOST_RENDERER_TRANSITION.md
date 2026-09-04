@@ -61,6 +61,17 @@ correctness-only comparisons, and
 `research/20260904_1806_persistent-native-material-assets.md` for independent
 loading, cold/warm desktop captures and the persistent-asset tests.
 
+Static textures now cross a persistent native boundary too: `.bdtex` files
+preserve BC/RGBA data, mips, cube faces and volume slices with address-free
+content IDs. The SDK-independent mip cooker persists missing chains; subsequent
+loads use a versioned recipe cache without regenerating them. `bd_native_textures`
+is on by default. See [the native texture contract](NATIVE_TEXTURE_FORMAT.md).
+CPU assets are shared and budgeted; GPU images/descriptors still use the
+temporary resource bridge. Native material/texture binding, GPU image sharing,
+asset-level scene loading and guest draw/pass replacement remain required.
+Cold/warm desktop and independent-loader evidence is recorded in
+`research/20260904_1833_native-textures-and-persistent-mips.md`.
+
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.
 The presented eyes in that distant view do not establish a stereo-depth verdict.

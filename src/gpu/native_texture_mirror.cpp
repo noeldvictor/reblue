@@ -33,6 +33,7 @@
 #include <rex/cvar.h>
 
 REXCVAR_DECLARE(bool, bd_host_mips);
+REXCVAR_DECLARE(bool, bd_native_textures);
 
 namespace bd::gpu {
 
@@ -420,6 +421,11 @@ GuestTexture *Build2DMirror(const MirrorLayout &L, const u8 *src,
   // No chain from the guest: build one on the host. Two thirds of the game's
   // texture data is in this branch (2026-09-02), and without it every
   // fragment of a distant surface samples the base level.
+  if (!tex && REXCVAR_GET(bd_host_mips) && REXCVAR_GET(bd_native_textures) &&
+      HostMipsSupported(u32(L.format))) {
+    const BCMipLevel base{staging.data(), staging.size(), L.width, L.height, L.row_width_texels};
+    tex = BuildNativeMipTexture(L.width, L.height, u32(L.format), base);
+  }
   if (!tex && REXCVAR_GET(bd_host_mips) && HostMipsSupported(u32(L.format))) {
     HostMipChain chain;
     const u32 bh = (L.height + L.texels_per_edge - 1u) / L.texels_per_edge;
@@ -540,7 +546,7 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va, u32 name_va) {
     const u64 level0 = u64(layout.aligned_w) * layout.aligned_h *
                        layout.bytes_per_block;
     const size_t bytes = static_cast<size_t>(std::min<u64>(level0, 4u << 20));
-    tex->contentHash =
+    if (!tex->nativeAsset) tex->contentHash =
         XXH3_64bits(&fetch, sizeof(fetch)) ^
         (bytes ? XXH3_64bits(src, bytes) * 0x9E3779B97F4A7C15ull : 0);
     if (!tex->contentHash)

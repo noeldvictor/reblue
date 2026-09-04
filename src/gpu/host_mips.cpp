@@ -1,6 +1,6 @@
 /**
  * @file    gpu/host_mips.cpp
- * @brief   Host-generated mip chains for DXT1/3/5 textures. See host_mips.h.
+ * @brief   SDK-independent native BC1/2/3 mip cooker; see native_texture_data.h.
  *
  * The block decoders are written here; the encoders are stb_dxt for the
  * colour and DXT5 alpha blocks, with two cases stb does not cover done by
@@ -13,25 +13,26 @@
  * @license   BSD 3-Clause License
  *            See LICENSE file in the project root for full license text.
  */
-#include "gpu/host_mips.h"
+#include "gpu/scene/native_texture_data.h"
 
 #include <algorithm>
 #include <cstring>
 
-#include <rex/graphics/xenos.h>
 
 #define STB_DXT_IMPLEMENTATION
 #define STB_DXT_STATIC
 #include <stb_dxt.h>
 
-namespace xe = rex::graphics::xenos;
-
-namespace bd::gpu {
+namespace bd::gpu::scene {
+using u8 = uint8_t;
+using u16 = uint16_t;
+using u32 = uint32_t;
+using u64 = uint64_t;
 namespace {
 
-constexpr u32 kDxt1 = u32(xe::TextureFormat::k_DXT1);
-constexpr u32 kDxt3 = u32(xe::TextureFormat::k_DXT2_3);
-constexpr u32 kDxt5 = u32(xe::TextureFormat::k_DXT4_5);
+constexpr u32 kDxt1 = u32(NativeTextureFormat::BC1);
+constexpr u32 kDxt3 = u32(NativeTextureFormat::BC2);
+constexpr u32 kDxt5 = u32(NativeTextureFormat::BC3);
 
 u32 BlockBytes(u32 format) { return format == kDxt1 ? 8u : 16u; }
 
@@ -266,26 +267,17 @@ void EncodeLevel(u32 format, const std::vector<u8> &rgba, u32 width, u32 height,
 
 } // namespace
 
-bool HostMipsSupported(u32 xe_format) {
-  return xe_format == kDxt1 || xe_format == kDxt3 || xe_format == kDxt5;
-}
-
-bool GenerateHostMips(u32 xe_format, u32 width, u32 height,
-                      const u8 *base_blocks, size_t base_size,
-                      u32 base_row_bytes, u32 base_row_width_texels,
-                      HostMipChain &out) {
-  out.storage.clear();
-  out.levels.clear();
-  if (!HostMipsSupported(xe_format) || !base_blocks || width < 8u || height < 8u)
+bool GenerateNativeTextureMips(const NativeTextureData &base, NativeTextureData &out) {
+  if (!ValidateNativeTexture(base) || base.dimension != NativeTextureDimension::Image2D ||
+      base.mip_levels != 1 || base.format == NativeTextureFormat::RGBA8 ||
+      base.width < 8 || base.height < 8 || uint64_t(base.width) * base.height > (16u << 20))
     return false;
-  const u32 bh = (height + 3u) / 4u;
-  if (size_t(base_row_bytes) * bh > base_size)
-    return false;
-  out.levels.push_back({base_blocks, base_size, width, height, base_row_width_texels});
-
+  NativeTextureData result = base;
+  const u32 format = u32(base.format);
+  const u32 base_row_bytes = ((base.width + 3) / 4) * BlockBytes(format);
   std::vector<u8> rgba, next;
-  DecodeLevel(xe_format, base_blocks, base_row_bytes, width, height, rgba);
-  u32 w = width, h = height;
+  DecodeLevel(format, base.images[0].data(), base_row_bytes, base.width, base.height, rgba);
+  u32 w = base.width, h = base.height;
   // Down to 4x4: a block is the smallest thing these formats store.
   while (w > 4u || h > 4u) {
     u32 dw, dh;
@@ -295,13 +287,18 @@ bool GenerateHostMips(u32 xe_format, u32 width, u32 height,
     h = dh;
     std::vector<u8> blocks;
     u32 row_bytes = 0;
-    EncodeLevel(xe_format, rgba, w, h, blocks, row_bytes);
-    out.storage.emplace_back(std::move(blocks));
-    const auto &st = out.storage.back();
-    out.levels.push_back({st.data(), st.size(), w, h,
-                          (row_bytes / BlockBytes(xe_format)) * 4u});
+    EncodeLevel(format, rgba, w, h, blocks, row_bytes);
+    std::vector<u8> tight;
+    if (!ImportNativeTextureImage(base.format, w, h, 1, blocks, row_bytes,
+                                  uint64_t(row_bytes) * ((h + 3) / 4), tight))
+      return false;
+    result.images.push_back(std::move(tight));
+    ++result.mip_levels;
   }
-  return out.levels.size() > 1;
+  if (!ValidateNativeTexture(result))
+    return false;
+  out = std::move(result);
+  return true;
 }
 
-} // namespace bd::gpu
+} // namespace bd::gpu::scene
