@@ -61,6 +61,8 @@ REXCVAR_DECLARE(bool, bd_xr_mirror);
 REXCVAR_DECLARE(f64, bd_xr_present_scale);
 REXCVAR_DECLARE(bool, bd_xr_direct_present);
 REXCVAR_DECLARE(bool, bd_xr_layered_swapchain);
+REXCVAR_DECLARE(bool, bd_xr_eye_sized);
+REXCVAR_DECLARE(double, bd_xr_render_scale);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
 
 namespace bd::gpu {
@@ -708,9 +710,22 @@ void XrPresentSize(VideoState &s, const GuestTexture *front, u32 &w, u32 &h) {
     h = session.SwapchainHeight();
     return;
   }
-  // The layered swapchain is one eye, and a multiview front buffer's layer is
-  // already that: no panel to fit the pair into, and no resample in the
-  // compositor (2026-09-04).
+  // The layered swapchain is one eye. Under bd_xr_eye_sized the layer is the
+  // runtime's own per-eye rect and the guest's 16:9 content is fitted into it
+  // at present, 1:1; otherwise it is whatever the frame's layer happens to be.
+  if (XrWantsLayeredSwapchain() && REXCVAR_GET(bd_xr_eye_sized) &&
+      session.RecommendedWidth() && session.RecommendedHeight()) {
+    const double scale = std::clamp(REXCVAR_GET(bd_xr_render_scale), 0.05, 2.0);
+    w = std::max<u32>(64, static_cast<u32>(session.RecommendedWidth() * scale + 0.5));
+    h = std::max<u32>(64, static_cast<u32>(session.RecommendedHeight() * scale + 0.5));
+    if (!g_xr_layered_size_w) {
+      g_xr_layered_size_w = w;
+      g_xr_layered_size_h = h;
+      BD_INFO("[xr] layered swapchain at the runtime's per-eye rect: {}x{} x2",
+              w, h);
+    }
+    return;
+  }
   if (XrWantsLayeredSwapchain() && front && front->width && front->height) {
     w = front->width;
     h = front->height;

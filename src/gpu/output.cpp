@@ -17,12 +17,15 @@
 #include <rex/ui/flags.h>
 
 #include "gpu/device.h"
+#include "xr/xr_session.h"
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(i32, bd_max_render_height);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(bool, bd_mv_no_squeeze);
+REXCVAR_DECLARE(bool, bd_xr_eye_sized);
+REXCVAR_DECLARE(double, bd_xr_render_scale);
 
 namespace bd::gpu {
 
@@ -35,7 +38,64 @@ u32 g_latched_full_w = 0;
 bool Output::LatchedFit(u32 &w, u32 &h) {
   static u32 latched_w = 0;
   static u32 latched_h = 0;
+  static bool eye_latched = false;
+  // The headset decides the frame's shape, not the desktop window it happens
+  // to have been launched beside. Until 2026-09-04 this fitted the window and
+  // then halved the width for multiview, which is how a 960x1080 target came
+  // to hold 1.778-shaped content and lose half of itself at present.
+  //
+  // Re-latched once, when the runtime first reports its per-eye rect: the
+  // window path has to serve until then, because the device, the window and
+  // the guest's first surfaces all exist before the XR session does. Refusing
+  // to answer until the session appeared left the app with no render target at
+  // all and it died before writing a log.
+  if (REXCVAR_GET(bd_xr_eye_sized) && !eye_latched) {
+    auto &session = bd::xr::Session::Get();
+    const u32 eye_w = session.RecommendedWidth();
+    const u32 eye_h = session.RecommendedHeight();
+    if (eye_w && eye_h) {
+      const double scale =
+          std::clamp(REXCVAR_GET(bd_xr_render_scale), 0.05, 2.0);
+      const u32 base_w =
+          std::max<u32>(64, static_cast<u32>(eye_w * scale + 0.5));
+      const u32 base_h =
+          std::max<u32>(64, static_cast<u32>(eye_h * scale + 0.5));
+      i32 ox = 0, oy = 0;
+      u32 cw = 0, ch = 0;
+      // The content keeps the game's aspect, because the 2D layout is authored
+      // for it. It lands in the eye-shaped layer's fitted rect at present, 1:1.
+      //
+      // Not ConfiguredAspect() alone: that returns 0 in Auto mode, meaning
+      // "follow the target", which on a 16:9 desktop window is the game's
+      // aspect by luck and on a square or eye-shaped rect is not. A square
+      // simulated eye produced 512x512 content this way, which would put the
+      // HUD through a mangle.
+      const double want = ConfiguredAspect() > 0.0 ? ConfiguredAspect()
+                                                   : kDesignCanvasAspect;
+      ComputeFit(base_w, base_h, want, cw, ch, ox, oy);
+      if (cw && ch) {
+        latched_w = std::max<u32>(8u, cw & ~7u);
+        latched_h = ch;
+        g_latched_full_w = latched_w; // no squeeze: RenderAspect is its own
+        eye_latched = true;
+        BD_INFO("[output] eye-sized frame: runtime {}x{} an eye x{:.2f} -> "
+                "content {}x{} at aspect {:.3f}",
+                eye_w, eye_h, scale, latched_w, latched_h,
+                double(latched_w) / double(latched_h));
+      }
+    }
+  }
   if (latched_w == 0) {
+    // The headset decides the frame's shape, not the desktop window it happens
+    // to have been launched beside. Until 2026-09-04 this fitted the window and
+    // then halved the width for multiview, which is how a 960x1080 target came
+    // to hold 1.778-shaped content and lose half of itself at present.
+    //
+    // Latched like everything else here, so it waits for a session that has
+    // reported its per-eye size - the same trap the XR swapchain hit, where the
+    // first present happens before the runtime has said anything and the answer
+    // is fixed from then on.
+    // (the eye-sized latch happens above, before this window fit)
     // The requested render size in every display mode, not just windowed.
     // 0, or a partial pair, means follow the swapchain.
     const i32 cfg_w = REXCVAR_GET(window_width);

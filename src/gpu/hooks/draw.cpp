@@ -65,6 +65,7 @@ REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(bool, bd_draw_ledger);
 REXCVAR_DECLARE(bool, bd_debug_blend_off);
+REXCVAR_DECLARE(bool, bd_xr_eye_sized);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
 REXCVAR_DECLARE(i32, bd_node_diag_mesh);
 REXCVAR_DECLARE(bool, bd_tail_identity_skip);
@@ -389,16 +390,30 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   const u32 stereo_pct = u32(REXCVAR_GET(bd_render_scale));
   // Under bd_mv_half_width the scene target is half the design width, so the
   // width test compares the layer's width doubled.
-  const u32 width_factor =
+  u32 width_factor =
       (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width)) ? 2u
                                                                           : 1u;
-  const bool scene_pass =
-      s.render_target != nullptr &&
-      s.render_target->width * width_factor >=
-          u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u &&
-      s.render_target->height >=
-          u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u &&
-      args.vertexOrIndexCount > 6;
+  u32 want_w = u32(bd::gpu::kDesignCanvasWidth) * stereo_pct / 100u;
+  u32 want_h = u32(bd::gpu::kDesignCanvasHeight) * stereo_pct / 100u;
+  // Under bd_xr_eye_sized the frame is whatever fraction of the headset's own
+  // per-eye rect the budget asks for, which has nothing to do with the design
+  // canvas and is not squeezed. Measuring against the canvas there declared a
+  // 720x400 eye frame "not the scene pass", switched the per-eye skew off and
+  // presented two identical layers - stereo silently gone (2026-09-04). The
+  // latched frame is the right yardstick: the scene target is the frame, and
+  // the post chain's targets are fractions of it.
+  if (REXCVAR_GET(bd_xr_eye_sized)) {
+    u32 lw = 0, lh = 0;
+    if (bd::gpu::Output::LatchedFit(lw, lh) && lw && lh) {
+      width_factor = 1u;
+      want_w = lw * 3u / 4u;
+      want_h = lh * 3u / 4u;
+    }
+  }
+  const bool scene_pass = s.render_target != nullptr &&
+                          s.render_target->width * width_factor >= want_w &&
+                          s.render_target->height >= want_h &&
+                          args.vertexOrIndexCount > 6;
   s.stereoEligible = scene_pass;
 
   // Fragment census probes, not settings (2026-09-03): the scene pass is

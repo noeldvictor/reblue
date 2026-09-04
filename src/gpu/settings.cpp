@@ -938,6 +938,19 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
 // renders the size the present actually delivers instead of twice it. Off
 // until the owner picks between this and the two other ways to spend the
 // difference (research/20260904_1330_...md): it changes what the player sees.
+// The frame's shape from the headset instead of the desktop window: the
+// render target is the game's aspect fitted into the runtime's per-eye rect
+// (times bd_xr_render_scale), and the layered swapchain's layer is that rect,
+// so the present maps the content 1:1 into its letterboxed place. Off until
+// the owner picks a budget - at scale 1.0 a Quest eye is 1440x1584, which is
+// far more shading than the frame does today.
+REXCVAR_DEFINE_BOOL(bd_xr_eye_sized, false, kCvarGroup,
+                    "Render size from the runtime's per-eye rect, not the "
+                    "desktop window.");
+REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 1.0, kCvarGroup,
+                      "Fraction of the runtime's per-eye rect to render, "
+                      "under bd_xr_eye_sized.")
+    .range(0.05, 2.0);
 REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
                     "Multiview half width halves the height too, so the "
                     "present maps 1:1 instead of discarding half the frame.");

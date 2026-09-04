@@ -96,6 +96,45 @@ side by side show the same derrick with the same shape, no squeeze or stretch. W
 is the accidental 2x vertical supersample the old downsample performed; thin rigging lines
 are marginally harder. That is the whole of the trade.
 
+## Option 3's sizing, built and measured (14:40)
+
+`bd_xr_eye_sized` with `bd_xr_render_scale`, default off. The frame's shape comes from the
+runtime instead of the desktop window: the render target is the game's aspect fitted into
+the runtime's per-eye rect times the scale, the layered swapchain's layer *is* that rect, and
+the present drops the content into its letterboxed place 1:1. Verified against a
+Quest-shaped simulated eye (`XRSIM_WIDTH=1440 XRSIM_HEIGHT_PX=1584`):
+
+```
+[output] eye-sized frame: runtime 1440x1584 an eye x0.50 -> content 720x400 at aspect 1.800
+[xr] layered swapchain at the runtime's per-eye rect: 720x792 x2
+[present] source 720x400 layers 2 -> back 720x792, rect 720x400+0,196; 1.00 source pixels
+```
+
+Both layers hold the 16:9 content letterboxed in an eye-shaped layer, differing in 6.52% of
+pixels with disparity on the near geometry - the same figure the working path reads. It is
+still letterboxed, because the content keeps the game's aspect for the HUD's sake; what has
+gone is the wasted half and the window's say in the matter. The scale is now the frame's
+budget dial and it means something: a fraction of the headset's own rect.
+
+Two bugs it exposed, both real and both caught before defaulting it on:
+
+- **Refusing to answer until the session exists kills the app.** `LatchedFit` is needed
+  before the device, the window and the guest's first surfaces exist, all of which precede
+  the XR session. Returning false until the runtime reported left no render target and the
+  process died before writing a log. It re-latches once instead, when the per-eye rect first
+  arrives.
+- **`ConfiguredAspect()` returns 0 in Auto mode**, meaning "follow the target". On a 16:9
+  desktop window that is the game's aspect by luck; against a square simulated eye it made
+  512x512 content, which would put the HUD through a mangle. The eye-sized path pins the
+  aspect to `kDesignCanvasAspect` when Auto is set.
+- **The scene-pass test measures against the design canvas.** `stereoEligible` asks whether
+  the render target is at least the design canvas times `bd_render_scale`, doubling the
+  width to undo the half-width squeeze. A 720x400 eye frame fails the height test, so the
+  per-eye skew switched off and the two layers came out byte-identical: stereo silently
+  gone, with nothing in the log to say so. Under `bd_xr_eye_sized` the yardstick is the
+  latched frame instead. The same heuristic is presumably fragile under a small
+  `bd_render_scale` on the other paths; not changed there, not investigated.
+
 ## The instrument
 
 `[present] source WxH layers L -> back WxH, rect WxH+X,Y (aspect A); N source pixels a
