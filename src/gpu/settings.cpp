@@ -910,6 +910,13 @@ REXCVAR_DEFINE_DOUBLE(bd_reflection_cull_distance, 350.0, kCvarGroup,
 // the last one, the streams resolved once per template until a physical
 // buffer moves, and instance records carrying only the registers the vertex
 // shader declares.
+// A node whose interpreted run issues no draws, every time it has been seen,
+// gets an empty template that the replay honours - instead of the empty one
+// being refused as "no template" so the node interprets for ever to produce
+// nothing. The refresh interval still expires it (2026-09-04).
+REXCVAR_DEFINE_BOOL(bd_host_draw_empty, true, kCvarGroup,
+                    "Record a template for nodes that consistently draw "
+                    "nothing, so they stop interpreting.");
 REXCVAR_DEFINE_BOOL(bd_host_draw_fast, true, kCvarGroup,
                     "Replay caches: skip the guest block copy and the stream "
                     "resolution when nothing changed.");

@@ -78,6 +78,7 @@ REXCVAR_DECLARE(bool, bd_host_draw_verify);
 REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 REXCVAR_DECLARE(bool, bd_lod);
 REXCVAR_DECLARE(bool, bd_host_draw_fast);
+REXCVAR_DECLARE(bool, bd_host_draw_empty);
 REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(bool, bd_material_census);
 REXCVAR_DECLARE(bool, bd_material_source);
@@ -167,6 +168,12 @@ struct SubDraw {
 struct NodeTemplate {
   u32 captured_frame = 0;
   bool volatile_material = false;
+  // The node's interpreted run issues no draws at all, every time it has been
+  // seen. Without this the empty template is refused as "no template" and the
+  // node interprets for ever to produce nothing - 15 render-list entries a
+  // frame did exactly that (2026-09-04). The refresh interval still expires
+  // it, so a node that starts drawing is picked up within that window.
+  bool draws_nothing = false;
   u32 replays = 0;
   std::vector<SubDraw> draws;
   // A skinned node's bone palette is a gather: bdSceneNodeDrawSingle copies
@@ -244,7 +251,7 @@ struct Store {
   std::unordered_map<u64, std::unordered_set<u64>> identity_colours;
   u32 identity_ambiguous = 0;
   size_t identity_total = 0;
-  u32 cap_invalid = 0, cap_not_replayable = 0;
+  u32 cap_invalid = 0, cap_not_replayable = 0, replayed_empty = 0;
   std::unordered_map<u64, u32> cap_reason; // key -> 1 no snapshot, 2 not replayable
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
@@ -1238,6 +1245,21 @@ void HostDrawCommit(const NodeTag &tag) {
       ++r.second;
   }
   if (!p.valid || !p.replayable || p.draws.empty() || !tag.valid) {
+    // A run that issued nothing, from a node that has never issued anything:
+    // record that as the template rather than discarding it, so the replay can
+    // honour it instead of refusing an empty one every frame.
+    if (tag.valid && p.valid && p.replayable && p.draws.empty() &&
+        REXCVAR_GET(bd_host_draw_empty)) {
+      const auto &r = st.runs[KeyOf(tag)];
+      if (r.second == 0 && r.first >= 8) {
+        auto &t = st.templates[KeyOf(tag)];
+        if (t.draws.empty()) {
+          t.draws_nothing = true;
+          t.volatile_material = false;
+          t.captured_frame = FrameStatFrameCount();
+        }
+      }
+    }
     p.valid = false;
     return;
   }
@@ -1631,6 +1653,15 @@ bool HostDrawReplay(const NodeTag &tag) {
   {
     std::lock_guard lock(st.mutex);
     auto it = st.templates.find(KeyOf(tag));
+    if (it != st.templates.end() && it->second.draws_nothing &&
+        it->second.draws.empty()) {
+      const u32 refresh_n =
+          static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
+      if (frame - it->second.captured_frame < refresh_n) {
+        ++st.replayed_empty;
+        return true; // the node draws nothing; replaying it is doing nothing
+      }
+    }
     if (it == st.templates.end() || it->second.draws.empty()) {
       if (st.never.count(KeyOf(tag))) {
         ++st.why_never;

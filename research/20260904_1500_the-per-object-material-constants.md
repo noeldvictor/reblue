@@ -504,6 +504,33 @@ The 15 that remain have a different cause: they never reach the capture at all, 
 at the branch that replays a node's list part without running the interpreter. That is the
 next thread, and the instrument to follow it already exists.
 
+## Nodes that draw nothing (23:00)
+
+The remaining first-sighting refusals are **render-list entries whose interpreted run issues
+no draws at all**. `HostDrawCommit` discards a run with no draws, so the template stays
+empty, the replay refuses an empty template, and the node interprets every frame for ever to
+produce nothing.
+
+`bd_host_draw_empty` records that as the template instead: a node that has been seen at
+least eight times and has never issued a draw gets an empty template the replay honours by
+returning immediately. The refresh interval still expires it, so a node that starts drawing
+is picked up within that window rather than being stuck the other way.
+
+| | before | after |
+| --- | --- | --- |
+| no-template refusals a frame | 20 | 16 |
+| distinct nodes affected | 20 | 17 |
+| frame draw count | 752 | **753** |
+| 120-frame sequence | 0 jumps | 0 jumps |
+
+The draw count is the check that matters here and it is why it was taken: a wrong
+"draws nothing" would lose geometry *consistently*, which a frame-to-frame comparison cannot
+see - both neighbours would be missing it. Identical counts say nothing was dropped.
+
+A modest four fewer interpreter runs a frame. The 16 left have not yet reached the
+eight-sighting threshold or alternate between drawing and not, and alternating nodes must
+keep interpreting.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
