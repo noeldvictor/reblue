@@ -81,6 +81,7 @@ REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(bool, bd_host_draw_empty);
 REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(bool, bd_material_census);
+REXCVAR_DECLARE(bool, bd_merge_census);
 REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(bool, bd_material_from_entry);
 REXCVAR_DECLARE(bool, bd_material_from_visual);
@@ -245,6 +246,7 @@ struct Store {
   // moves every frame is a misclassification, and each one costs an
   // interpreter run (2026-09-04).
   // Distinct sub-draw material keys seen (bd_material_census): the cook's size.
+  u64 merge_subdraws = 0, merge_removable = 0;
   std::unordered_set<u64> material_keys;
   std::unordered_set<u64> none_keys; // distinct nodes that never had a template
   // material identity (no constants) -> the distinct colour sets seen under it
@@ -796,6 +798,12 @@ void Tally(Store &st, bool replayed, bool from_list) {
         st.cap_invalid = st.cap_not_replayable = 0;
         st.cap_reason.clear();
         st.none_keys.clear();
+        if (st.merge_subdraws)
+          BD_INFO("[merge] {} sub-draws seen, {} of them ({:.1f}%) are "
+                  "adjacent duplicates differing only in index range",
+                  st.merge_subdraws, st.merge_removable,
+                  100.0 * double(st.merge_removable) / double(st.merge_subdraws));
+        st.merge_subdraws = st.merge_removable = 0;
         if (!st.material_keys.empty())
           BD_INFO("[material] {} distinct sub-draw materials, {} distinct "
                   "identities (shaders+state+textures, no constants), {} of "
@@ -1431,6 +1439,42 @@ void HostDrawCommit(const NodeTag &tag) {
         }
       }
     }
+  }
+  // Could a node's sub-draws be merged into one? They can when they share the
+  // pipeline, the textures, the streams and the index buffer and differ only
+  // in the index range - then one draw over a concatenated list replaces them.
+  // The census counts how many are mergeable before any of it is built.
+  if (REXCVAR_GET(bd_merge_census) && p.draws.size() > 1) {
+    u32 merged_away = 0;
+    for (size_t i = 1; i < p.draws.size(); ++i) {
+      const SubDraw &a = p.draws[i - 1];
+      const SubDraw &b = p.draws[i];
+      if (a.pipelineState.pixelShader != b.pipelineState.pixelShader ||
+          a.pipelineState.vertexShader != b.pipelineState.vertexShader ||
+          a.pipelineState.vertexDeclaration != b.pipelineState.vertexDeclaration ||
+          a.pipelineState.alphaBlendEnable != b.pipelineState.alphaBlendEnable ||
+          a.pipelineState.zWriteEnable != b.pipelineState.zWriteEnable ||
+          a.index_va != b.index_va || a.indexed != b.indexed ||
+          a.primitive_type != b.primitive_type ||
+          a.base_vertex != b.base_vertex)
+        continue;
+      bool same = true;
+      for (u32 k = 0; k < 16 && same; ++k)
+        if (a.tex_va[k] != b.tex_va[k] || a.stream_va[k] != b.stream_va[k] ||
+            a.stream_offset[k] != b.stream_offset[k])
+          same = false;
+      if (!same)
+        continue;
+      // The constants must match too, or the merged draw would use one set
+      // for both.
+      if (a.ps_delta.size() != b.ps_delta.size() ||
+          a.vs_delta.size() != b.vs_delta.size())
+        continue;
+      ++merged_away;
+    }
+    auto &st2 = store();
+    st2.merge_subdraws += static_cast<u32>(p.draws.size());
+    st2.merge_removable += merged_away;
   }
   if (REXCVAR_GET(bd_material_census)) {
     for (const SubDraw &d : p.draws) {

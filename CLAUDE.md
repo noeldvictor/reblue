@@ -124,6 +124,16 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**A node's sub-draws do not merge (2026-09-05, 01:00).** `bd_merge_census` counts sub-draws
+that share the pipeline, the textures, the streams, the index buffer and the base vertex and
+differ only in the index range - the ones a single draw over a concatenated list could
+replace. **Zero of them.** Within a node, consecutive sub-draws always differ in more than
+the range, so a per-node mesh merge has nothing to collect and the merge opportunity, if
+there is one, is across nodes rather than inside them. Caveat on the sample: the count runs
+at capture, which is now rare (32 sub-draws over a 300-frame window) because most nodes
+replay, so this is indicative rather than exhaustive - but zero of 32 is enough not to build
+it on spec.
+
 **Do not cache the shared block's texture-slot loop on its bound textures (tried and
 reverted, 2026-09-05).** It is 126 of 7,256 profile samples and looks like a clean skip: its
 output seems to depend only on `vs.textures[]`, the render target, the depth surface and the

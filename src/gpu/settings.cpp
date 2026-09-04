@@ -984,6 +984,9 @@ REXCVAR_DEFINE_BOOL(bd_material_from_visual, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_material_source, false, kCvarGroup,
                     "Search a tree draw's mesh for its captured material "
                     "colours, to find where the cook reads them from.");
+REXCVAR_DEFINE_BOOL(bd_merge_census, false, kCvarGroup,
+                    "Count a node's sub-draws that differ only in index range, "
+                    "to size a mesh merge.");
 REXCVAR_DEFINE_BOOL(bd_material_census, false, kCvarGroup,
                     "Count distinct sub-draw materials by content, to size "
                     "the material cook.");
