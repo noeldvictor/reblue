@@ -81,9 +81,41 @@ is limited to 64 MiB of staging scratch.
 
 Standalone tests exercise that same residency implementation, with instrumented
 image destruction and descriptor lifetime. This does **not** replace the guest
-draw/pass producers or supply asset-level native scene/material texture bindings.
+draw/pass producers or supply asset-level native scene loading.
 Unsupported/failed imports retain the tracked compatibility path. Runtime GPU
 uploads, reuse, retirement and refusals are reported separately from CPU cooking.
+
+## Native material sampling boundary
+
+`NativeTextureBinding` owns the primary GPU asset and explicit volume-slice or
+cube companions. Converted material slots publish these descriptors directly;
+their captured guest pointer and allocation address are empty. Stable sampler
+recipes are imported once into `RenderSamplerDesc`, then resolved using host
+anisotropy/mip policy and a padding-independent key covering every descriptor
+field. Those slots do not read/decode guest fetch words during normal replay.
+Verification and recording can still compose the compatibility words.
+
+This conversion covers explicitly bound, immutable material textures only.
+Inherited slots, mutable surfaces, aliases, unresolved companions and unstable
+samplers remain compatibility inputs. They cannot safely be frozen as static
+assets. The existing shader heap/register ABI also remains. The default-on
+`bd_native_texture_bindings` switch may be disabled for correctness comparisons;
+restart the process for a clean comparison with newly captured recipes.
+
+Temporary node recipes hold strong native handles through command recording.
+Texture replacement/eviction and geometry invalidation expire imported recipes
+at lookup; they do not erase unrelated visual/pass producer history. Untouched
+recipes retire after 300 frames, with a 4096-node ceiling. Direct draws and their
+deferred entries retire together, and volatile direct parts must not be mistaken
+for list-only nodes. Native GPU release still follows the fence policy above.
+These are bounded compatibility recipes, not a finished native scene database.
+
+The binding tests cover dimensional descriptor mapping, explicit companions,
+ownership after importer release, fence retirement, compound-recipe pruning,
+volatile direct parts and complete sampler identity. They use vendored Plume
+type headers, but no game runtime or GPU. See the dated
+[binding evidence](../research/20260904_1946_native-material-texture-bindings.md)
+for the desktop slice and remaining correctness limitations.
 
 ## Standalone tool
 

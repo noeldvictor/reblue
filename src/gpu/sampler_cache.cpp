@@ -6,6 +6,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/sampler_cache.h"
+#include "gpu/sampler_key.h"
 
 #include <atomic>
 #include <cstring>
@@ -29,49 +30,13 @@ namespace {
 
 namespace xe = rex::graphics::xenos;
 
-// Only these fields ever vary, so they form the key, not the full desc.
-// anisoEnabled is separate: at bd_anisotropy 1 both states carry maxAniso 1.
-struct DescKey {
-  plume::RenderTextureAddressMode u;
-  plume::RenderTextureAddressMode v;
-  plume::RenderTextureAddressMode w;
-  plume::RenderFilter min;
-  plume::RenderFilter mag;
-  plume::RenderMipmapMode mip;
-  plume::RenderBorderColor border;
-  u32 maxAniso;
-  bool anisoEnabled;
-
-  bool operator==(const DescKey &other) const noexcept {
-    return u == other.u && v == other.v && w == other.w && min == other.min &&
-           mag == other.mag && mip == other.mip && border == other.border &&
-           maxAniso == other.maxAniso && anisoEnabled == other.anisoEnabled;
-  }
-};
-
-struct DescKeyHash {
-  size_t operator()(const DescKey &k) const noexcept {
-    u64 bits = 0;
-    bits |= static_cast<u64>(k.u);
-    bits |= static_cast<u64>(k.v) << 4;
-    bits |= static_cast<u64>(k.w) << 8;
-    bits |= static_cast<u64>(k.min) << 12;
-    bits |= static_cast<u64>(k.mag) << 16;
-    bits |= static_cast<u64>(k.mip) << 20;
-    bits |= static_cast<u64>(k.border) << 24;
-    bits |= static_cast<u64>(k.maxAniso) << 28;
-    bits |= static_cast<u64>(k.anisoEnabled) << 36;
-    return std::hash<u64>{}(bits);
-  }
-};
-
 struct CachedSampler {
   std::unique_ptr<plume::RenderSampler> sampler;
   u32 slot = 0;
 };
 
 struct Cache {
-  std::unordered_map<DescKey, CachedSampler, DescKeyHash> map;
+  std::unordered_map<SamplerKey, CachedSampler, SamplerKeyHash> map;
   std::mutex mutex;
 };
 
@@ -111,7 +76,7 @@ bool IsNearest(xe::TextureFilter filter) {
 
 } // namespace
 
-plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]) {
+plume::RenderSamplerDesc DecodeSamplerRecipe(const u32 fc[6]) {
   xe::xe_gpu_texture_fetch_t fetch;
   std::memcpy(&fetch, fc, sizeof(fetch));
 
@@ -127,11 +92,20 @@ plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]) {
   d.mipmapMode = IsNearest(fetch.mip_filter) ? plume::RenderMipmapMode::NEAREST
                                              : plume::RenderMipmapMode::LINEAR;
 
+  d.borderColor = fetch.border_color == xe::BorderColor::k_ABGR_White
+                      ? plume::RenderBorderColor::OPAQUE_WHITE
+                      : plume::RenderBorderColor::TRANSPARENT_BLACK;
+  return d;
+}
+
+plume::RenderSamplerDesc ApplySamplerPolicy(plume::RenderSamplerDesc d,
+                                          i32 aniso, float mip_bias,
+                                          bool clamp_volume) {
+
   // Anisotropy is off by default, as BD's fetch constant sets aniso_filter to
   // 0. bd_anisotropy opts in, and only when every filter is already LINEAR:
   // D3D12_FILTER_ANISOTROPIC hardcodes LINEAR min/mag, so enabling aniso on a
   // POINT sampler silently upgrades it to bilinear on D3D12 but not on Vulkan.
-  const i32 aniso = Settings::Get().Anisotropy();
   const bool aniso_on = aniso > 0 &&
                         d.mipmapMode == plume::RenderMipmapMode::LINEAR &&
                         d.minFilter == plume::RenderFilter::LINEAR &&
@@ -139,16 +113,21 @@ plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]) {
   d.anisotropyEnabled = aniso_on;
   d.maxAnisotropy = aniso_on ? static_cast<u32>(aniso) : 1u;
 
-  d.borderColor = fetch.border_color == xe::BorderColor::k_ABGR_White
-                      ? plume::RenderBorderColor::OPAQUE_WHITE
-                      : plume::RenderBorderColor::TRANSPARENT_BLACK;
   // A probe, not a setting: the Quest's counters read 0.9% of texture
   // fetches from a non-base level after the host mip chains landed
   // (2026-09-03), the same as before them. A large positive bias makes every
   // reachable chain visible as blur in a capture; no blur means the chain is
   // not what the sampler sees.
-  d.mipLODBias = static_cast<float>(REXCVAR_GET(bd_debug_mip_bias));
+  d.mipLODBias = mip_bias;
+  // Shell fur W is shell depth, not a repeating coordinate.
+  if (clamp_volume)
+    d.addressW = plume::RenderTextureAddressMode::CLAMP;
   return d;
+}
+
+plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]) {
+  return ApplySamplerPolicy(DecodeSamplerRecipe(fc), Settings::Get().Anisotropy(),
+                            float(REXCVAR_GET(bd_debug_mip_bias)), false);
 }
 
 u32 ResolveSlotLocked(const plume::RenderSamplerDesc &desc) {
@@ -156,11 +135,7 @@ u32 ResolveSlotLocked(const plume::RenderSamplerDesc &desc) {
   if (!s.ready || !s.device || !s.sampler_descriptor_set)
     return 0;
 
-  const DescKey key{
-      desc.addressU,    desc.addressV,      desc.addressW,
-      desc.minFilter,   desc.magFilter,     desc.mipmapMode,
-      desc.borderColor, desc.maxAnisotropy, desc.anisotropyEnabled,
-  };
+  const SamplerKey key(desc);
 
   auto &c = cache();
   {
@@ -182,6 +157,11 @@ u32 ResolveSlotLocked(const plume::RenderSamplerDesc &desc) {
   }
 
   auto sampler = s.device->createSampler(desc);
+  if (!sampler) {
+    s.sampler_descriptor_used[slot] = false;
+    BD_WARN("[sampler-cache] native sampler creation failed");
+    return 0;
+  }
   s.sampler_descriptor_set->setSampler(SamplerDescriptor(slot), sampler.get());
 
   std::lock_guard lock(c.mutex);

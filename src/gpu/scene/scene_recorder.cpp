@@ -6,6 +6,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/scene/scene_recorder.h"
+#include "gpu/scene/native_texture_binding.h"
 
 #include <algorithm>
 #include <atomic>
@@ -283,14 +284,31 @@ void OnQueuedDraw(const VideoState &s, const QueuedDraw &q, u32 device_guest) {
   const auto *dev = bd::mem::try_at<const D3DDevice>(device_guest);
   for (u32 i = 0; i < 16; ++i) {
     const GuestTexture *t = s.textures[i];
-    if (!t)
+    const auto *ov = s.material_override;
+    const auto *native = ov && ov->native_textures
+                             ? ov->native_textures[i].primary.get() : nullptr;
+    if (!native && !t)
       continue;
-    mat.tex_key[i] = t->contentHash;
-    if (dev) {
+    mat.tex_key[i] = native ? native->asset->id : t->contentHash;
+    if (ov && ov->fetch) {
+      std::memcpy(mat.fetch[i], ov->fetch[i], sizeof(mat.fetch[i]));
+    } else if (dev) {
       for (int k = 0; k < 6; ++k)
         mat.fetch[i][k] = static_cast<u32>(dev->fetchConstants[i].dword[k]);
     }
-    if (t->contentHash && !r.textures.count(t->contentHash)) {
+    if (native && !r.textures.count(native->asset->id)) {
+      TextureRecord tr{};
+      const auto &data = native->asset->data;
+      tr.tex_key = native->asset->id;
+      tr.format = static_cast<u32>(native->format);
+      tr.width = data.width;
+      tr.height = data.height;
+      tr.depth = data.depth;
+      tr.mips = data.mip_levels;
+      tr.array_size = data.dimension == NativeTextureDimension::Cube ? 6 : 1;
+      tr.dimension = static_cast<u32>(native->dimension);
+      r.textures.emplace(tr.tex_key, tr);
+    } else if (!native && t->contentHash && !r.textures.count(t->contentHash)) {
       TextureRecord tr{};
       tr.tex_key = t->contentHash;
       tr.format = static_cast<u32>(t->format);

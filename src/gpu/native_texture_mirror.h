@@ -36,6 +36,10 @@ GuestTexture *ResolveGuestTexture(u32 guest_va);
 // Queues the host GuestTexture for deferred teardown.
 void EvictNativeTexture(u32 guest_va);
 
+// Changes on replacement/eviction, including a failed replacement. Native
+// draw imports must not keep associations from an earlier scene allocation.
+u64 NativeTextureInvalidationGeneration();
+
 // One live native texture: its D3DTexture VA and the allocation's sequence
 // number. The sequence is what a caller tracking per-instance state keys on,
 // since a freed texture's VA can be reused by the next allocation.

@@ -8,6 +8,7 @@
 #include "gpu/native_texture_mirror.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cstring>
 
@@ -56,6 +57,7 @@ struct NamedNativeTexture {
 };
 std::unordered_map<u32, NamedNativeTexture> g_native_names;
 u64 g_native_name_seq = 0;
+std::atomic<u64> g_native_invalidation{1};
 
 std::string NormalizeTextureName(std::string_view raw) {
   const size_t slash = raw.find_last_of("\\/");
@@ -482,6 +484,7 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va, u32 name_va) {
     g_pending_native_destroy[Video::RetireSlot("native mirror")].push_back(
         std::move(it->second));
     g_native_mirrors.erase(it);
+    g_native_invalidation.fetch_add(1, std::memory_order_relaxed);
   }
 
   xe::xe_gpu_texture_fetch_t fetch;
@@ -666,6 +669,11 @@ void EvictNativeTexture(u32 guest_va) {
   g_native_mirrors.erase(it);
   g_native_names.erase(guest_va);
   ++g_native_name_seq; // the by-name cache keys on it
+  g_native_invalidation.fetch_add(1, std::memory_order_relaxed);
+}
+
+u64 NativeTextureInvalidationGeneration() {
+  return g_native_invalidation.load(std::memory_order_relaxed);
 }
 
 std::vector<NativeTextureRef> NativeTexturesByName(std::string_view name) {

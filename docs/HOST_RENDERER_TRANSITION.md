@@ -53,8 +53,8 @@ tracked compatibility path; this is not a complete native material system.
 Materials are now shared immutable assets with stable content IDs, a checked
 little-endian `.bdmat` format, independent cooking/loading and bounded residency.
 The lighting-model slot includes a reserved Cel value; no native cel shader is
-claimed. See [the format and cooker](NATIVE_MATERIAL_FORMAT.md). Native texture
-bindings, mesh/material scene-asset loading, list-entry/phase-1 recipes, complete
+claimed. See [the format and cooker](NATIVE_MATERIAL_FORMAT.md). Complete texture
+associations, mesh/material scene-asset loading, list-entry/phase-1 recipes, complete
 lighting/shader definitions and shader-ABI replacement remain required. See
 `research/20260904_1748_native-material-properties.md` for exact coverage and
 correctness-only comparisons, and
@@ -69,12 +69,20 @@ is on by default. See [the native texture contract](NATIVE_TEXTURE_FORMAT.md).
 CPU assets are shared and budgeted. A device-owned native GPU store now shares
 images, views and descriptors by content ID, with native handles and fence-gated
 retirement independent of guest wrappers. The remaining resource bridge only
-borrows those bindings. Native material/texture associations, asset-level scene
-loading and guest draw/pass replacement remain required.
+borrows those bindings. Explicit immutable material slots now hold native image
+handles directly, including cube/volume companions. Stable sampler recipes use
+native descriptors without per-replay fetch decoding. Inherited/dynamic inputs,
+asset-level scene loading and guest draw/pass replacement remain required.
 Cold/warm desktop and independent-loader evidence is recorded in
 `research/20260904_1833_native-textures-and-persistent-mips.md`.
 Shared GPU lifetime tests, runtime reuse/retirement and flat/multiview captures
 are recorded in `research/20260904_1854_shared-native-texture-gpu-ownership.md`.
+The native binding checkpoint, compound-recipe lifetime fixes and 120-frame
+flat capture are recorded in
+`research/20260904_1946_native-material-texture-bindings.md`. Its capture has no
+jumps above 6% or cyan patches, but the longer run later exhausted a 32 MiB
+constant-buffer slot. That overflow remains unresolved; this is not a clean
+long-session qualification. Desktop multiview still needs this revision checked.
 
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.

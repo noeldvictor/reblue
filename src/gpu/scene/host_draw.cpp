@@ -70,6 +70,11 @@
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
+#include "gpu/scene/native_texture_binding.h"
+#include "gpu/scene/scene_recipe_residency.h"
+#include "gpu/native_texture_mirror.h"
+#include "gpu/sampler_cache.h"
+#include "gpu/sampler_key.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
@@ -77,6 +82,7 @@ REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(bool, bd_native_meshes);
 REXCVAR_DECLARE(bool, bd_native_materials);
 REXCVAR_DECLARE(bool, bd_native_materials_verify);
+REXCVAR_DECLARE(bool, bd_native_texture_bindings);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
@@ -110,19 +116,21 @@ struct FetchDelta {
   u16 slot;
   bool stable = true;
   u32 dword[6];
+  plume::RenderSamplerDesc native_recipe;
 };
 
 // One of a node's draws.
 struct SubDraw {
   NativeMaterialHandle native_material;
+  std::array<NativeTextureBinding, 16> native_textures;
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
   // The guest address each ordinary texture had at capture: a GuestTexture
   // object freed and reallocated for another texture keeps its host
   // pointer, and a replay through the stale pointer samples the new texture
   // until the refresh (2026-09-03). An address that moved refuses the
-  // replay. (contentHash is a marker - 1 for a mirrored texture, 0 for the
-  // rest - not a hash, so it neither identifies a texture nor a surface.)
+  // replay. Converted slots instead own native handles and leave both the
+  // guest pointer and address empty.
   u32 tex_va[16]{};
   u32 tex_mask = 0; // slots SetTexture bound by this draw
   // Of those, the slots holding a render surface rather than an asset (a
@@ -175,7 +183,9 @@ struct SubDraw {
 };
 
 struct NodeTemplate {
+  SceneImportEpoch import_epoch;
   u32 captured_frame = 0;
+  u32 used_frame = 0;
   bool volatile_material = false;
   // The node's interpreted run issues no draws at all, every time it has been
   // seen. Without this the empty template is refused as "no template" and the
@@ -254,6 +264,9 @@ struct PassRegs {
 
 struct Store {
   std::mutex mutex;
+  u32 pruned_frame = ~0u;
+  u64 native_binding_draws = 0, native_binding_slots = 0;
+  u64 native_sampler_slots = 0, templates_retired = 0;
   PassRegs pass_regs[16]; // by render view
   u32 why_pass = 0;       // replays refused: the pass's camera not seen yet
   u32 stale_buffer = 0;   // replays refused: a stream's buffer is gone
@@ -303,6 +316,7 @@ struct Store {
   u32 acc_list_replayed = 0, acc_list_interpreted = 0;
   // Render-list entries built by the host instead of the interpreter.
   struct ListTemplate {
+    SceneImportEpoch import_epoch;
     std::vector<std::vector<u8>> entries; // the guest's bytes, per entry
     u32 captured_frame = 0;
     u32 replays = 0;
@@ -316,6 +330,42 @@ struct Store {
 Store &store() {
   static Store s;
   return s;
+}
+
+SceneImportEpoch ImportEpoch() {
+  return {NativeTextureInvalidationGeneration(), PhysicalBufferGeneration()};
+}
+
+// Guest-address template discovery is temporary. Do not carry its associations
+// across replaced assets, or pin every prior scene's native images forever.
+// Called only before acquiring a template reference, on the guest draw thread.
+void RefreshTemplates(Store &st) {
+  // Asset changes expire recipes at lookup, not the visual/pass producer
+  // history. Destroying that unrelated history breaks retained-state elision.
+  const u32 frame = FrameStatFrameCount();
+  if (st.pruned_frame == frame)
+    return;
+  st.pruned_frame = frame;
+  st.templates_retired += PruneNodeRecipes(st.templates, st.lists, frame, 300,
+      [&](u64 key) { st.runs.erase(key); st.never.erase(key); });
+  if (frame && frame % 300 == 0)
+    BD_INFO("[native-bindings] draws {} texture slots {} native samplers {} "
+            "templates {} retired {} (cumulative, compatibility imports)",
+            st.native_binding_draws, st.native_binding_slots,
+            st.native_sampler_slots, st.templates.size(), st.templates_retired);
+}
+
+NativeTextureBinding CaptureNativeTexture(const GuestTexture *t) {
+  if (!REXCVAR_GET(bd_native_texture_bindings) || !t || (t->type != ResourceType::Texture &&
+             t->type != ResourceType::VolumeTexture) || !t->nativeGpu ||
+      t->nativeGpu->descriptor == ~0u ||
+      t->sourceSurface || t->aliasOf || t->resolvedTexture ||
+      t->descriptorIndex != t->nativeGpu->descriptor ||
+      (t->companion2D && !t->companion2D->nativeGpu) ||
+      (t->companionCube && !t->companionCube->nativeGpu))
+    return {};
+  return {t->nativeGpu, t->companion2D ? t->companion2D->nativeGpu : nullptr,
+          t->companionCube ? t->companionCube->nativeGpu : nullptr};
 }
 
 // The files as they were when the interpreter started on this node, what it
@@ -361,6 +411,9 @@ struct VerifyDraw {
   u32 fetch[32][6];
   u32 bools[8];
   GuestTexture *textures[16];
+  std::array<NativeTextureBinding, 16> native_textures;
+  std::array<plume::RenderSamplerDesc, 16> native_samplers;
+  u32 native_sampler_mask = 0;
   PipelineState pipelineState;
   plume::RenderVertexBufferView vertex_views[16];
   plume::RenderInputSlot input_slots[16];
@@ -560,10 +613,11 @@ void GatherBones(const NodeTag &tag, const std::vector<u16> &slots, u8 *block) {
                     reinterpret_cast<u32 *>(block + (kBoneBase + 4 * i) * 16));
 }
 
-void ReadFetch(const D3DDevice *dev, u32 out[32][6]) {
+void ReadFetch(const D3DDevice *dev, u32 out[32][6], u32 native_mask = 0) {
   for (u32 i = 0; i < 32; ++i)
-    for (u32 k = 0; k < 6; ++k)
-      out[i][k] = static_cast<u32>(dev->fetchConstants[i].dword[k]);
+    if (!((native_mask >> i) & 1u))
+      for (u32 k = 0; k < 6; ++k)
+        out[i][k] = static_cast<u32>(dev->fetchConstants[i].dword[k]);
 }
 
 // The registers the run wrote (the setter hooks) or that moved anyway (a
@@ -668,7 +722,8 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
     }
     for (u32 k = 0; k < 16; ++k)
       if (((x.tex_mask & ~x.surface_mask) >> k) & 1u &&
-          x.textures[k] != y.textures[k]) {
+          (x.textures[k] != y.textures[k] ||
+           x.native_textures[k] != y.native_textures[k])) {
         ++g_why[2];
         return false;
       }
@@ -699,6 +754,9 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
     x.primitive_type = y.primitive_type;
     x.alpha_threshold = y.alpha_threshold;
     x.native_material = y.native_material;
+    // Keep each binding with its original inherited-state snapshot. Replacing
+    // only the native half here can pair an old dynamic surface with a newly
+    // observed static asset and override the surface on the next replay.
     std::memcpy(x.bools, y.bools, sizeof(x.bools));
   }
   return true;
@@ -1022,6 +1080,11 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d, bool needs_bones)
                          f4(e.ps, r));
   }
   for (u32 k = 0; k < 32; ++k) {
+    if (k < 16 && ((e.native_sampler_mask >> k) & 1u) &&
+        SamplerKey(DecodeSamplerRecipe(t_fetch[k])) != SamplerKey(e.native_samplers[k])) {
+      ++n_fetch;
+      why += fmt::format(" native sampler{} differs;", k);
+    }
     if (std::memcmp(t_fetch[k], e.fetch[k], sizeof(e.fetch[k])) == 0)
       continue;
     ++n_fetch;
@@ -1029,31 +1092,36 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d, bool needs_bones)
       why += fmt::format(" fetch{} interp {:08X}.. replay {:08X}..;", k,
                          t_fetch[k][0], e.fetch[k][0]);
   }
-  auto desc = [](const GuestTexture *t) {
+  auto desc = [](const GuestTexture *t, const NativeTextureBinding &native) {
+    if (native.primary)
+      return fmt::format("native/{:016X}", native.primary->asset->id);
     return t ? fmt::format("va{:08X}/{}x{}/t{}", t->selfVa, t->width, t->height,
                            u32(t->type))
              : std::string("null");
   };
   for (u32 k = 0; k < 16; ++k) {
-    if (d.textures[k] == e.textures[k])
+    if (d.textures[k] == e.textures[k] &&
+        d.native_textures[k] == e.native_textures[k])
       continue;
     if (!((d.tex_mask >> k) & 1u)) {
       ++vf.tex_inherited; // a slot this node never set; the guest's own
       // order left something else there. Reported when the slot's fetch
       // constant is configured (a sampler the shader may read) and the
       // interpreter's binding is a real texture.
-      if (k < 32 && t_fetch[k][0] != 0 && d.textures[k]) {
+      if (t_fetch[k][0] != 0 && (d.textures[k] || d.native_textures[k].primary)) {
         ++n_tex;
         if (n_tex <= 6)
           why += fmt::format(" tex{}(inherited) interp {} replay {};", k,
-                             desc(d.textures[k]), desc(e.textures[k]));
+                             desc(d.textures[k], d.native_textures[k]),
+                             desc(e.textures[k], e.native_textures[k]));
       }
       continue;
     }
     ++n_tex;
     if (n_tex <= 6)
       why += fmt::format(" tex{}(set) interp {} replay {};", k,
-                         desc(d.textures[k]), desc(e.textures[k]));
+                         desc(d.textures[k], d.native_textures[k]),
+                         desc(e.textures[k], e.native_textures[k]));
   }
   const bool state_diff =
       std::memcmp(&d.pipelineState, &e.pipelineState, sizeof(PipelineState)) != 0;
@@ -1217,6 +1285,7 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
       FetchDelta f;
       f.slot = static_cast<u16>(i);
       std::memcpy(f.dword, t_fetch[i], sizeof(f.dword));
+      f.native_recipe = DecodeSamplerRecipe(f.dword);
       d.fetch_delta.push_back(f);
     }
   }
@@ -1226,6 +1295,16 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   for (u32 i = 0; i < 16; ++i) {
     d.textures[i] = s.textures[i];
     d.tex_va[i] = s.textures[i] ? s.textures[i]->selfVa : 0u;
+    // An inherited slot is not a material association: the preceding pass may
+    // replace it or attach a resolve source later. Only actual material binds
+    // cross the immutable boundary; live inherited inputs need native pass
+    // producers, not a frozen image from a previous draw.
+    if ((d.tex_mask >> i) & 1u)
+      d.native_textures[i] = CaptureNativeTexture(s.textures[i]);
+    if (d.native_textures[i].primary) {
+      d.textures[i] = nullptr;
+      d.tex_va[i] = 0;
+    }
     // A render-target or depth surface by its resource type: the pooled
     // ones change host pointer every frame. Classifying by contentHash
     // filed every non-mirrored texture here and inherited it from the last
@@ -1293,6 +1372,7 @@ void HostDrawCommit(const NodeTag &tag) {
   auto &p = t_pending;
   auto &st = store();
   std::lock_guard lock(st.mutex);
+  RefreshTemplates(st);
   Tally(st, false, tag.from_list);
   if (tag.valid && p.valid) {
     auto &r = st.runs[KeyOf(tag)];
@@ -1309,7 +1389,14 @@ void HostDrawCommit(const NodeTag &tag) {
         REXCVAR_GET(bd_host_draw_empty)) {
       const auto &r = st.runs[KeyOf(tag)];
       if (r.second == 0 && r.first >= 8) {
+        if (st.templates.size() >= 4096 && !st.templates.contains(KeyOf(tag))) {
+          p.valid = false;
+          p.draws.clear();
+          return;
+        }
         auto &t = st.templates[KeyOf(tag)];
+        t.import_epoch = ImportEpoch();
+        t.used_frame = FrameStatFrameCount();
         if (t.draws.empty()) {
           t.draws_nothing = true;
           t.volatile_material = false;
@@ -1393,6 +1480,8 @@ void HostDrawCommit(const NodeTag &tag) {
   auto it = st.templates.find(key);
   if (it != st.templates.end()) {
     NodeTemplate &t = it->second;
+    t.used_frame = frame;
+    t.import_epoch = ImportEpoch();
     if (t.volatile_material) {
       p.valid = false;
       return;
@@ -1409,7 +1498,14 @@ void HostDrawCommit(const NodeTag &tag) {
       return;
     }
   }
+  if (st.templates.size() >= 4096 && !st.templates.contains(key)) {
+    p.valid = false;
+    p.draws.clear();
+    return;
+  }
   NodeTemplate &t = st.templates[key];
+  t.import_epoch = ImportEpoch();
+  t.used_frame = frame;
   // The cook's unit of work: a content key per sub-draw, over the state that
   // makes a material rather than the node that happens to carry it - the
   // pixel shader, the pipeline's blend and depth, the textures by content,
@@ -1538,7 +1634,9 @@ void HostDrawCommit(const NodeTag &tag) {
           (u64(ps.destBlend) << 9) | (u64(ps.zWriteEnable) << 17) |
           (u64(ps.zFunc) << 18) | (u64(ps.cullMode) << 24));
       for (u32 k = 0; k < 16; ++k)
-        if (d.textures[k])
+        if (d.native_textures[k].primary)
+          mix(d.native_textures[k].primary->asset->id ^ (u64(k) << 56));
+        else if (d.textures[k])
           mix(u64(d.tex_va[k]) ^ (u64(k) << 56));
       // No lock: the capture path already holds st.mutex, and taking it again
       // on a non-recursive mutex deadlocked the app on the first frame.
@@ -1596,6 +1694,7 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
   if (!array)
     return;
   Store::ListTemplate lt;
+  lt.import_epoch = ImportEpoch();
   lt.captured_frame = FrameStatFrameCount();
   for (u32 i = count_before; i < count_after; ++i) {
     const u32 entry = bd::mem::try_load<u32>(array + i * 4);
@@ -1636,9 +1735,14 @@ bool HostDrawHasDrawTemplate(const NodeTag &tag) {
     return false;
   auto &st = store();
   std::lock_guard lock(st.mutex);
+  RefreshTemplates(st);
   auto it = st.templates.find(KeyOf(tag));
-  return it != st.templates.end() && !it->second.draws.empty() &&
-         !it->second.volatile_material;
+  if (it != st.templates.end())
+    it->second.used_frame = FrameStatFrameCount();
+  // A volatile direct part is still a direct part. Calling it list-only
+  // silently skips geometry when the deferred entries can replay.
+  return it != st.templates.end() &&
+         HasDirectRecipe(!it->second.draws.empty(), it->second.volatile_material);
 }
 
 u32 HostListBuildStatus(const NodeTag &tag) {
@@ -1646,9 +1750,13 @@ u32 HostListBuildStatus(const NodeTag &tag) {
     return 0;
   auto &st = store();
   std::lock_guard lock(st.mutex);
+  // Refresh the compound recipe BEFORE the caller snapshots its list status.
+  RefreshTemplates(st);
   auto it = st.lists.find(KeyOf(tag));
   if (it == st.lists.end())
     return 0;
+  if (it->second.import_epoch != ImportEpoch())
+    return 2;
   const u32 refresh =
       static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
   if (FrameStatFrameCount() - it->second.captured_frame >= refresh)
@@ -1667,6 +1775,8 @@ bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
     std::lock_guard lock(st.mutex);
     auto it = st.lists.find(KeyOf(tag));
     if (it == st.lists.end())
+      return false;
+    if (it->second.import_epoch != ImportEpoch())
       return false;
     const u32 refresh =
         static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
@@ -1709,6 +1819,7 @@ bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
 bool HostDrawWantsCapture(const NodeTag &tag) {
   auto &st = store();
   std::lock_guard lock(st.mutex);
+  RefreshTemplates(st);
   if (auto it = st.never.find(KeyOf(tag)); it != st.never.end()) {
     // Ask again now and then: a foliage node becomes replayable once the
     // host's vector is trusted.
@@ -1750,7 +1861,15 @@ bool HostDrawReplay(const NodeTag &tag) {
   bool sampled_verify = false;
   {
     std::lock_guard lock(st.mutex);
+    RefreshTemplates(st);
     auto it = st.templates.find(KeyOf(tag));
+    if (it != st.templates.end())
+      it->second.used_frame = frame;
+    if (it != st.templates.end() && it->second.import_epoch != ImportEpoch()) {
+      ++st.why_refresh;
+      it->second.captured_frame = 0;
+      return false;
+    }
     if (it != st.templates.end() && it->second.draws_nothing &&
         it->second.draws.empty()) {
       const u32 refresh_n =
@@ -2295,19 +2414,35 @@ bool HostDrawReplay(const NodeTag &tag) {
       else
         bools[0] &= ~(1u << 31);
     }
-    ReadFetch(dev, t_fetch);
+    plume::RenderSamplerDesc native_samplers[16];
+    ov.native_sampler_mask = 0;
+    for (const FetchDelta &f : d.fetch_delta) {
+      if (f.slot < 16 && f.stable && d.native_textures[f.slot].primary) {
+        native_samplers[f.slot] = f.native_recipe;
+        ov.native_sampler_mask |= 1u << f.slot;
+      }
+    }
+    // Verification still composes all compatibility words for comparison.
+    // Normal native sampler slots do not read the device fetch file at all.
+    const bool inspect_fetch = verify || RecordingArmed();
+    ReadFetch(dev, t_fetch, inspect_fetch ? 0u : ov.native_sampler_mask);
     for (const FetchDelta &f : d.fetch_delta)
-      std::memcpy(t_fetch[f.slot], f.stable ? f.dword : v->fetch[f.slot],
+      if (inspect_fetch || !((ov.native_sampler_mask >> f.slot) & 1u))
+        std::memcpy(t_fetch[f.slot], f.stable ? f.dword : v->fetch[f.slot],
                   sizeof(f.dword));
     ov.vs = t_vs_block;
     ov.ps = t_ps_block;
     ov.fetch = t_fetch;
     ov.bools = bools;
+    ov.native_textures = d.native_textures.data();
+    ov.native_samplers = native_samplers;
     {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;
       for (u32 k = 0; k < 16; ++k) {
-        if (((d.tex_mask & ~d.surface_mask) >> k) & 1u) {
+        if (d.native_textures[k].primary) {
+          s.textures[k] = nullptr; // every downstream consumer sees native ownership
+        } else if (((d.tex_mask & ~d.surface_mask) >> k) & 1u) {
           s.textures[k] = d.textures[k];
         } else if (((d.tex_mask & d.surface_mask) >> k) & 1u) {
           // A render-target slot: this frame's binding by the visual's
@@ -2416,6 +2551,10 @@ bool HostDrawReplay(const NodeTag &tag) {
       // What the replay would dispatch, kept for the interpreter's draws
       // to be checked against (VerifyAgainstReplay).
       VerifyDraw e;
+      e.native_textures = d.native_textures;
+      std::copy(std::begin(native_samplers), std::end(native_samplers),
+                e.native_samplers.begin());
+      e.native_sampler_mask = ov.native_sampler_mask;
       std::memcpy(e.vs, t_vs_block, kBlockBytes);
       std::memcpy(e.ps, t_ps_block, kBlockBytes);
       std::memcpy(e.fetch, t_fetch, sizeof(e.fetch));
@@ -2423,6 +2562,12 @@ bool HostDrawReplay(const NodeTag &tag) {
       {
         std::lock_guard lock(s.mutex);
         std::memcpy(e.textures, s.textures, sizeof(e.textures));
+        for (u32 k = 0; k < 16; ++k) {
+          if (!e.native_textures[k].primary && ((d.tex_mask >> k) & 1u))
+            e.native_textures[k] = CaptureNativeTexture(e.textures[k]);
+          if (e.native_textures[k].primary)
+            e.textures[k] = nullptr;
+        }
         e.pipelineState = s.pipelineState;
         std::memcpy(e.vertex_views, s.vertex_views, sizeof(e.vertex_views));
         std::memcpy(e.input_slots, s.input_slots, sizeof(e.input_slots));
@@ -2444,6 +2589,15 @@ bool HostDrawReplay(const NodeTag &tag) {
     bd::gpu::hooks::DispatchHostNodeDraw(device_guest, lod_prim, d.indexed,
                                          lod_count, lod_start, d.base_vertex,
                                          d.start_vertex);
+    bool native_draw = false;
+    for (const auto &binding : d.native_textures) {
+      if (binding.primary) {
+        ++st.native_binding_slots;
+        native_draw = true;
+      }
+    }
+    st.native_binding_draws += native_draw;
+    st.native_sampler_slots += __builtin_popcount(ov.native_sampler_mask);
   }
   if (lod_grid > 0)
     MeshLodLogMaybe();

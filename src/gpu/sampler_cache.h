@@ -1,9 +1,9 @@
 /**
  * @file    gpu/sampler_cache.h
- * @brief   Per-draw sampler decode + bindless sampler heap cache.
+ * @brief   Native sampler cache and compatibility fetch-state importer.
  *
- *   One bindless entry per unique sampler configuration, decoded from the X360
- *   GPUTEXTURE_FETCH_CONSTANT at D3DDevice::fetchConstants[N].
+ *   One bindless entry per complete native sampler description. Compatibility
+ *   callers can import a recipe from D3DDevice::fetchConstants[N].
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.
@@ -21,8 +21,15 @@ namespace bd::gpu {
 // Decode sampler bits from a 6-dword X360 fetch constant (host endianness).
 plume::RenderSamplerDesc DecodeFromFetch(const u32 fc[6]);
 
+// Import once at the compatibility boundary, without live renderer policy.
+plume::RenderSamplerDesc DecodeSamplerRecipe(const u32 fc[6]);
+// Applies host policy to a native recipe; no guest fetch data is read.
+plume::RenderSamplerDesc ApplySamplerPolicy(plume::RenderSamplerDesc recipe,
+                                          i32 anisotropy, float mip_bias,
+                                          bool clamp_volume);
+
 // Returns the cached sampler's slot in sampler_descriptor_set, or 0 (reserved
-// default slot) on miss or heap full. Caller holds state().mutex (the miss
+// default slot) on creation failure or heap full. Caller holds state().mutex (the miss
 // path allocates from the bindless sampler heap).
 u32 ResolveSlotLocked(const plume::RenderSamplerDesc &desc);
 

@@ -49,6 +49,7 @@
 #include "gpu/frame.h"
 #include "gpu/post_chain.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_texture_binding.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 #include "gpu/shaders/shader_cache.h"
@@ -628,10 +629,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       bool any = false, opaque = true, others_opaque = true;
       for (u32 k = 0; k < 16; ++k) {
         const bd::gpu::GuestTexture *t = s.textures[k];
-        if (!t || t->type != bd::gpu::ResourceType::Texture)
+        const auto *ov = s.material_override;
+        const auto *native = ov && ov->native_textures
+                                 ? ov->native_textures[k].primary.get() : nullptr;
+        if (!native && (!t || t->type != bd::gpu::ResourceType::Texture))
           continue;
         any = true;
-        if (t->alphaOpaque != 1) {
+        if ((native ? native->alpha_opaque : t->alphaOpaque) != 1) {
           opaque = false;
           if (k != 0)
             others_opaque = false;
@@ -694,10 +698,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
           ++seen;
       }
       std::string tex;
-      for (u32 k = 0; k < 6; ++k)
-        tex += fmt::format(" {}:{:x}", k,
-                           s.textures[k] ? (s.textures[k]->contentHash & 0xFFFF)
-                                         : 0);
+      for (u32 k = 0; k < 6; ++k) {
+        const auto *ov = s.material_override;
+        const auto *native = ov && ov->native_textures
+                                 ? ov->native_textures[k].primary.get() : nullptr;
+        const u64 id = native ? native->asset->id :
+                              (s.textures[k] ? s.textures[k]->contentHash : 0);
+        tex += fmt::format(" {}:{:x}", k, id & 0xFFFF);
+      }
       BD_INFO("[node-diag] {} node {} view {} pass {} fb {} rt {} pso {} inst {} "
               "count {} start {} base {} co {}/{}/{} ib {}+{} vb0 {}+{} tex{} "
               "alpha {:.3f} blended {} depth {:.0f}",
@@ -728,6 +736,14 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
                              ps[r * 4 + 1], ps[r * 4 + 2], ps[r * 4 + 3]);
       std::string slots;
       for (u32 k = 0; k < 8; ++k) {
+        const auto *ov = s.material_override;
+        const auto *native = ov && ov->native_textures
+                                 ? ov->native_textures[k].primary.get() : nullptr;
+        if (native) {
+          slots += fmt::format(" {}:native/{:016X}/{}x{}", k, native->asset->id,
+                               native->asset->data.width, native->asset->data.height);
+          continue;
+        }
         const auto *t = s.textures[k];
         if (!t)
           continue;

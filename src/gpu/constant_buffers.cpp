@@ -42,6 +42,8 @@
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/tweaks.h"
 #include "gpu/sampler_cache.h"
+#include "gpu/sampler_key.h"
+#include "gpu/scene/native_texture_binding.h"
 #include "gpu/settings.h"
 #include "gpu/shaders/shader_cache.h"
 
@@ -52,6 +54,7 @@ REXCVAR_DECLARE(bool, bd_material_tier);
 REXCVAR_DECLARE(i32, bd_material_tier_bits);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
 REXCVAR_DECLARE(bool, bd_record_mask_high);
+REXCVAR_DECLARE(f64, bd_debug_mip_bias);
 
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -111,6 +114,9 @@ struct SamplerSlotCache {
   i32 aniso = -1;
   bool clamp3d = false;
   bool valid = false;
+  float mip_bias = 0;
+  SamplerKey native_key{plume::RenderSamplerDesc{}};
+  bool native_valid = false;
 };
 
 struct UploadState {
@@ -1070,6 +1076,7 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   // bd_anisotropy participates in DecodeFromFetch's output, so a live change
   // must miss the per-slot cache so stale sampler indices are re-resolved.
   const i32 aniso_now = Settings::Get().Anisotropy();
+  const float mip_bias = float(REXCVAR_GET(bd_debug_mip_bias));
 
   // vs.textures is authoritative: our SetTexture hook replaces BD's recompiled
   // body, so the engine's per-slot bound-texture shadow (device+0x2FF0+slot*4)
@@ -1092,10 +1099,34 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   }
   u32 populated_now = 0;
 
-  for (u32 i = 0; i < 16; ++i) {
+  const auto *ov = vs.material_override;
+  static u64 native_images = 0, native_samplers = 0, compatibility_samplers = 0;
+  static u32 report_frame = 0;
+  const u32 frame = FrameStatFrameCount();
+  if (frame - report_frame >= 300) {
+    report_frame = frame;
+    BD_INFO("[native-sampling] published image slots {} native sampler slots {} "
+            "compatibility sampler slots {} (cumulative, shared-constant uploads)",
+            native_images, native_samplers, compatibility_samplers);
+  }
 
+  for (u32 i = 0; i < 16; ++i) {
+    const auto *native = ov && ov->native_textures &&
+                                 ov->native_textures[i].primary
+                             ? &ov->native_textures[i] : nullptr;
     bd::gpu::GuestTexture *tex = vs.textures[i];
-    if (tex && tex->sourceSurface && tex->sourceSurface->texture &&
+    if (native) {
+      const auto indices = scene::TextureIndices(*native,
+          {kNullTexture2DDescriptorIndex, kNullTexture3DDescriptorIndex,
+           kNullTextureCubeDescriptorIndex});
+      s.shared.texture2DIndices[i] = indices.image_2d;
+      s.shared.texture3DIndices[i] = indices.image_3d;
+      s.shared.textureCubeIndices[i] = indices.image_cube;
+      populated_now |= 1u << i;
+      ++native_images;
+      tex = nullptr;
+    }
+    if (!native && tex && tex->sourceSurface && tex->sourceSurface->texture &&
         tex->resolveScale == 1.0f && // a scaled alias holds the unscaled image
         tex->sourceSurface->sampleCount == plume::RenderSampleCount::COUNT_1 &&
         tex->sourceSurface != vs.render_target &&
@@ -1133,10 +1164,31 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
         break;
       }
 
+    }
+    if ((populated_now >> i) & 1u) {
+      const bool clamp3d = (native ? native->primary->dimension : tex->viewDimension)
+                              == plume::RenderTextureViewDimension::TEXTURE_3D;
+      auto &sc = s.samplerSlots[i];
+      if (ov && ov->native_samplers && ((ov->native_sampler_mask >> i) & 1u)) {
+        const auto desc = ApplySamplerPolicy(ov->native_samplers[i], aniso_now,
+                                             mip_bias, clamp3d);
+        const SamplerKey key(desc);
+        if (!sc.native_valid || sc.native_key != key) {
+          sc.sampler = ResolveSlotLocked(desc);
+          sc.native_key = key;
+          sc.native_valid = sc.sampler != 0;
+        }
+        sc.valid = false;
+        s.shared.samplerIndices[i] = sc.sampler;
+        ++native_samplers;
+        continue;
+      }
+      sc.native_valid = false;
       // X360 stores sampler state in fetchConstants[N].dword[*]. The
       // SetSamplerState_* setters are unhooked and run their recompiled bodies,
       // so the address mode bits there are valid.
       if (device_p) {
+        ++compatibility_samplers;
         const auto &fc_be = device_p->fetchConstants[i];
         u32 fc[6] = {
             u32(fc_be.dword[0]), u32(fc_be.dword[1]), u32(fc_be.dword[2]),
@@ -1144,10 +1196,8 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
         };
         if (const auto *ov = vs.material_override; ov && ov->fetch)
           std::memcpy(fc, ov->fetch[i], sizeof(fc));
-        const bool clamp3d =
-            tex->viewDimension == plume::RenderTextureViewDimension::TEXTURE_3D;
-        auto &sc = s.samplerSlots[i];
         if (sc.valid && sc.clamp3d == clamp3d && sc.aniso == aniso_now &&
+            sc.mip_bias == mip_bias &&
             std::memcmp(sc.fc, fc, sizeof(fc)) == 0) {
           s.shared.samplerIndices[i] = sc.sampler;
         } else {
@@ -1163,8 +1213,9 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
           std::memcpy(sc.fc, fc, sizeof(fc));
           sc.sampler = resolved;
           sc.aniso = aniso_now;
+          sc.mip_bias = mip_bias;
           sc.clamp3d = clamp3d;
-          sc.valid = true;
+          sc.valid = resolved != 0;
           s.shared.samplerIndices[i] = resolved;
         }
       }

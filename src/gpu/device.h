@@ -34,7 +34,7 @@ class Window;
 
 namespace bd::gpu {
 
-namespace scene { struct NativeTextureGpuStore; }
+namespace scene { struct NativeTextureGpuStore; struct NativeTextureBinding; }
 
 class Video {
 public:
@@ -728,6 +728,10 @@ struct MaterialOverride {
   const u8 *ps = nullptr;
   const u32 (*fetch)[6] = nullptr;
   const u32 *bools = nullptr;
+  // Converted immutable assets never require a GuestTexture during dispatch.
+  const scene::NativeTextureBinding *native_textures = nullptr; // 16 slots
+  const plume::RenderSamplerDesc *native_samplers = nullptr; // 16 slots
+  u32 native_sampler_mask = 0;
 };
 
 // Points an allocated bindless slot at an arbitrary view, with the renderer
