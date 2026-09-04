@@ -124,6 +124,15 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**Do not cache the shared block's texture-slot loop on its bound textures (tried and
+reverted, 2026-09-05).** It is 126 of 7,256 profile samples and looks like a clean skip: its
+output seems to depend only on `vs.textures[]`, the render target, the depth surface and the
+anisotropy. It does not. The loop reads each texture's `descriptorIndex`, which
+`BindTextureSRV` **assigns lazily at draw time**, so a slot's index can change with the
+texture pointer unmoved and a cache keyed on pointers serves a stale descriptor - the wrong
+texture, in whichever scene happens to bind one late. Measured at `other_ms` 5.22 against
+5.25, inside the noise, so there was nothing to buy for the risk either.
+
 **THE GUEST'S FRAME ASSEMBLY IS 3% OF THE DRAW THREAD (2026-09-05, 00:10).** A profile
 after the day's work, 7,256 samples: `bdCameraRender` 58, `bdSceneSubmitRenderList` 48 and
 `bdFrameSubmitAndDebugHUD` 92 come to **about 3%**, and `bdMatrixSet` (112) with `bdSinCos`
