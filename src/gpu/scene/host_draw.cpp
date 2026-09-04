@@ -245,6 +245,7 @@ struct Store {
   u32 identity_ambiguous = 0;
   size_t identity_total = 0;
   u32 cap_invalid = 0, cap_not_replayable = 0;
+  std::unordered_map<u64, u32> cap_reason; // key -> 1 no snapshot, 2 not replayable
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
@@ -768,10 +769,25 @@ void Tally(Store &st, bool replayed, bool from_list) {
         BD_INFO("[node] no-template: {} distinct nodes over the window, {} "
                 "refusals a frame",
                 st.none_keys.size(), st.acc_none / std::max(1u, st.acc_frames));
-        BD_INFO("[node] capture gates a window: invalid snapshot {}, snapshot "
-                "not replayable {}",
-                st.cap_invalid, st.cap_not_replayable);
+        {
+          u32 none_no_snapshot = 0, none_not_replayable = 0, none_never_tried = 0;
+          for (u64 k : st.none_keys) {
+            auto it = st.cap_reason.find(k);
+            if (it == st.cap_reason.end())
+              ++none_never_tried;
+            else if (it->second == 1)
+              ++none_no_snapshot;
+            else
+              ++none_not_replayable;
+          }
+          BD_INFO("[node] the never-captured nodes: {} of them - {} reached "
+                  "capture with no snapshot, {} with an unreplayable one, {} "
+                  "never reached it at all",
+                  st.none_keys.size(), none_no_snapshot, none_not_replayable,
+                  none_never_tried);
+        }
         st.cap_invalid = st.cap_not_replayable = 0;
+        st.cap_reason.clear();
         st.none_keys.clear();
         if (!st.material_keys.empty())
           BD_INFO("[material] {} distinct sub-draw materials, {} distinct "
@@ -1079,6 +1095,10 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
         ++st.cap_not_replayable;
       else
         ++st.cap_invalid;
+      // Keyed, not totalled: a replayed node reaches here with a valid tag and
+      // no snapshot too, so the totals are dominated by draws that are working.
+      // Per key, the nodes that never get a template can be picked out.
+      st.cap_reason[KeyOf(tag)] = p.valid ? 2u : 1u;
     }
     return;
   }
@@ -1581,8 +1601,15 @@ bool HostDrawWantsCapture(const NodeTag &tag) {
       return false;
     st.never.erase(it);
   }
+  // A volatile template is one whose material moves between frames, and
+  // replaying it would be wrong - but only if it has something to replay. A
+  // volatile *and empty* template is a stalemate: the replay refuses it for
+  // being empty, and this refuses the capture that would fill it, so the node
+  // interprets for ever. Measured at 19 of the 20 permanently-uncaptured nodes
+  // reaching the capture with no snapshot (2026-09-04).
   if (auto it = st.templates.find(KeyOf(tag));
-      it != st.templates.end() && it->second.volatile_material)
+      it != st.templates.end() && it->second.volatile_material &&
+      !it->second.draws.empty())
     return false;
   return true;
 }

@@ -478,6 +478,32 @@ the "invalid snapshot" bucket is dominated by the 519 draws that are working cor
 (56,112 a window). Isolating them needs the count keyed by node, not totalled - that is the
 next instrument, and it is small.
 
+## A stalemate, found and fixed (22:30)
+
+Keying the capture-gate counter by node rather than totalling it isolated them at once:
+**19 of the 20 permanently-uncaptured nodes reached the capture with no snapshot**, meaning
+`HostDrawWantsCapture` had refused them. It refuses a template marked `volatile_material` -
+one whose material moves between frames, which must not be replayed.
+
+But those templates were *volatile and empty*. That is a stalemate:
+
+- `HostDrawReplay` refuses an empty template and counts it as "no template".
+- `HostDrawWantsCapture` refuses the capture that would fill it, because it is volatile.
+- So the node interprets, every frame, for ever, and nothing can break the cycle.
+
+The fix is one condition: refuse a volatile template only when it has draws to replay. An
+empty one has nothing to protect and everything to gain from being filled.
+
+| | before | after |
+| --- | --- | --- |
+| reached capture with no snapshot | 19 | **0** |
+| no-template refusals a frame | 20 | **15** |
+| 120-frame sequence | 0 jumps | 0 jumps |
+
+The 15 that remain have a different cause: they never reach the capture at all, which points
+at the branch that replays a node's list part without running the interpreter. That is the
+next thread, and the instrument to follow it already exists.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
