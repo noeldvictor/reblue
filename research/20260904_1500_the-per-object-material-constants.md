@@ -298,6 +298,46 @@ This also retires the search approach for good. A value that is the product of t
 not findable by scanning for it, however correct the byte order, and three of today's dead
 ends were spent looking for something that was never there.
 
+## The formula, from the PowerPC (19:50)
+
+The recompilation carries the original instructions as comments, and they settle it:
+
+```
+addi r11, r23, 4932
+lfs  f11, 108(r11)      ; base.r   -> visual + 5040
+lfs  f12, 112(r11)      ; base.g   -> visual + 5044
+lfs  f13, 116(r11)      ; base.b   -> visual + 5048
+lfs  f0,  120(r11)      ; base.a   -> visual + 5052
+...
+lfs  f10, 396(r31)      ; modulator.r  (the staging struct)
+fmuls f11, f10, f11
+lfs  f10, 400(r31)      ; modulator.g
+fmuls f12, f10, f12
+lfs  f10, 404(r31)      ; modulator.b
+fmuls f13, f10, f13
+stfs f11, 128(r31)      ; -> pixel constant c3
+```
+
+So **`g_vObjectDiffuse` is a component-wise product**: an object base at `visual + 5040` times
+a modulator at the staging struct's `+396`. Both branches of the type switch use the same
+base; the switch only chooses whether the modulator is applied.
+
+That is the formula the cook needs, and both operands are addressable - one in the visual,
+one in a global.
+
+### The loose end, stated rather than buried
+
+A probe reading `visual + 5040` at capture time returns `(0, 0, 0, 0)`, while the constant
+the same draw produced is `(0.498, 0.498, 0.498, 1.0)`. Zero times anything is zero, so the
+probe and the assembly disagree and **the trace is not finished**. The probe reads at capture
+time, after the interpreter has run for every sub-draw of the node; the interpreter reads
+during its own run. The next step is a read taken inside the DrawSingle hook before the
+interpreter is entered, plus a dump of the window around `visual + 5040`, which will say
+whether the offset is right and the field is transient, or the offset is wrong.
+
+Not claiming the source is found until those agree - three earlier conclusions in this note
+were withdrawn for less.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
