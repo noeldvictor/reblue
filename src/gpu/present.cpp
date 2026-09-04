@@ -415,17 +415,21 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
 
   u32 fit_w = swap_w, fit_h = swap_h;
   i32 off_x = 0, off_y = 0;
-  // The layered path maps a layer onto a layer, 1:1, with no aspect fit: each
-  // eye was rendered through ProjectionFromFov (xr_math.h), whose extents are
-  // the runtime's own per-eye FOV, so the image already has the layer's shape.
-  // Fitting it to the game's 16:9 shrank it into a band and left the headset
-  // showing a letterboxed, wrong-FOV view (2026-09-04). A Sofdec movie is
-  // prerendered 16:9 and still wants the fit.
-  const bool layer_to_layer =
-      layered_present && !bd::engine::SofdecMoviePlaying();
-  if (!layer_to_layer)
-    Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
-                       off_y);
+  // The fit stays on the layered path too, and the reason is worth writing
+  // down because removing it looked right and was not (2026-09-04). Under
+  // bd_mv_half_width the latched render width is halved while RenderAspect
+  // keeps the *full* width (output.cpp), so the guest draws content for 1.78
+  // into a 0.89-shaped layer - anamorphically squeezed 2:1 by design, the same
+  // squeeze side-by-side's half-width viewports carry. This fit is what undoes
+  // it: 1.78 into 960x1080 lands on 960x540. Mapping the layer 1:1 filled the
+  // eye and left every frame stretched 2x vertically.
+  //
+  // So the black bars are not this pass's to remove. They go when the guest
+  // renders at the eye's own aspect in the first place, which is
+  // Output::LatchedFit taking the runtime's per-eye size - and that has to
+  // carry the 2D layout with it.
+  Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
+                     off_y);
   if (fit_w != swap_w || fit_h != swap_h) {
     // Clear the whole back buffer so the uncovered edges show as black bars.
     s.command_list->clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 1.0f));

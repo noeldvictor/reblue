@@ -64,7 +64,31 @@ layer's aspect, which is the guest chain's business and not this change's.
   block overwrites unconditionally a few lines later anyway. It reproduced with the
   layered swapchain off, so it is not this change's.
 
-## Addendum, 12:10: a layer maps onto a layer, with no aspect fit
+## Addendum, 12:50: the 12:10 change was wrong and is reverted
+
+The section below removed the present's aspect fit on the layered path, on the reasoning
+that each eye is rendered through the runtime's own FOV and so already has the layer's
+shape. Both layers went from 47.7% to 94.7% non-black and the capture looked plausible.
+It was a 2:1 vertical stretch.
+
+What the reasoning missed is in `output.cpp`: under `bd_mv_half_width` the latched render
+width is halved while `RenderAspect` keeps the **full** width (`g_latched_full_w`), so the
+guest draws content for 1.78 into a 0.89-shaped layer. That is an anamorphic squeeze by
+design, the same one side-by-side's half-width viewports carry, and the present's fit is
+what undoes it - 1.78 into 960x1080 lands on exactly 960x540, which is why the "bars" were
+precisely half the layer. Mapping the layer 1:1 never un-squeezed it.
+
+The lesson is the one this file keeps relearning: a capture that "looks plausible" is not a
+verification when there is no reference in the frame. The tell was arithmetic - a fit that
+lands on exactly half the height means the source is exactly 2x too tall - and it was
+available before the change, not after.
+
+The bars are not the present's to remove. They go when the guest renders at the eye's own
+aspect, which is `Output::LatchedFit` taking the runtime's per-eye size instead of the
+window's - and that has to carry the guest's 2D layout with it, since the HUD is laid out
+for 16:9.
+
+## Superseded: 12:10, a layer maps onto a layer, with no aspect fit
 
 The first layered capture had the game in a band with black bars top and bottom, and both
 layers only 47.7% non-black. That was the present pass fitting the frame to the game's
