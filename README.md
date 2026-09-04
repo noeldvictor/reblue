@@ -61,13 +61,16 @@ Quest-ready release.
 | Area | Implemented | Still required |
 | --- | --- | --- |
 | Native mesh assets | Versioned persistent `.bdmesh` cache, triangle lists, shared host GPU buffers and existing generated LOD support; enabled by default | Asset-level discovery/loading, independent native layouts/materials, dynamic geometry and cache streaming/eviction |
+| Material properties | Host-decoded diffuse, specular/shininess and reflection colours for supported direct-tree draws; enabled by default | Persistent material assets, native texture/lighting definitions, remaining draw recipes and replacement of the shader-register compatibility boundary |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
-The latest mesh/capture evidence and its limits are recorded in
-[the native mesh research note](research/20260904_1713_native-mesh-assets-and-capture-ownership.md).
+The mesh/capture evidence and its limits are recorded in
+[the native mesh research note](research/20260904_1713_native-mesh-assets-and-capture-ownership.md);
+[the native material note](research/20260904_1748_native-material-properties.md)
+records material-source checks and flat/multiview correctness comparisons.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 
@@ -261,12 +264,15 @@ codegen/shader tools; `tools/build_apk.sh` packages the APK. Their existence is
 not a claim that this revision has been qualified on each platform. Quest runs
 remain deferred until the complete desktop host-renderer gate passes.
 
-Standalone checks for the current mesh and stereo work:
+Standalone checks for the current mesh, material and stereo work:
 
 ```sh
 cmake -S tools/native_mesh_test -B out/native_mesh_check -G Ninja
 cmake --build out/native_mesh_check
 ctest --test-dir out/native_mesh_check --output-on-failure
+cmake -S tools/native_material_test -B out/native_material_test -G Ninja
+cmake --build out/native_material_test
+ctest --test-dir out/native_material_test --output-on-failure
 python tools/stereo_check_test.py
 ```
 

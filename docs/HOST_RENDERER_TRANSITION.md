@@ -38,15 +38,26 @@ LOD lists feed that same importer. The format contains no guest addresses.
 This does **not** yet remove the draw-template interpreter dependency. The
 importer currently retains packed vertex layouts understood by the existing
 shaders, and its discovery is attached to replayed node draws. Explicit native
-material/layout definitions, asset-level loading, dynamic geometry, cache
+complete material/layout definitions, asset-level loading, dynamic geometry, cache
 streaming/eviction and replacement of the guest frame and draw producers are
 still work to do. `bd_native_meshes` is on by default after the desktop checks
 recorded in `research/20260904_1713_native-mesh-assets-and-capture-ownership.md`.
 The counters cover indexed replays, not every draw in the game.
 
+`gpu/scene/native_material*` now decodes named diffuse, specular/shininess and
+reflection-colour properties from model commands into host-owned records. The
+supported direct-tree phase-0 draws compose these with the object's colour,
+without reading a sibling draw or the shared material staging globals.
+`bd_native_materials` is on by default. Unsupported/ambiguous cases retain the
+tracked compatibility path; this is not a complete native material system.
+Persistent material assets, texture bindings, lighting-model definitions,
+list-entry/phase-1 recipes and shader-ABI replacement remain required. See
+`research/20260904_1748_native-material-properties.md` for exact coverage and
+correctness-only comparisons.
+
 The diorama control exposes a remaining 64-frame lighting flash in the existing
-template path, present with native meshes disabled too. The presented eyes in
-that distant view do not establish a stereo-depth verdict. Neither limitation
+template path, present with native meshes or native materials disabled too.
+The presented eyes in that distant view do not establish a stereo-depth verdict. Neither limitation
 is a completed VR qualification or a reason to claim the host transition done.
 
 Shared working instructions live in [AGENTS.md](../AGENTS.md). The former

@@ -69,11 +69,14 @@
 #include "gpu/scene/guest_scene.h"
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
+#include "gpu/scene/native_material.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
 REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(bool, bd_native_meshes);
+REXCVAR_DECLARE(bool, bd_native_materials);
+REXCVAR_DECLARE(bool, bd_native_materials_verify);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
@@ -86,7 +89,6 @@ REXCVAR_DECLARE(bool, bd_material_census);
 REXCVAR_DECLARE(bool, bd_merge_census);
 REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(bool, bd_material_from_entry);
-REXCVAR_DECLARE(bool, bd_material_from_visual);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -112,6 +114,7 @@ struct FetchDelta {
 
 // One of a node's draws.
 struct SubDraw {
+  std::optional<NativeMaterialProperties> native_material;
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
   // The guest address each ordinary texture had at capture: a GuestTexture
@@ -695,6 +698,7 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
     x.start_vertex = y.start_vertex;
     x.primitive_type = y.primitive_type;
     x.alpha_threshold = y.alpha_threshold;
+    x.native_material = y.native_material;
     std::memcpy(x.bools, y.bools, sizeof(x.bools));
   }
   return true;
@@ -1248,6 +1252,16 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   d.start_vertex = q.start_vertex;
   d.primitive_type = primitive_type;
   d.alpha_threshold = Video::AlphaThreshold();
+  if (d.indexed && (REXCVAR_GET(bd_native_materials) ||
+                    REXCVAR_GET(bd_native_materials_verify))) {
+    d.native_material = ImportNativeMaterial(tag, d.index_va, d.stream_va[0],
+                                             d.start_index, d.count);
+    if (d.native_material && REXCVAR_GET(bd_native_materials_verify)) {
+      std::array<float, 4> values[3];
+      const u32 mask = EvaluateNativeMaterial(tag, *d.native_material, values);
+      NativeMaterialCheck(mask, values, t_ps_block);
+    }
+  }
   for (u32 i = 0; i < 4; ++i) {
     d.bools[i] = static_cast<u32>(dev->vsBoolConstants[i]);
     d.bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
@@ -1727,6 +1741,11 @@ bool HostDrawReplay(const NodeTag &tag) {
   auto &st = store();
   const NodeTemplate *t = nullptr;
   const VisualRegs *v = nullptr;
+  struct MaterialValues {
+    u32 mask = 0;
+    std::array<float, 4> values[3];
+  };
+  static thread_local std::vector<MaterialValues> native_values;
   const u32 frame = FrameStatFrameCount();
   bool sampled_verify = false;
   {
@@ -1765,6 +1784,14 @@ bool HostDrawReplay(const NodeTag &tag) {
       return false; // the interpreter runs once and refreshes the template
     }
     t = &it->second;
+    native_values.resize(t->draws.size());
+    for (size_t i = 0; i < t->draws.size(); ++i) {
+      auto &values = native_values[i];
+      values.mask = 0;
+      if (REXCVAR_GET(bd_native_materials) && t->draws[i].native_material)
+        values.mask = EvaluateNativeMaterial(tag, *t->draws[i].native_material,
+                                              values.values);
+    }
     // Every moving value must have been written by an interpreted node of
     // this visual in this frame; otherwise this node is the one to interpret.
     auto vit = st.visuals.find(VisualKeyOf(tag));
@@ -1812,7 +1839,8 @@ bool HostDrawReplay(const NodeTag &tag) {
     // interpreted node does not hold this node's. The way to host-issue those
     // draws is for the host to know what c3 and c4 mean, which is the material
     // cook, not a copy from a neighbour.
-    for (const SubDraw &d : t->draws) {
+    for (size_t di = 0; di < t->draws.size(); ++di) {
+      const SubDraw &d = t->draws[di];
       for (const RegDelta &r : d.vs_delta) {
         if (r.reg < kPassVsRegs)
           continue; // the pass camera: composed below
@@ -1835,6 +1863,9 @@ bool HostDrawReplay(const NodeTag &tag) {
       for (const RegDelta &r : d.ps_delta) {
         if (r.reg < kPassPsRegs)
           continue;
+        if (r.reg >= 3 && r.reg <= 5 &&
+            (native_values[di].mask & (1u << (r.reg - 3))))
+          continue; // this material's decoded property, not a sibling register
         if (from_entry(r, false))
           continue; // the entry carries this draw's own value
         if (!r.stable && (!v || v->ps_frame[r.reg] != frame)) {
@@ -2184,8 +2215,17 @@ bool HostDrawReplay(const NodeTag &tag) {
     for (const RegDelta &r : d.ps_delta) {
       if (r.reg < kPassPsRegs)
         continue;
+      if (r.reg >= 3 && r.reg <= 5 &&
+          (native_values[di].mask & (1u << (r.reg - 3))))
+        continue;
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
     }
+    for (u32 field = 0; field < 3; ++field)
+      if (native_values[di].mask & (1u << field))
+        std::memcpy(t_ps_block + (field + 3) * 16,
+                    native_values[di].values[field].data(), 16);
+    if (native_values[di].mask)
+      NativeMaterialNoteReplay(native_values[di].mask);
     // A render-list draw's own pixel constants, straight from its entry.
     //
     // The loop uploads them itself - SetPixelShaderConstantFN(device, 0,
@@ -2212,39 +2252,6 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
         if (ok)
           std::memcpy(t_ps_block + reg * 16, v, 16);
-      }
-    }
-    // A tree draw has no entry, but both operands of the same formula are
-    // addressable: the base is a float4 at visual + 3404, and the staging
-    // struct at 0x82DE80D8 holds the gate at +392 and a per-component
-    // modulator at +396..+404. The interpreter stores the base straight
-    // through when the gate is positive, and base * modulator otherwise
-    // (loc_822807F4 / loc_82280824). Reproducing that removes the sibling
-    // inference for tree draws too (2026-09-04).
-    if (!tag.from_list && REXCVAR_GET(bd_material_from_visual) &&
-        tag.visual_va) {
-      constexpr u32 kStaging = 0x82DE80D8u;
-      float base[4];
-      bool ok = true;
-      for (u32 i = 0; i < 4; ++i) {
-        const u32 w = bd::mem::try_load<u32>(tag.visual_va + 3404 + i * 4);
-        std::memcpy(&base[i], &w, 4);
-        if (!std::isfinite(base[i]))
-          ok = false;
-      }
-      const i32 gate = static_cast<i32>(bd::mem::try_load<u32>(kStaging + 392));
-      if (ok) {
-        float out[4] = {base[0], base[1], base[2], base[3]};
-        if (gate <= 0) {
-          for (u32 i = 0; i < 3; ++i) {
-            const u32 w = bd::mem::try_load<u32>(kStaging + 396 + i * 4);
-            float m;
-            std::memcpy(&m, &w, 4);
-            if (std::isfinite(m))
-              out[i] = base[i] * m;
-          }
-        }
-        std::memcpy(t_ps_block + 3 * 16, out, 16);
       }
     }
     // The pass camera, from this frame's interpreted draws of this view.
