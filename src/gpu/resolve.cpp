@@ -9,6 +9,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/frame.h"
+#include "gpu/draw_queue.h"
 
 #include <atomic>
 #include <cmath>
@@ -181,6 +182,12 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
   BeginCommandList(s);
   if (!s.command_list_open)
     return false;
+  // The draws still queued were recorded before this copy was asked for and
+  // may render into its source: they go out first. Without this the guest's
+  // end-of-pass Resolve copied the scene before its last queued draws landed
+  // - a whole frame of clear colour when nothing had flushed during the pass,
+  // a darker ground without its last layers otherwise (2026-09-03).
+  bd::gpu::DrawQueueFlushAt(s.command_list, BD_FLUSH_SITE);
 
   // Layouts move below, so BindDrawFramebuffer must re-bind after the copy.
   s.draw_framebuffer_bound = false;

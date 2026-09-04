@@ -88,6 +88,14 @@ bool HostDrawReplay(const NodeTag &tag);
 // allocator, the recorded bytes, a fresh matrix and palette.
 u32 RenderListCount();
 void HostListBuildCapture(const NodeTag &tag, u32 count_before);
+// A node's two parts are replayed together or not at all: the direct draws
+// from its template and the render-list entries from its list record. What
+// the store holds for each (2026-09-03: a node with both lost its list part
+// on every replayed frame - the ground light at the village rock came and
+// went with the refresh cadence).
+bool HostDrawHasDrawTemplate(const NodeTag &tag);
+// 0 no list record, 1 fresh (replayable), 2 stale (the interpreter runs).
+u32 HostListBuildStatus(const NodeTag &tag);
 bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base);
 
 // Whether a pipeline state's vertex shader reads the bone palette

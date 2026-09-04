@@ -1207,6 +1207,33 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
 
 REX_EXTERN(sub_8227DB50);
 
+bool HostDrawHasDrawTemplate(const NodeTag &tag) {
+  if (!tag.valid)
+    return false;
+  auto &st = store();
+  std::lock_guard lock(st.mutex);
+  auto it = st.templates.find(KeyOf(tag));
+  return it != st.templates.end() && !it->second.draws.empty() &&
+         !it->second.volatile_material;
+}
+
+u32 HostListBuildStatus(const NodeTag &tag) {
+  if (!tag.valid || !REXCVAR_GET(bd_host_list_build) || tag.from_list)
+    return 0;
+  auto &st = store();
+  std::lock_guard lock(st.mutex);
+  auto it = st.lists.find(KeyOf(tag));
+  if (it == st.lists.end())
+    return 0;
+  const u32 refresh =
+      static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
+  if (FrameStatFrameCount() - it->second.captured_frame >= refresh)
+    return 2;
+  if (st.matrix_disagree > st.matrix_agree)
+    return 2;
+  return 1;
+}
+
 bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
   if (!tag.valid || !REXCVAR_GET(bd_host_list_build) || tag.from_list)
     return false;

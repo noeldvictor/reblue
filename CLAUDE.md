@@ -620,37 +620,34 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **The "cyan skirt" is fixed (2026-09-03, 20:30; `research/20260903_1900_...md`)**:
-   three 120-frame sequences at the village rock read zero patch frames against 15-76 of
-   120 before. The 17:10 "game streaming" verdict was wrong, and so was the hour spent on
-   the instance-record mask (a mask-off run read clean once; the mask is innocent and on).
-   What it was: the host replay of a node is composed correctly (the replay verifier,
-   `bd_host_draw_verify`, diffs every replayed node's composition against the
-   interpreter's draws and now reads clean for the scene and reflection views), but the
-   guest's state machines around the replay were not: the render-list loop keeps its
-   current visual in `r23` and performs the visual switch (end the previous visual, begin
-   this one, its constant block, states and bool constants) only when the entry's visual
-   differs, and a replayed entry jumped past that without updating it, so a later
-   interpreted entry of the visual inherited another visual's state and fogged flat. Four
-   changes, each named by the verifier or by a sequence: **a list entry replays only while
-   `r23` already names its visual** (the hook carries `r23`; every switch is the guest's
-   own), **the pass camera (VS/PS c0-c1) is recorded per render view from the frame's
-   interpreted draws and applied to every replay** (the eye was zero on replayed
-   reflection-view entries: fog and fresnel from the origin), **a stable template register
-   the visual wrote differently this frame invalidates the template** (`why_drift`; a
-   screen-size constant after a resolution change), and **a replay takes the live bool
-   constants** (the pass and visual bits the guest toggles) with the node's foliage bit
-   applied. Two things tried and reverted, with the verifier's numbers: taking VS c2-c4 or
-   the visual's bools from the pass or the visual (they are the node's), and writing the
-   replay's composition back into the guest's device block (a persistent flat patch: the
-   guest inherits bools it believes it set). The host state is restored after a replay,
-   as before, because the interpreter's deferred-state shadow describes the last
-   interpreted node. Instruments left: the verifier; `tools/rdc_pixel_history.py` (every
-   event that wrote a pixel, with the last writer's bindings; RenderDoc's presence hides
-   the patch) and `bd_renderdoc_frames`; the draw ledger's per-draw fingerprints;
-   `bd_record_mask_mode` and the `[records]` group dump. Read `tools/capture_cyan.py`
-   against the lower part of the frame and look at the image: the intro cutscene and the
-   zenith sweep (a uniform sky-blue frame, 49 in a row in one run) read as cyan.
+   calls it. **The village-rock patch, state at 2026-09-03 23:30**
+   (`research/20260903_1900_...md` and its addenda): three separate things were being
+   read as one. (a) **Whole-frame flashes of the clear colour** (six to fifty frames at a
+   time): `CopySurfaceToTextureLocked` recorded the resolve copy without flushing the
+   deferred draw queue, so the guest's end-of-pass Resolve copied the scene before its
+   queued draws landed - fixed, zero uniform frames in 960 since. (b) **A one-frame
+   change every sixteen frames** (the template refresh cadence, seen as edge flicker):
+   a node with both direct draws and render-list entries lost its list part on every
+   replayed frame, because the hook built the list only when the draw replay was
+   refused - fixed, both parts replay together or the node interprets; the ground
+   light at the rock no longer comes and goes. Also fixed on the way, each named by
+   the replay verifier: the reflection view's eye register composed from the live
+   block (VS/PS c0-c1 now per pass), stale templates after a resolution change
+   (`why_drift`), the render-list loop's visual switch skipped by a replayed entry
+   (`r23` gate), bools taken live. (c) **The flat cyan polygon at the rock's base**,
+   still open: it needs the host replay (the only solid A/B, 38 of 120 frames against
+   2), it is independent of instancing, pulling, indirect draws and the record mask
+   (within-run A/Bs show it on both arms; the single-run "mode" verdicts of the
+   evening were noise - the artefact is present in about half the runs and in half
+   the frames when present, so only within-run A/Bs count), the replay verifier sees
+   no difference in what is composed, the draw ledger sees the same draws with paths
+   swapped, and RenderDoc never captures a frame with it. The next instrument is a
+   draw-id render (every queued draw's pixels coloured by its sequence through a spec
+   constant and a push constant) so a capture without RenderDoc names the draw.
+   Kept from the hunt: `bd_record_mask_high` (off: registers c64+ always from the
+   record), `bd_record_mask_mode` and the `[records]` group dump, the sequence
+   metrics in the session scratchpad (`seqstats.py`: uniform frames, lower-frame
+   cyan, neighbour jumps).
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.

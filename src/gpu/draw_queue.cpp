@@ -6,6 +6,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/draw_queue.h"
+#include "gpu/frame_stats.h"
 #include "gpu/frag_census.h"
 #include "gpu/vertex_pull.h"
 
@@ -528,9 +529,12 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     if (instancing && REXCVAR_GET(bd_draw_indirect) && q.batch_key &&
         q.pulled_pipeline && VertexPullIndirectOK()) {
       size_t j = i + 1;
+      // Mode 5 (diagnostic): a batch is one group.
+      const bool one_group = REXCVAR_GET(bd_record_mask_mode) == 5;
       while (j < g_queue.size() && g_queue[j].batch_key == q.batch_key &&
              g_queue[j].pulled_pipeline == q.pulled_pipeline &&
-             g_queue[j].record_index != ~0u)
+             g_queue[j].record_index != ~0u &&
+             (!one_group || g_queue[j].group_key == q.group_key))
         ++j;
       // The groups inside the batch, each one command.
       static std::vector<std::pair<size_t, size_t>> spans;
@@ -548,9 +552,12 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
       u64 byte_offset = 0;
       IndirectCommand *cmds =
           VertexPullAllocIndirect(static_cast<u32>(spans.size()), byte_offset);
+      // Mode 4: the batch's records carry their whole block (diagnostic).
       const u32 first =
           cmds ? CommitInstanceRecords(records.data(),
-                                       static_cast<u32>(records.size()))
+                                       static_cast<u32>(records.size()),
+                                       REXCVAR_GET(bd_record_mask_mode) != 4,
+                                       REXCVAR_GET(bd_record_mask_mode) != 9)
                : ~0u;
       if (cmds && first != ~0u) {
         const u32 index_bytes =

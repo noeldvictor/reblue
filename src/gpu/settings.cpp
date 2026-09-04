@@ -478,10 +478,15 @@ REXCVAR_DEFINE_BOOL(bd_host_draw_verify, false, kCvarGroup,
 // Diagnostic: 1 = the record mask as designed, 2 = the group's window is
 // rebound but every mask is all ones, 3 = the masks are computed but the
 // window is not rebound (2026-09-03, the cyan skirt).
+// Off: registers c64 and up always come from the record (see
+// CommitInstanceRecords). On reinstates the mask there - wrong under
+// drawIndexedIndirect on the desktop as of 2026-09-03.
+REXCVAR_DEFINE_BOOL(bd_record_mask_high, false, kCvarGroup,
+                    "Mask registers c64 and up as well (diagnostic).");
 REXCVAR_DEFINE_INT32(bd_record_mask_mode, 1, kCvarGroup,
                      "Record mask diagnostic mode (1 normal, 2 rebind only, "
                      "3 masks only).")
-    .range(1, 3);
+    .range(1, 10);
 REXCVAR_DEFINE_BOOL(bd_host_draw_records, true, kCvarGroup,
                     "Let host-issued node draws use instance records.");
 REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,

@@ -914,7 +914,9 @@ void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q
   const float *ps = bd::gpu::StagedPixelBlock();
   const float *vs = bd::gpu::StagedVertexBlock();
   const u64 ps_h = XXH3_64bits(ps, 256 * 16);
-  u64 vs_h = XXH3_64bits(vs, 32 * 16);
+  // c0-c4 (the camera block) and c32-c39 (view-projection, the fitted
+  // light matrix) move every frame; the rest is the draw's own.
+  u64 vs_h = XXH3_64bits(vs + 5 * 4, (32 - 5) * 16);
   vs_h ^= XXH3_64bits(vs + 40 * 4, (256 - 40) * 16);
   const auto &st = bd::gpu::state();
   struct {

@@ -481,15 +481,28 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   return false; // the parameter block rides the Vulkan dynamic UBO binding
 #else
   const bool fold = REXCVAR_GET(bd_host_post_bloom_fold);
+  // Every early exit named with its frame: a frame the host composite skips
+  // shows the guest's own composite over levels the host never wrote - a
+  // whole frame of sky (2026-09-03).
+  auto bail = [&](const char *why) {
+    static u32 told = 0;
+    if (told++ < 40)
+      BD_WARN("[post] frame {}: composite skipped: {} (dof valid {}, scene {}, "
+              "bloom {}, rt {})",
+              FrameStatFrameCount(), why, c.dof.valid ? 1 : 0,
+              scene ? 1 : 0, bloom ? 1 : 0,
+              s.render_target ? 1 : 0);
+    return false;
+  };
   if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene ||
       (!bloom && !fold))
-    return false;
+    return bail("inputs");
   GuestTexture *rt = s.render_target;
   if (!rt || !rt->texture || rt->layers > 2)
-    return false;
+    return bail("target");
   GuestTexture *depth = Source(s, c.dof.depth);
   if (!depth)
-    return false;
+    return bail("depth not readable");
   CompositeConstants k{};
   k.dof[0] = c.dof.params[0];
   k.dof[1] = c.dof.params[1];
@@ -507,7 +520,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   for (u32 i = 0; i < 5; ++i) {
     GuestTexture *level = Content(c.dof.levels[i]);
     if (!Readable(level))
-      return false;
+      return bail("a dof level not readable");
     Transition(s, level->texture, level->layout, plume::RenderTextureLayout::SHADER_READ);
     const u32 idx = level->descriptorIndex;
     if (i < 3)
@@ -517,11 +530,11 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   }
   auto alloc = UploadHostConstants(&k, sizeof(k));
   if (!alloc.memory)
-    return false;
+    return bail("constants");
   const bool layered = rt->layers > 1;
   auto *pipe = Pipeline(s, c, Shader::Composite, rt->format, layered);
   if (!pipe)
-    return false;
+    return bail("pipeline");
   if (bloom)
     Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);
   plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr);
@@ -616,6 +629,14 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
     const bool built = BuildDofPyramid(s, c, device_guest);
+    {
+      static u32 told = 0;
+      if ((!built || !c.dof.valid) && told++ < 40)
+        BD_WARN("[post] frame {}: dof pyramid {} valid {} (depth {}, slot1 {})",
+                FrameStatFrameCount(), built ? "built" : "NOT built",
+                c.dof.valid ? 1 : 0, c.dof.depth ? 1 : 0,
+                s.textures[1] ? 1 : 0);
+    }
     RestoreGuestDraw(s);
     // With the host composite the guest's dof draw is not needed; without
     // it (no depth, D3D12) the guest composites over the host levels.

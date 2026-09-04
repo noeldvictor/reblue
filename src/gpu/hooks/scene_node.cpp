@@ -152,21 +152,38 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     tag.seq = static_cast<u32>(n);
     tag.valid = true;
     SetCurrentNodeTag(tag);
-    // The host issues this node's draw itself when it has a template for it;
-    // the interpreter runs otherwise, and what it writes becomes the template.
-    if (!HostDrawReplay(tag) && !HostListBuildReplay(tag, ctx, base)) {
+    // The host issues this node's draws itself when it has a template for
+    // them, and builds its render-list entries from its list record; the
+    // interpreter runs otherwise, and what it writes becomes both. A node
+    // with both parts replays both or neither: replaying the draws and
+    // leaving the list to no one lost its translucent part on every replayed
+    // frame (2026-09-03), and replaying the list while the interpreter also
+    // ran would append it twice.
+    const u32 list_status = HostListBuildStatus(tag);
+    const bool has_draws = HostDrawHasDrawTemplate(tag);
+    bool replayed = false;
+    if (has_draws && list_status != 2) {
+      if (HostDrawReplay(tag)) {
+        replayed = true;
+        if (list_status == 1 && !HostListBuildReplay(tag, ctx, base)) {
+          static u32 told = 0;
+          if (told++ < 4)
+            BD_WARN("[node] list part not built after a draw replay");
+        }
+      }
+    } else if (!has_draws && list_status == 1) {
+      replayed = HostListBuildReplay(tag, ctx, base);
+    }
+    if (!replayed) {
       const bool capture = HostDrawEnabled() && HostDrawWantsCapture(tag);
       const u32 list_before = RenderListCount();
       if (capture)
         HostDrawSnapshotBefore();
       __imp__bdSceneNodeDrawSingle(ctx, base);
-      // A run that issued draws is a draw template; one that only grew the
-      // render list is a list template.
-      const bool drew = capture && HostDrawHasDraws();
       if (capture)
         HostDrawCommit(tag);
-      if (!drew)
-        HostListBuildCapture(tag, list_before);
+      // The list part, whether or not the run also drew.
+      HostListBuildCapture(tag, list_before);
     }
     ClearCurrentNodeTag();
     return;

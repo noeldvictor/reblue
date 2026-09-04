@@ -142,7 +142,8 @@ bool InstanceRecordsRoom();
 u32 StageInstanceRecord();
 // Copies n staged records contiguously into the GPU buffer; the first
 // instance index to draw with, or ~0u when the slot's region is exhausted.
-u32 CommitInstanceRecords(const u32 *staged, u32 n);
+u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask = true,
+                          bool allow_mask_low = true);
 // A staged record's bytes (this frame), or null.
 const InstanceRecord *StagedInstanceRecord(u32 index);
 // Uploads a staged record as an ordinary vertex constant window (content

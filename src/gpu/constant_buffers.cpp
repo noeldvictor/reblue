@@ -46,6 +46,7 @@
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 REXCVAR_DECLARE(bool, bd_record_mask);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
+REXCVAR_DECLARE(bool, bd_record_mask_high);
 
 REXCVAR_DECLARE(bool, bd_stereo);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -678,7 +679,8 @@ const InstanceRecord *StagedInstanceRecord(u32 index) {
   return index < s.staged.size() ? &s.staged[index] : nullptr;
 }
 
-u32 CommitInstanceRecords(const u32 *staged, u32 n) {
+u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask,
+                          bool allow_mask_low) {
   auto &s = upload_state();
   if (!s.instances.mapped || n == 0)
     return ~0u;
@@ -700,7 +702,7 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
   // differs, so the shader loads only those from the record.
   // bd_record_mask_mode 2: the window is rebound but the masks stay all
   // ones (diagnostic, 2026-09-03).
-  const bool masked = REXCVAR_GET(bd_record_mask) &&
+  const bool masked = allow_mask && REXCVAR_GET(bd_record_mask) &&
                       REXCVAR_GET(bd_record_mask_mode) != 2 &&
                       staged[0] < s.staged.size();
   const float *base = masked ? s.staged[staged[0]].regs : nullptr;
@@ -730,6 +732,21 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n) {
         }
         mask[w] = bits;
       }
+      // Mode 9 (diagnostic): the low registers always from the record.
+      if (!allow_mask_low)
+        mask[0] = mask[1] = 0xFFFFFFFFu;
+      // The high registers (c64 up: the bone range and above) always from
+      // the record. With them masked, a drawIndexedIndirect batch rendered
+      // some of its draws in the clear colour and shifted others, while the
+      // same records through drawIndexedInstanced with the same window and
+      // masks rendered right; forcing c0-c63 from the record did not help
+      // and forcing c64+ did (the mode runs of 2026-09-03, desktop NVIDIA).
+      // The mechanism - a dynamically indexed uniform read under an
+      // indirect draw - is not named; bd_record_mask_high reinstates the
+      // masks there for the next look.
+      if (!REXCVAR_GET(bd_record_mask_high))
+        for (u32 w = 2; w < 8; ++w)
+          mask[w] = 0xFFFFFFFFu;
     }
     // The ring is write-combined: one contiguous write, no read back.
     std::memcpy(dst[i].regs, r.regs, sizeof(r.regs));

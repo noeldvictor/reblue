@@ -163,3 +163,34 @@ Corrections to the section above: "the cyan skirt is the instance-record mask" i
 `bd_record_mask` is on again. The record-mask split modes and the `[records]` group dump stay
 as diagnostics; the group dump showed groups whose members' blocks are identical (the same mesh
 at the same transform, two to twelve times), which is a separate question for the queue.
+
+## Addendum (23:30): three artefacts, two fixed, the patch still open
+
+The evening's sequence runs separated what the eye read as one flicker:
+
+1. **Whole-frame flashes** of the clear colour, 6-58 consecutive frames, with every draw of a
+   normal frame in the ledger: `CopySurfaceToTextureLocked` recorded the resolve copy without
+   flushing the deferred draw queue, so a frame whose scene draws were all still queued at the
+   guest's Resolve copied the cleared target. Fixed (a `DrawQueueFlushAt` before the copy);
+   zero uniform frames in 960 since.
+2. **A one-frame change every sixteen frames** (`bd_host_draw_refresh`), which the user saw as
+   flicker at the rock's edges and the top of the screen: the ledger's shadow-view diff around a
+   refresh frame showed one visual's render-list entry present only in the refresh frame and
+   every later entry one slot earlier. The DrawSingle hook built a replayed node's list entries
+   only when its draw replay had been refused, so a node with both direct draws and a list part
+   lost the list part on every replayed frame (the ground light at the rock). Fixed: both parts
+   replay together (`HostDrawHasDrawTemplate`, `HostListBuildStatus`) or the whole node
+   interprets and both are captured; neighbour jumps over 5 went from 7-12 per 240 frames to 2.
+3. **The flat cyan polygon at the rock's base** is still open. What is established by
+   within-run A/Bs: it needs the host replay (38 of 120 against 2); it appears on both arms of
+   `bd_draw_indirect` (44 against 75); the record-mask and list-draw A/Bs happened to land in
+   runs without it. What was believed and is withdrawn: the single-run "mode" verdicts
+   (indirect, mask, mask high) - the artefact is present in about half the runs and, when
+   present, in about half the frames, so a single 240-frame run reading zero means nothing.
+   The composition verifier sees no difference, the ledger sees the same draws with paths
+   swapped, and RenderDoc never captures a frame with it (three ten-frame captures). The next
+   instrument is a draw-id render so a plain capture names the draw that paints it.
+
+`bd_record_mask_high` (default off) keeps registers c64 and up in the record, which one run
+read clean and which costs nothing measured on the desktop; it goes back on with the Quest
+measurement if the patch is named elsewhere.
