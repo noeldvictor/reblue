@@ -137,7 +137,13 @@ verifier: reclassifying them as moving costs ps c4 wrong on 44,924 draws, and sk
 drift check for per-sub-draw registers costs 5,718, against a baseline of 1,351. The check
 is spurious *and* load-bearing - it also catches genuine material animation the 16-frame
 refresh would let sit stale. The host has to know where a sub-draw's material comes from
-instead of watching the interpreter set it, which is the cook.
+instead of watching the interpreter set it, which is the cook. **Where it comes from is
+settled by search, not guesswork (16:40)**: the value a node's own run captured is in
+neither the render-list entry nor the visual (both scanned to 8 KB), which leaves the mesh's
+own token stream - what `bdSceneNodeDrawSingle` walks for stream, declaration, index buffer,
+texture, shader and material-colour selection. A fixed asset, so it is cookable: decoded
+once per mesh it gives the host a record to compose c3 and c4 from, with no interpreter and
+nothing to drift. Every drifting draw is a render-list draw.
 `research/20260904_1500_the-per-object-material-constants.md`.
 
 **HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**
