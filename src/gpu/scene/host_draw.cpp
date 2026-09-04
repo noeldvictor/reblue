@@ -1309,13 +1309,19 @@ void HostDrawCommit(const NodeTag &tag) {
               interesting = true;
           if (!interesting)
             continue;
-          const u32 bases[3] = {tag.mesh_va,
+          const u32 bases[5] = {tag.visual_va,
+                                tag.mesh_va,
                                 bd::mem::try_load<u32>(tag.mesh_va),
-                                bd::mem::try_load<u32>(tag.mesh_va + 0x10)};
-          const char *names[3] = {"mesh", "mesh[0]", "mesh+0x10 ptr"};
+                                bd::mem::try_load<u32>(tag.mesh_va + 0x10),
+                                tag.ctx_va};
+          const char *names[5] = {"visual", "mesh", "mesh[0]", "mesh+0x10 ptr",
+                                  "ctx"};
           std::string found;
-          for (u32 bi = 0; bi < 3 && found.empty(); ++bi) {
-            const u32 b0 = bi ? __builtin_bswap32(bases[bi]) : bases[bi];
+          for (u32 bi = 0; bi < 5 && found.empty(); ++bi) {
+            // bases 2 and 3 are guest pointers read big-endian; the rest are
+            // host-side addresses already.
+            const u32 b0 = (bi == 2 || bi == 3) ? __builtin_bswap32(bases[bi])
+                                                : bases[bi];
             if (!b0)
               continue;
             for (u32 off = 0; off + 16 <= 4096 && found.empty(); off += 4) {
@@ -1331,11 +1337,25 @@ void HostDrawCommit(const NodeTag &tag) {
                 found = fmt::format(" FOUND at {}+{}", names[bi], off);
             }
           }
+          // Read out of the interpreter (reblue_recomp.40.cpp): it loads the
+          // material float4 from r23 + 4932 + 108, where r23 is ctx[0], the
+          // visual. So visual + 5040 should hold this sub-draw's colour.
+          float vm[4] = {};
+          for (u32 i = 0; i < 4; ++i) {
+            const u32 w = bd::mem::try_load<u32>(tag.visual_va + 5040 + i * 4);
+            const u32 sw = __builtin_bswap32(w);
+            std::memcpy(&vm[i], &sw, 4);
+          }
           ++shown;
-          BD_INFO("[material] tree ps c{} ({:.3f} {:.3f} {:.3f} {:.3f}) mesh "
-                  "{:08x}:{}",
-                  r.reg, want[0], want[1], want[2], want[3], tag.mesh_va,
-                  found.empty() ? " not found" : found);
+          BD_INFO("[material] tree ps c{} ({:.3f} {:.3f} {:.3f} {:.3f}) "
+                  "visual+5040 ({:.3f} {:.3f} {:.3f} {:.3f}){}{}",
+                  r.reg, want[0], want[1], want[2], want[3], vm[0], vm[1],
+                  vm[2], vm[3],
+                  (std::fabs(vm[0] - want[0]) < 1e-5f &&
+                   std::fabs(vm[1] - want[1]) < 1e-5f)
+                      ? "  <== MATCH"
+                      : "",
+                  found.empty() ? "" : found);
         }
       }
     }

@@ -231,6 +231,27 @@ the staleness the whole problem started with. The cook has to do the decode the 
 does, from the token stream to the colour, and the remaining unknown is one hop: what writes
 `r1 + 336`/`+340` upstream.
 
+## The elimination is complete (18:40)
+
+The interpreter loads the material float4 from `r23 + 4932 + 108`, and `r23` is `ctx[0]`,
+which `guest_scene.h` documents as the visual. That predicts `visual + 5040`. It reads zero,
+and a search of every structure reachable from a tree draw - **visual, mesh, the object the
+mesh's first word points at, the record table at mesh + 0x10, and the traverse context, all
+to 16 KB** - finds the captured colour in none of them.
+
+Two readings survive, and they are worth stating so the next attempt starts in the right
+place:
+
+1. The load I traced is **one branch of several**. Immediately above it is
+   `compare(r3, 3)`, which looks like a material-type switch, so the draws sampled here are
+   probably served by a different branch with a different base.
+2. The colour may be **computed rather than stored** - blended from a token and a
+   modulator - in which case there is no address to read at all and the cook must reproduce
+   the arithmetic.
+
+Either way the answer is in the interpreter's material branches, not in memory, and no
+further searching will help: everything a draw can reach has now been scanned.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
