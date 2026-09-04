@@ -658,7 +658,19 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    the record-mask modes. The lesson, in memory too: an artefact present in only some
    runs makes every single-run verdict noise; only within-run comparisons count, and the
    mechanism has to be named.
-7. **Assets** (stage 3), then animation and foveation.
+7. **Assets** (stage 3), then animation and foveation. **The geometry census that aims the
+   cook (2026-09-04 04:00, `research/20260904_0400_geometry-census-of-a-field-frame.md`)**:
+   a field frame rasterises 210k triangles - scene 79k in 321 draws, shadow map 81k in 338,
+   reflection 49k in 127 - so the world's geometry goes through the GPU 2.6 times before
+   any LOD. In the scene view 63% of the triangles (50k in 192 draws) are beyond the
+   350-unit cull distance, from visuals whose sphere crosses it and from the render list,
+   which the host does not cull. Every top visual is a blended depth-writer under
+   `bd_normal_ps`; the single largest item is one mesh drawn 44 times at one distance
+   (15k triangles) whose draws the queue does not merge - naming what differs in their
+   shared block is the first cook question. Order for the cook: far LODs for the tree-walk
+   visuals beyond ~350, the coarsest LOD for shadow casters, a coarse LOD for the
+   reflection view, merged buffers for the 29-mesh ground visuals. The ledger line now
+   carries each draw's view distance for this.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 
