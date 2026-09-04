@@ -934,6 +934,9 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
 // the order. This is bd_draw_instancing_reorder_blended's replacement: that
 // one moved blended draws freely and put the clear colour through the ground
 // at the village rock (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_pool_census, false, kCvarGroup,
+                    "Log the surfaces the guest still acquires from the pool, "
+                    "by shape, every 300 frames.");
 REXCVAR_DEFINE_BOOL(bd_draw_gather_blended, true, kCvarGroup,
                     "Blended draws may join an instancing group across draws "
                     "they provably do not overlap.");

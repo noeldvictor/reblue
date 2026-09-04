@@ -7,11 +7,15 @@
  */
 #include "gpu/surface_pool.h"
 
+#include "gpu/frame_stats.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <mutex>
+#include <fmt/format.h>
+#include <string>
 #include <rex/types.h>
 #include <unordered_map>
 #include <unordered_set>
@@ -29,6 +33,7 @@
 #include "gpu/output.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
+REXCVAR_DECLARE(bool, bd_pool_census);
 REXCVAR_DECLARE(bool, bd_mv_small_targets_mono);
 REXCVAR_DECLARE(bool, bd_mv_force_mono_targets);
 REXCVAR_DECLARE(bool, bd_mv_redirect_srv);
@@ -664,6 +669,42 @@ GuestTexture *CreateFresh(u32 width, u32 height, u32 guest_format,
 
 GuestTexture *SurfacePool::Acquire(u32 width, u32 height, u32 guest_format,
                                    u32 sample_count) {
+  // What the guest still asks the pool for, by shape: the census that says
+  // which surfaces are left to host-own (gpu/host_targets.h). Prints the
+  // acquires a frame per (size, format, samples) every 300 frames.
+  if (REXCVAR_GET(bd_pool_census)) {
+    struct Row {
+      u32 w, h, fmt, samples, count;
+    };
+    static std::mutex m;
+    static std::vector<Row> rows;
+    static u32 frames_at = 0;
+    std::lock_guard<std::mutex> lk(m);
+    bool found = false;
+    for (Row &r : rows)
+      if (r.w == width && r.h == height && r.fmt == guest_format &&
+          r.samples == sample_count) {
+        ++r.count;
+        found = true;
+        break;
+      }
+    if (!found)
+      rows.push_back({width, height, guest_format, sample_count, 1});
+    const u32 frame = FrameStatFrameCount();
+    if (frame / 300 != frames_at / 300) {
+      const double n = std::max(1u, frame - frames_at);
+      frames_at = frame;
+      std::sort(rows.begin(), rows.end(),
+                [](const Row &a, const Row &b) { return a.count > b.count; });
+      std::string line;
+      for (size_t i = 0; i < rows.size() && i < 12; ++i)
+        line += fmt::format(" {}x{} fmt 0x{:X} s{} x{:.1f}", rows[i].w,
+                            rows[i].h, rows[i].fmt, rows[i].samples,
+                            rows[i].count / n);
+      BD_INFO("[pool] acquires a frame over {} shapes:{}", rows.size(), line);
+      rows.clear();
+    }
+  }
   const plume::RenderFormat plume_format = ConvertGuestFormat(guest_format);
   const bool is_depth = IsDepthFormat(plume_format);
   const u64 key = MakeKey(width, height, static_cast<u32>(plume_format),
