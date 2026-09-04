@@ -539,9 +539,17 @@ REXCVAR_DEFINE_BOOL(bd_walk_skip_stubs, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_walk, true, kCvarGroup,
                     "Walk the scene tree on the host instead of in the guest.");
 
-REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder_blended, true, kCvarGroup,
+// Off since 2026-09-04: the village rock's flat patch of clear colour was
+// this reorder. The ground pieces are blended depth-writers, a transparent
+// skirt piece moved ahead of its ground piece leaves the ground failing the
+// depth test where the two overlap, and which frames it happens in follows
+// the group keys, which follow which node the host interpreted that frame.
+// A within-run A/B read 40 patch frames of 120 with it on against 4 (the arm
+// boundaries) with it off. Blended depth-writers still instance when they
+// are consecutive; the Quest cost of losing their reorder is unmeasured.
+REXCVAR_DEFINE_BOOL(bd_draw_instancing_reorder_blended, false, kCvarGroup,
                     "Let blended depth-writing draws be reordered for "
-                    "instancing (approximate where they overlap).");
+                    "instancing (wrong where they overlap).");
 
 // Side-by-side stereo: emit every left-eye draw, then every right-eye draw,
 // instead of alternating the viewport on every draw. Image-identical; removes

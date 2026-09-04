@@ -620,48 +620,40 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    1024 map on the Quest gains that in texel density where the camera looks; shadows
    beyond the reach are gone (the guest's own box ends at ~1024 units). The guest's
    constant setter was the wrong seam for this: the shadow pass is host-replayed and never
-   calls it. **The village-rock patch, state at 2026-09-03 23:30**
-   (`research/20260903_1900_...md` and its addenda): three separate things were being
-   read as one. (a) **Whole-frame flashes of the clear colour** (six to fifty frames at a
-   time): `CopySurfaceToTextureLocked` recorded the resolve copy without flushing the
-   deferred draw queue, so the guest's end-of-pass Resolve copied the scene before its
-   queued draws landed - fixed, zero uniform frames in 960 since. (b) **A one-frame
-   change every sixteen frames** (the template refresh cadence, seen as edge flicker):
-   a node with both direct draws and render-list entries lost its list part on every
-   replayed frame, because the hook built the list only when the draw replay was
-   refused - fixed, both parts replay together or the node interprets; the ground
-   light at the rock no longer comes and goes. Also fixed on the way, each named by
-   the replay verifier: the reflection view's eye register composed from the live
-   block (VS/PS c0-c1 now per pass), stale templates after a resolution change
-   (`why_drift`), the render-list loop's visual switch skipped by a replayed entry
-   (`r23` gate), bools taken live. (c) **The flat cyan polygon at the rock's base**,
-   still open: it needs the host replay (the only solid A/B, 38 of 120 frames against
-   2), it is independent of instancing, pulling, indirect draws and the record mask
-   (within-run A/Bs show it on both arms; the single-run "mode" verdicts of the
-   evening were noise - the artefact is present in about half the runs and in half
-   the frames when present, so only within-run A/Bs count), the replay verifier sees
-   no difference in what is composed, the draw ledger sees the same draws with paths
-   swapped, and RenderDoc never captures a frame with it. **Later the same night
-   (01:30)**: the draw bisector (`bd_debug_bisect_windows`: the queue drops a window of
-   each frame's draws, moving every N frames) reproduces the patch exactly by dropping
-   draws 480-540 of the frame, which are the ground pieces of two visuals drawn as ~30
-   blended lit sub-draws each - so the patch is those pieces failing to rasterise, not a
-   draw painting cyan. The ledger shows the pieces drawn identically in patch and clean
-   frames (66 draws, 53 interpreted, 13 replayed, 29 meshes, no piece's path tracks the
-   patch), so the interpreted pieces fail too; the sampled verifier
-   (`bd_host_draw_verify_every`, a normal run verifying every Nth replay) found and
-   fixed three real composition gaps on the way (PS bools bits 0/3 set by the node's
-   run and bit 5 set by a store the setter hooks never see, both now diffed against a
-   snapshot like the float block; the pass camera stays c0-c1) and then reports nothing
-   for those pieces in bad runs. What is left to look at: a depth-only write over the
-   region (the composite's depth view, `bd_host_post_debug_depth` alternated with
-   colour by `bd_ab_flag`, in a bad run - three attempts landed in good runs), and the
-   inherited state an *interpreted* node takes from the guest device after replays.
-   Only within-run comparisons count: the artefact is present in about half the runs.
-   Kept: `bd_record_mask_high` (off: registers c64+ always from the record),
-   `bd_record_mask_mode`, the `[records]` group dump, the sequence metrics in the
-   session scratchpad (`seqstats.py`), the stream re-resolution of replayed draws
-   (the plume buffer behind a physical block moves; `[node] ... re-resolved` counts).
+   calls it. **The village-rock patch is fixed (2026-09-04 02:30)**, and the two
+   artefacts that were read together with it earlier: see
+   `research/20260903_1900_...md` for the whole trail. (a) Whole-frame flashes of the
+   clear colour: `CopySurfaceToTextureLocked` copied the scene before its queued draws
+   landed; a queue flush before every surface copy. (b) A one-frame change every sixteen
+   frames: a node with direct draws and render-list entries lost its list part on every
+   replayed frame; both parts replay together or the node interprets. (c) **The flat
+   patch: the draw queue's reorder of blended depth-writing draws for instancing**
+   (`bd_draw_instancing_reorder_blended`, now off). The ground pieces at the rock are
+   blended depth-writers drawn as ~30 sub-draws a visual; a transparent skirt piece
+   moved ahead of its ground piece leaves the ground failing the depth test where they
+   overlap, so the clear colour shows in the skirt's shape. It came and went with the
+   group keys, which follow which node the host interpreted that frame, which is why it
+   looked like the replay's and lived in about half the runs. Named by the draw
+   bisector (dropping draws 480-540 of a frame reproduced it exactly: the ground pieces
+   not rasterising), the ledger (the pieces drawn identically in patch and clean frames,
+   so not their composition), and a within-run A/B of the reorder: 40 patch frames of 120
+   on against 4 off; three 240-frame sequences since read 0. **Cost**: with blended
+   draws kept in order the desktop scene forms no instancing group at all (261 draws in,
+   261 issued; indirect calls 92 -> 155), so the Quest's -8 ms from instancing plus
+   reorder is partly this reorder; it can return for blended draws the host knows do not
+   overlap, which stage 3 (meshes as host assets) makes knowable. Fixed on the way and
+   worth keeping: the reflection view's eye register composed from the live block (VS/PS
+   c0-c1 per pass), stale templates after a resolution change, the render-list loop's
+   visual switch skipped by a replayed entry (the `r23` gate), the bool constants
+   composed from what the node's run set (the bool setter hooks record it and the bools
+   are diffed against a snapshot) with the rest from the visual's interpreted node,
+   replayed streams re-resolved from guest addresses. Instruments that stay: the replay
+   verifier (`bd_host_draw_verify`, and `bd_host_draw_verify_every` for a normal run),
+   the draw bisector (`bd_debug_bisect_windows`), `tools/rdc_pixel_history.py`,
+   `bd_renderdoc_frames`, the ledger's per-draw fingerprints, `bd_host_post_debug_depth`,
+   the record-mask modes. The lesson, in memory too: an artefact present in only some
+   runs makes every single-run verdict noise; only within-run comparisons count, and the
+   mechanism has to be named.
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.

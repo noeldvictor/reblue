@@ -222,3 +222,27 @@ Also on the way: replayed draws re-resolve their streams from the guest addresse
 (`VideoState::vertex_stream_va`, `SubDraw::stream_va`), because the plume buffer behind a
 physical block is evicted at `bdSceneGraphDestroy` and replaced by the refresh path; the
 `[node]` line counts moved buffers (none seen yet in the rock scene) and refusals.
+
+## Addendum (02:30): named - the queue's reorder of blended depth-writers
+
+In the bad run kept for analysis, every ground piece that is ever replayed was replayed in
+all 95 patch frames and in 130 of the 145 clean frames, and interpreted only in 15 clean
+frames: the patch never occurs on a refresh frame and occurs in about 42% of the replayed
+frames, with the composition identical. What changes between replayed frames without
+changing any draw's composition is the queue's order: `bd_draw_instancing_reorder` sorts runs
+of reorderable draws by pipeline, batch key, group key and sequence, and the keys depend on
+which node the host interpreted that frame. The ground pieces are blended draws that write
+depth, which `bd_draw_instancing_reorder_blended` (on since 2026-09-02, "approximate where
+they overlap") made reorderable. A transparent skirt piece sorted ahead of its ground piece
+writes the depth first; the ground piece then fails the depth test where the two overlap and
+the skirt's shape shows the clear colour. Within-run A/B of the flag: 40 patch frames of 120
+with it on, 4 with it off (the arm boundaries). Off by default now; three 240-frame sequences
+read 0. The desktop scene then forms no instancing group (261 in, 261 issued) and the indirect
+calls go 92 -> 155: the reorder can return for blended draws the host knows do not overlap.
+
+This closes the trail that began at 17:10 with "the game's own streaming". The order of
+findings: streaming (wrong), the replay's composition (verified equal, after four real fixes
+it uncovered), the record mask (single-run noise), the buffers behind streams (hardened, not
+it), the bool constants (two real fixes, not it), and the queue's order (it). Three
+instruments made the difference: the within-run A/B, the draw bisector, and the ledger's
+per-frame paths.
