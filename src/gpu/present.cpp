@@ -430,6 +430,24 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // carry the 2D layout with it.
   Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
                      off_y);
+  {
+    // What the present actually samples from and into. Written down because
+    // the source's size and the rect it lands in are the two numbers that say
+    // whether any rendered pixel is discarded here (2026-09-04).
+    static bool told = false;
+    static bool told_layered = false;
+    if (!told || (layered_present && !told_layered)) {
+      told = true;
+      told_layered = told_layered || layered_present;
+      BD_INFO("[present] source {}x{} layers {} -> back {}x{}, rect {}x{}+{},{}"
+              " (aspect {:.3f}); {:.2f} source pixels a destination pixel",
+              rt->width, rt->height, rt->layers, swap_w, swap_h, fit_w, fit_h,
+              off_x, off_y, present_aspect,
+              (fit_w && fit_h)
+                  ? double(rt->width) * rt->height / (double(fit_w) * fit_h)
+                  : 0.0);
+    }
+  }
   if (fit_w != swap_w || fit_h != swap_h) {
     // Clear the whole back buffer so the uncovered edges show as black bars.
     s.command_list->clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 1.0f));

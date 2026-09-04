@@ -124,6 +124,22 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**
+Measured under xrsim, not derived: `[present] source 960x1080 layers 2 -> back 960x1080,
+rect 960x536+0,272; 2.01 source pixels a destination pixel`. `Output::LatchedFit` halves
+only the *width* under `bd_mv_half_width` while `RenderAspect` keeps the full width, so the
+guest draws 1.778-shaped content into a 0.889-shaped target - the anamorphic squeeze
+side-by-side's half-width viewports carry - and the present's aspect fit un-squeezes it into
+960x536, discarding the vertical factor of two. The squeeze earns its keep when two eyes
+pack into one panel; on the layered path each array layer *is* an eye, so it buys nothing
+and costs half the shading. Same arithmetic on a Quest: 1376x720 fitted, halved to 688x720,
+presented into 688x360. Side-by-side reads 1.00 at the present pass, so this is multiview's
+alone. **Not fixable in the present pass** - removing the fit there stretches the frame 2:1
+(tried and reverted, 2026-09-04). The fix is the size the guest is told to render at, and
+every version of it changes what the player sees, so it is the owner's call:
+`research/20260904_1330_half-the-multiview-frame-...md` lists the three.
+
+
 **THE SCENE PASS IS BOUND BY FRAGMENTS x TEXTURE FETCHES (2026-09-03, 09:50).** Nine device
 runs, `research/20260903_0950_device-qualification-...md`. The head build qualified:
 host-built render list live (63 entries in 39 runs a frame, matrix check 5,397 ok / 0 off),
