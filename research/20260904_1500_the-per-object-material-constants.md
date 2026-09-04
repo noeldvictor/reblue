@@ -325,7 +325,35 @@ base; the switch only chooses whether the modulator is applied.
 That is the formula the cook needs, and both operands are addressable - one in the visual,
 one in a global.
 
-### The loose end, stated rather than buried
+### Resolved (20:10): these draws take the other branch
+
+The probe was moved into the `bdSceneNodeDrawSingle` hook, before the interpreter is
+entered, and made to dump the whole window `visual + 5024 .. 5072`. **Every word is zero**,
+for several different visuals, before anything has run. So `visual + 5040` is not the base
+for these draws and the field is not transient - the offset is simply not where their
+material comes from.
+
+Reading the branch structure again with that in hand:
+
+```
+cmpwi cr6, r9, 0
+beq   loc_822807E4        ; skip the virtual call AND the base load
+...                       ; the traced path: bctrl, addi r11,r23,4932, lfs f11,108(r11)
+loc_822807E4:
+  lfs f13, 344(r1)        ; reload the base from the stack instead
+  lfs f12, 340(r1)
+  lfs f11, 336(r1)
+```
+
+So the load from `visual + 5040` is *conditional*, and the draws sampled here take the other
+side: they reuse whatever is already in the stack slots. The only writer of those slots
+inside the interpreter is the path that was skipped, so the values must come from a callee
+that was handed `r1` - which is where the trail now leads.
+
+The formula stands - a base times a per-component modulator from the staging struct - and so
+does the modulator's address. What is not known is where *this* branch's base originates.
+
+### The loose end that produced this
 
 A probe reading `visual + 5040` at capture time returns `(0, 0, 0, 0)`, while the constant
 the same draw produced is `(0.498, 0.498, 0.498, 1.0)`. Zero times anything is zero, so the

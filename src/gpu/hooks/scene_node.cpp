@@ -55,6 +55,7 @@ extern "C" void __imp__bdSceneNodeDrawSingle(PPCContext &__restrict ctx,
                                              uint8_t *base);
 
 REXCVAR_DECLARE(bool, bd_node_write_diag);
+REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(bool, bd_draw_ledger);
 
 namespace {
@@ -119,6 +120,30 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     BD_INFO("[node] host bdSceneNodeDrawSingle is live - the override links");
   if (n == 200000)
     BD_INFO("[node] host bdSceneNodeDrawSingle has run {} times", n);
+
+  // The material base, read before the interpreter runs. The PowerPC says it
+  // loads `lfs f11,108(r11)` with `r11 = r23 + 4932` and `r23 = ctx[0]`, the
+  // visual - so visual + 5040. A probe at capture time read zeros there while
+  // the constant the draw produced was non-zero, and this says whether the
+  // field is transient or the offset is wrong (2026-09-04).
+  if (REXCVAR_GET(bd_material_source)) {
+    static u32 shown = 0;
+    if (shown < 4) {
+      const u32 visual = bd::mem::try_load<u32>(ctx.r6.u32);
+      if (visual) {
+        std::string win;
+        for (u32 off = 5024; off <= 5072; off += 4) {
+          const u32 w = bd::mem::try_load<u32>(visual + off);
+          float f;
+          std::memcpy(&f, &w, 4);
+          win += fmt::format(" +{}={:.3f}", off, f);
+        }
+        ++shown;
+        BD_INFO("[material] before the interpreter, visual {:08x}:{}", visual,
+                win);
+      }
+    }
+  }
 
   // Identity for the draws this call is about to issue (gpu/scene/node_tag.h):
   // the four arguments - mesh, node index, the node's palette slot, the
