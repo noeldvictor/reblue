@@ -63,6 +63,9 @@ u64 KeyOf(const MeshLodRequest &r) {
   h = Mix(h, (u64(u32(r.base_vertex)) << 32) | r.stream_offset);
   h = Mix(h, (u64(r.stride) << 32) | r.position_offset);
   h = Mix(h, (u64(r.position_type) << 32) | r.grid);
+  u32 cell_bits;
+  std::memcpy(&cell_bits, &r.cell, 4);
+  h = Mix(h, cell_bits);
   h = Mix(h, u64(r.primitive_type) | (u64(r.index_format) << 8));
   return h;
 }
@@ -219,7 +222,8 @@ std::vector<u32> Cluster(const std::vector<u32> &tris, const std::vector<float> 
 u32 g_reason[40];
 #define REFUSE(n) do { ++g_reason[n]; return false; } while (0)
 bool Build(const MeshLodRequest &r, Entry &e, u64 &tris_in, u64 &tris_out) {
-  if (!r.device || !r.count || !r.stride || !r.grid || r.grid > 256)
+  if (!r.device || !r.count || !r.stride || (!r.grid && !(r.cell > 0.0f)) ||
+      r.grid > 256)
     REFUSE(1);
   const bool idx32 = r.index_format == plume::RenderFormat::R32_UINT;
   const u32 isz = idx32 ? 4 : 2;
@@ -340,21 +344,29 @@ bool Build(const MeshLodRequest &r, Entry &e, u64 &tris_in, u64 &tris_out) {
   // goes with it (a fence's shadow became a sliver at grid 24, 2026-09-04):
   // the list must keep most of the mesh's surface, and a grid that does
   // not is refined until one does or the saving is gone.
-  for (u32 grid = r.grid; grid <= 256; grid *= 2) {
+  u32 grid0 = r.grid;
+  if (r.cell > 0.0f) {
+    const float g = ext / r.cell;
+    grid0 = g < 2.0f ? 2u : g > 256.0f ? 256u : u32(g + 0.5f);
+  }
+  u32 why = 11; // 11 saves too little, 12 the area guard at every grid
+  for (u32 grid = grid0; grid <= 256; grid *= 2) {
     out = Cluster(tris, pos, seen, max_index, mn, ext, grid);
     const u32 out_tris = u32(out.size() / 3);
     if (out_tris == 0 || out_tris * 5 > ntri * 4) {
       out.clear();
+      why = 11;
       break; // saves too little already; finer saves less
     }
     if (area_in <= 0.0 || area_of(out) >= 0.8 * area_in)
       break;
+    why = 12;
     out.clear();
   }
   const u32 out_tris = u32(out.size() / 3);
   tris_out = out_tris;
   if (out_tris == 0)
-    REFUSE(11);
+    REFUSE(why);
 
   const u32 bytes = u32(out.size()) * isz;
   auto buffer = r.device->createBuffer(

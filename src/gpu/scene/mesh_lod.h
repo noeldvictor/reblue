@@ -50,8 +50,11 @@ struct MeshLodRequest {
   u32 stride = 0;
   u32 position_offset = 0; // within the vertex
   u32 position_type = 0;   // D3DDeclType
-  // Cells across the mesh's longest axis.
+  // Cells across the mesh's longest axis; or, when cell > 0, the cell's size
+  // in mesh units (the grid follows from the mesh's extent - the scene LOD
+  // wants a cell of a few pixels at the node's distance, whatever the mesh).
   u32 grid = 0;
+  float cell = 0.0f;
 };
 
 struct MeshLodResult {

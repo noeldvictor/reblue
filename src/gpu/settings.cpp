@@ -923,10 +923,15 @@ REXCVAR_DEFINE_DOUBLE(bd_lod_scene_distance, 300.0, kCvarGroup,
                       "Scene nodes beyond this distance draw a clustered list "
                       "(0 = off).")
     .range(0.0, 100000.0);
-REXCVAR_DEFINE_INT32(bd_lod_scene_grid, 32, kCvarGroup,
-                     "Grid for scene nodes past bd_lod_scene_distance; halved "
-                     "past twice the distance.")
-    .range(4, 256);
+// The cell as a fraction of the node's distance: 0.004 is about four pixels
+// at 1080p with the game's vertical field of view; the grid follows from the
+// mesh's extent, so a small far hut and a large near rock get cells of the
+// same size on screen. Distances are quantised to half-octaves so a mesh
+// holds a handful of lists.
+REXCVAR_DEFINE_DOUBLE(bd_lod_scene_cell, 0.004, kCvarGroup,
+                      "Scene LOD cell size as a fraction of the node's view "
+                      "distance (pixels on screen, roughly x1000 / 1080p).")
+    .range(0.0001, 1.0);
 REXCVAR_DEFINE_INT32(bd_lod_reflection_grid, 16, kCvarGroup,
                    "Reflection-view meshes draw a vertex-clustered list at "
                    "this grid (0 = full detail).")

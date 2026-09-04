@@ -79,7 +79,7 @@ REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
-REXCVAR_DECLARE(i32, bd_lod_scene_grid);
+REXCVAR_DECLARE(f64, bd_lod_scene_cell);
 
 namespace bd::gpu::scene {
 
@@ -1590,6 +1590,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   // The shadow and reflection views draw coarse lists over the same
   // vertices (mesh_lod.h). Not under the verifier: it compares against the
   // interpreter's own draw.
+  float lod_cell = 0.0f; // the scene view: a cell of a few pixels at distance
   i32 lod_grid = (verify_requested || !REXCVAR_GET(bd_lod)) ? 0
                        : tag.render_view == 1 ? REXCVAR_GET(bd_lod_shadow_grid)
                        : tag.render_view == 0 ? REXCVAR_GET(bd_lod_reflection_grid)
@@ -1632,16 +1633,28 @@ bool HostDrawReplay(const NodeTag &tag) {
     // terrain piece's matrix is identity and its translation says nothing).
     // Render-list entries have no published distance yet and skinned nodes
     // keep full detail (a character's silhouette is the point of it).
-    if (lod_grid == 0 && tag.render_view == 3 && !tag.from_list &&
-        t->bone_slots.empty() && REXCVAR_GET(bd_lod) && !verify_requested &&
+    if (lod_grid == 0 && tag.render_view == 3 && t->bone_slots.empty() &&
+        REXCVAR_GET(bd_lod) && !verify_requested &&
         REXCVAR_GET(bd_lod_scene_distance) > 0.0) {
-      const float dist =
-          std::sqrt(float(bd::engine::LastNodeViewDistanceSq()));
+      // A render-list entry carries the depth the guest sorts the list by
+      // (sub_8227F290 compares entry+276); the entry lies 16 bytes before
+      // its inline world matrix, which the tag points at.
+      float dist = 0.0f;
+      if (tag.from_list) {
+        const u32 bits = bd::mem::try_load<u32>(tag.matrix_va - 16 + 276);
+        float key;
+        std::memcpy(&key, &bits, sizeof(key));
+        dist = std::isfinite(key) ? std::fabs(key) : 0.0f;
+      } else {
+        dist = std::sqrt(float(bd::engine::LastNodeViewDistanceSq()));
+      }
       const float d0 = float(REXCVAR_GET(bd_lod_scene_distance));
-      if (dist > 2.0f * d0)
-        lod_grid = std::max(4, REXCVAR_GET(bd_lod_scene_grid) / 2);
-      else if (dist > d0)
-        lod_grid = REXCVAR_GET(bd_lod_scene_grid);
+      if (dist > d0) {
+        // Half-octave bands of distance, so a mesh holds a few lists.
+        const float band = std::exp2(std::round(2.0f * std::log2(dist)) * 0.5f);
+        lod_cell = band * float(REXCVAR_GET(bd_lod_scene_cell));
+        lod_grid = 1; // marks the request; the cell decides the grid
+      }
     }
   }
 
@@ -1817,7 +1830,8 @@ bool HostDrawReplay(const NodeTag &tag) {
           req.stride = d.input_slots[stream].stride;
           req.position_offset = u32(el.offset);
           req.position_type = u32(el.type);
-          req.grid = u32(lod_grid);
+          req.grid = lod_cell > 0.0f ? 0u : u32(lod_grid);
+          req.cell = lod_cell;
           MeshLodResult res;
           if (MeshLodFor(req, res)) {
             s.index_view = res.view;

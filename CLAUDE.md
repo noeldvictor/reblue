@@ -689,9 +689,16 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    reflection 37k -> 23k; a per-frame on/off capture pair differs only at the bushes
    and one-pixel shadow edges; desktop CPU and GPU flat within the run.
    **Scene view (07:30)**: `bd_lod_scene_distance` 300 / `bd_lod_scene_grid` 32 give
-   direct nodes past the distance the same lists (the walk's published view distance,
-   not the matrix translation - terrain matrices are identity); 79.5k -> 73.7k
-   triangles, render-list entries and skinned nodes stay full. **The overdraw, measured**:
+   nodes past the distance the same lists (the walk's published view distance for a
+   direct node, the entry's own sort key at +276 for a render-list entry - a view
+   distance in the same units; not the matrix translation, terrain matrices are
+   identity), the cell a fraction of the distance (`bd_lod_scene_cell`, four pixels);
+   79.5k -> 72.8k triangles, skinned nodes stay full. **That 8% is the ceiling here**:
+   the refused meshes are the far world itself, tens to hundreds of triangles over
+   hundreds of units, already coarser than a twelve-pixel cell (the same count at
+   0.012), and the few dense far meshes are thin geometry the area guard keeps.
+   Triangles are not the Quest's cost anyway; the lists earn their keep in the shadow
+   and reflection views. **The overdraw, measured**:
    the census keyed per visual and view (`[frag]` report) reads 3.2 fragments a pixel
    in the scene view; the `bd_debug_blend_off` + `bd_draw_sort` probe (everything
    opaque, front to back) takes it to 2.7, so hidden overdraw is a sixth of the cost;
