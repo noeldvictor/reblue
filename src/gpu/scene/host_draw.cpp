@@ -237,6 +237,10 @@ struct Store {
   // interpreter run (2026-09-04).
   // Distinct sub-draw material keys seen (bd_material_census): the cook's size.
   std::unordered_set<u64> material_keys;
+  // material identity (no constants) -> the distinct colour sets seen under it
+  std::unordered_map<u64, std::unordered_set<u64>> identity_colours;
+  u32 identity_ambiguous = 0;
+  size_t identity_total = 0;
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
@@ -758,8 +762,11 @@ void Tally(Store &st, bool replayed, bool from_list) {
         if (!top.empty())
           BD_INFO("[node] drift by register a frame:{}", top);
         if (!st.material_keys.empty())
-          BD_INFO("[material] {} distinct sub-draw materials seen so far",
-                  st.material_keys.size());
+          BD_INFO("[material] {} distinct sub-draw materials, {} distinct "
+                  "identities (shaders+state+textures, no constants), {} of "
+                  "them carrying more than one colour set",
+                  st.material_keys.size(), st.identity_total,
+                  st.identity_ambiguous);
         std::memset(st.drift_vs, 0, sizeof(st.drift_vs));
         std::memset(st.drift_ps, 0, sizeof(st.drift_ps));
       }
@@ -1348,12 +1355,27 @@ void HostDrawCommit(const NodeTag &tag) {
       for (u32 k = 0; k < 16; ++k)
         if (d.textures[k])
           mix(u64(d.tex_va[k]) ^ (u64(k) << 56));
-      // The pixel constants this material carries, value and register.
-      for (const RegDelta &r : d.ps_delta)
-        mix(XXH3_64bits(r.value, 16) ^ (u64(r.reg) << 32));
       // No lock: the capture path already holds st.mutex, and taking it again
       // on a non-recursive mutex deadlocked the app on the first frame.
+      //
+      // Two keys, deliberately. `h` so far is the material's *identity* - the
+      // shaders, the blend and depth state, the textures - with no constants
+      // in it. If that identity determines the material colours, the host can
+      // build its own table and stop asking the interpreter; if one identity
+      // carries several colour sets, it cannot. That is the question, and it
+      // is answerable from what the host already captures (2026-09-04).
+      const u64 identity = h;
+      u64 colours = 0x51DEull;
+      for (const RegDelta &r : d.ps_delta)
+        if (r.reg == 3 || r.reg == 4)
+          colours ^= XXH3_64bits(r.value, 16) + (u64(r.reg) << 40);
+      for (const RegDelta &r : d.ps_delta)
+        mix(XXH3_64bits(r.value, 16) ^ (u64(r.reg) << 32));
       st.material_keys.insert(h);
+      auto &set = st.identity_colours[identity];
+      if (set.insert(colours).second && set.size() > 1)
+        ++st.identity_ambiguous;
+      st.identity_total = st.identity_colours.size();
     }
   }
   t.captured_frame = frame;

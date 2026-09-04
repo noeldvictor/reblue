@@ -177,6 +177,24 @@ What is left to find is the table's base and how the token stream indexes it, an
 read of the interpreter's material selection rather than a search - every structure reachable
 from the draw has now been scanned and ruled out.
 
+## The shortcut is closed: identity does not determine the colours (17:40)
+
+Before decoding the guest's material table, the cheaper question: can the host build its own?
+If a material's *identity* - both shaders, the blend and depth state, the textures, with no
+constants in it - determined its colours, the host could key a table on that and stop asking
+the interpreter entirely.
+
+It does not. A village scene has **32 distinct identities, and 38 further colour sets
+carried under them** - so a majority of identities appear with more than one material
+colour. The same shader, state and textures are used with different diffuse and specular.
+
+That closes the shortcut by measurement rather than argument. The host cannot infer the
+material from anything it already captures; it has to read the guest's material table, which
+means decoding the interpreter's material selection. Together with the earlier negatives -
+not in the entry, not in the visual, not in the mesh, shared across meshes - the shape is
+fully pinned: a table of materials somewhere reachable only through the token stream, indexed
+per sub-draw, with 121 distinct entries behind 579 draws a frame.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
