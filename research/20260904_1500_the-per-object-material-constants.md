@@ -458,6 +458,26 @@ Left in, off, with the arithmetic recorded - it is the correct shape and becomes
 moment the modulator has a per-draw source. For a render-list draw that source is the entry,
 which is why `bd_material_from_entry` works and this does not.
 
+## What is left of the 61 refusals (22:00)
+
+With the entry-sourced materials and a 64-frame refresh, **519 of 580 node draws are the
+host's**. The 61 that remain break down, and each is a different problem:
+
+| refusal | a frame | what it is |
+| --- | --- | --- |
+| no template | 18 | **the same 18 nodes every frame** - measured, not assumed: 18 distinct keys over a 300-frame window against 18 refusals a frame. They never get a template at all, so the interpreter runs for them for ever |
+| fresh values | 18 | a moving register the visual has not published this frame |
+| drift | 15 | tree draws, blocked on a per-draw modulator source |
+| refresh | 4 | the 64-frame recapture, now nearly gone |
+| never | 1 | a vertex shader that reads the bone palette |
+
+The 18 permanently-uncaptured nodes are the most interesting because they are a fixed, small
+set that costs an interpreter run every frame for ever. A gate counter was added but cannot
+isolate them: a *replayed* node also reaches the capture with a valid tag and no snapshot, so
+the "invalid snapshot" bucket is dominated by the 519 draws that are working correctly
+(56,112 a window). Isolating them needs the count keyed by node, not totalled - that is the
+next instrument, and it is small.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.

@@ -239,10 +239,12 @@ struct Store {
   // interpreter run (2026-09-04).
   // Distinct sub-draw material keys seen (bd_material_census): the cook's size.
   std::unordered_set<u64> material_keys;
+  std::unordered_set<u64> none_keys; // distinct nodes that never had a template
   // material identity (no constants) -> the distinct colour sets seen under it
   std::unordered_map<u64, std::unordered_set<u64>> identity_colours;
   u32 identity_ambiguous = 0;
   size_t identity_total = 0;
+  u32 cap_invalid = 0, cap_not_replayable = 0;
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
@@ -763,6 +765,14 @@ void Tally(Store &st, bool replayed, bool from_list) {
         }
         if (!top.empty())
           BD_INFO("[node] drift by register a frame:{}", top);
+        BD_INFO("[node] no-template: {} distinct nodes over the window, {} "
+                "refusals a frame",
+                st.none_keys.size(), st.acc_none / std::max(1u, st.acc_frames));
+        BD_INFO("[node] capture gates a window: invalid snapshot {}, snapshot "
+                "not replayable {}",
+                st.cap_invalid, st.cap_not_replayable);
+        st.cap_invalid = st.cap_not_replayable = 0;
+        st.none_keys.clear();
         if (!st.material_keys.empty())
           BD_INFO("[material] {} distinct sub-draw materials, {} distinct "
                   "identities (shaders+state+textures, no constants), {} of "
@@ -1055,8 +1065,23 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     return;
   }
   auto &p = t_pending;
-  if (!p.valid || !p.replayable)
+  if (!p.valid || !p.replayable) {
+    // Which gate the permanently-uncaptured nodes hit: 18 distinct nodes
+    // refuse a template every frame for ever, and each is an interpreter run
+    // that never goes away (2026-09-04).
+    // Only real node draws: effects and UI reach here with no snapshot at all
+    // and swamped the count (56,584 against 24) the first time this was
+    // measured.
+    if (tag.valid) {
+      auto &st = store();
+      std::lock_guard lock(st.mutex);
+      if (p.valid)
+        ++st.cap_not_replayable;
+      else
+        ++st.cap_invalid;
+    }
     return;
+  }
   if (!VertexShaderReplayable(s.pipelineState)) {
     p.replayable = false;
     auto &st = store();
@@ -1580,10 +1605,16 @@ bool HostDrawReplay(const NodeTag &tag) {
     std::lock_guard lock(st.mutex);
     auto it = st.templates.find(KeyOf(tag));
     if (it == st.templates.end() || it->second.draws.empty()) {
-      if (st.never.count(KeyOf(tag)))
+      if (st.never.count(KeyOf(tag))) {
         ++st.why_never;
-      else
+      } else {
         ++st.why_none;
+        // Are these the same nodes every frame, or genuinely new geometry?
+        // 20 a frame against 610 stable templates says the former, and a node
+        // that never gets a template is a node the interpreter runs for ever
+        // (2026-09-04).
+        st.none_keys.insert(KeyOf(tag));
+      }
       return false;
     }
     if (it->second.volatile_material) {
