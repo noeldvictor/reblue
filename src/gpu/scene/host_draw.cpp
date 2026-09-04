@@ -227,6 +227,15 @@ struct VisualRegs {
 // c0-c1 only: c2-c4 are the node's (the verifier read them per node once
 // they were taken from the pass, 3,352 draws).
 constexpr u32 kPassVsRegs = 2;
+// c0, c1 are the pass camera. **ps c9 is NOT one of them.** It is
+// g_vShadowEpsilon, the shadow bias, and it reads like a pass property - it is
+// 14 of the 16 "fresh value" refusals a frame, each an interpreter run for a
+// constant the pass looks like it already knows. Taking it from the pass was
+// tried on 2026-09-05 and is wrong: host-issued draws went 521 -> 544 and
+// drift 15 -> 2, but the ground's shadowing flips between consecutive frames
+// (28 sequence jumps over 6% against 0, the camera barely moving, the diff
+// map showing the terrain lit in one frame and shadowed in the next). Whatever
+// c9 carries, it is not uniform across a pass's draws.
 constexpr u32 kPassPsRegs = 2; // c0, c1
 struct PassRegs {
   u32 vs[kPassVsRegs][4] = {};

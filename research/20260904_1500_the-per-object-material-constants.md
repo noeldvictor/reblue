@@ -548,6 +548,37 @@ found the village-rock patch, and it reads clean across four times the usual win
 entry-sourced materials, the 64-frame refresh, the volatile-and-empty fix and the
 draws-nothing templates all live at once.
 
+## The fresh-value refusals, named - and a fifth withdrawal (2026-09-05, 02:00)
+
+Naming the drifting registers worked, so the same counter now names the ones behind the
+"fresh value" bails. **`ps c9`, 14 of the 16 a frame**, with `vs c2` the other two. The
+shader names c9 `g_vShadowEpsilon` - the shadow bias, which reads exactly like a pass
+property: a function of the shadow map and its fit, not of the mesh.
+
+Taking it from the pass registers looked like a clean win and measured like one:
+
+| | before | after |
+| --- | --- | --- |
+| host-issued node draws | 521 of 612 | **544** |
+| fresh-value refusals | 16 | **2** |
+| drift | 15 | **2** |
+| frame | 5.20 ms CPU, 5.69 GPU | **4.80 / 5.26** |
+
+And it is wrong. The 120-frame sequence went from 0 jumps to **28**, and the pair images are
+not camera pans: the ground and buildings are **lit in one frame and shadowed in the next**
+with the camera barely moving. Whatever `g_vShadowEpsilon` carries, it is not uniform across
+a pass's draws - the shadow bias evidently varies per draw in a way that turning it into a
+pass constant destroys.
+
+Reverted, with the finding in the code beside `kPassPsRegs` so the next reader sees why the
+obvious extension is not available. Two notes for whoever picks this up:
+
+- The cyan detector read clean through all 28 jump frames. It is tuned for the flat-colour
+  patch and says nothing about a lighting flip; the sequence jump count is what caught this.
+- A large improvement in every counter *and* a visible regression is the normal shape of a
+  wrong change here, not a contradiction. Four of the five withdrawals in this file measured
+  better on their headline number.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
