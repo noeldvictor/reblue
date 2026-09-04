@@ -403,10 +403,29 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
       (bd::engine::SofdecMoviePlaying() && !Output::StretchToFill())
           ? kDesignCanvasAspect
           : Output::RenderAspect();
+  const bool cel = REXCVAR_GET(bd_cel_shading) && s.cel_pipeline;
+  // The layered path: the back buffer is the runtime's two-layer image and
+  // the pass has two views, so one draw writes both eyes and neither layer is
+  // flattened. Cel keeps the mono pipeline (it has no layered twin yet).
+  const bool layered_present = g_xr_direct_index >= 0 &&
+                               bd::xr::Session::Get().SwapchainArraySize() > 1 &&
+                               !cel &&
+                               s.gamma_correction_pipeline_layered != nullptr &&
+                               rt->layers > 1;
+
   u32 fit_w = swap_w, fit_h = swap_h;
   i32 off_x = 0, off_y = 0;
-  Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
-                          off_y);
+  // The layered path maps a layer onto a layer, 1:1, with no aspect fit: each
+  // eye was rendered through ProjectionFromFov (xr_math.h), whose extents are
+  // the runtime's own per-eye FOV, so the image already has the layer's shape.
+  // Fitting it to the game's 16:9 shrank it into a band and left the headset
+  // showing a letterboxed, wrong-FOV view (2026-09-04). A Sofdec movie is
+  // prerendered 16:9 and still wants the fit.
+  const bool layer_to_layer =
+      layered_present && !bd::engine::SofdecMoviePlaying();
+  if (!layer_to_layer)
+    Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
+                       off_y);
   if (fit_w != swap_w || fit_h != swap_h) {
     // Clear the whole back buffer so the uncovered edges show as black bars.
     s.command_list->clearColor(0, plume::RenderColor(0.0f, 0.0f, 0.0f, 1.0f));
@@ -425,15 +444,6 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // Cel shading replaces the gamma pass rather than following it: the cel
   // shader ends with the same gamma maths, so this is a swap and the push
   // constants below are unchanged either way.
-  const bool cel = REXCVAR_GET(bd_cel_shading) && s.cel_pipeline;
-  // The layered path: the back buffer is the runtime's two-layer image and
-  // the pass has two views, so one draw writes both eyes and neither layer is
-  // flattened. Cel keeps the mono pipeline (it has no layered twin yet).
-  const bool layered_present = g_xr_direct_index >= 0 &&
-                               bd::xr::Session::Get().SwapchainArraySize() > 1 &&
-                               !cel &&
-                               s.gamma_correction_pipeline_layered != nullptr &&
-                               rt->layers > 1;
   {
     // Once, and once more the first time it turns true: the layered path
     // needs four things to line up and this line says which one is missing.

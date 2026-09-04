@@ -64,6 +64,22 @@ layer's aspect, which is the guest chain's business and not this change's.
   block overwrites unconditionally a few lines later anyway. It reproduced with the
   layered swapchain off, so it is not this change's.
 
+## Addendum, 12:10: a layer maps onto a layer, with no aspect fit
+
+The first layered capture had the game in a band with black bars top and bottom, and both
+layers only 47.7% non-black. That was the present pass fitting the frame to the game's
+design aspect (`Output::ComputeFit` at `RenderAspect`, 1.78) inside a 960x1080 layer. It
+is the right thing for a flat window and wrong for an eye: each eye is rendered through
+`ProjectionFromFov` (`xr_math.h`), whose extents are the runtime's own per-eye field of
+view, so the image already has the layer's shape and the fit was shrinking a correct eye
+view into a letterboxed band - the headset would have shown a small floating screen rather
+than a filled view.
+
+Under the layered path the present now maps the layer onto the layer, 1:1, with no fit. A
+Sofdec movie is prerendered 16:9 and keeps the fit. Both layers read 94.7% and 94.9%
+non-black afterwards, the pair still differs (13.0% of pixels) with disparity on the near
+geometry, and neither is stretched.
+
 ## What is left for stage 7
 
 Foveation itself. `XR_FB_foveation` attaches to a swapchain, and the fragments it saves
