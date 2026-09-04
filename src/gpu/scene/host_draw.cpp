@@ -68,10 +68,12 @@
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/scene/guest_scene.h"
 #include "gpu/scene/mesh_lod.h"
+#include "gpu/scene/native_mesh.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
 REXCVAR_DECLARE(bool, bd_host_draw);
+REXCVAR_DECLARE(bool, bd_native_meshes);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
@@ -149,6 +151,9 @@ struct SubDraw {
   mutable GuestBuffer *cached_stream[16]{};
   mutable GuestBuffer *cached_index = nullptr;
   mutable u64 cached_generation = 0;
+  mutable std::shared_ptr<const NativeGeometry> native_geometry;
+  mutable u64 native_generation = 0;
+  mutable u64 native_lod_key = 0;
   bool indexed = false;
   u32 count = 0;
   u32 start_index = 0;
@@ -2160,6 +2165,7 @@ bool HostDrawReplay(const NodeTag &tag) {
     const ResolvedStreams &rs = resolved[di];
     u32 lod_count = d.count, lod_start = d.start_index,
         lod_prim = d.primitive_type;
+    std::shared_ptr<const std::vector<u32>> lod_triangles;
     // The constant sources: the live files, the template's stable values,
     // the visual's fresh values, and the world rows.
     std::memcpy(t_vs_block, vs_base, kBlockBytes);
@@ -2354,6 +2360,7 @@ bool HostDrawReplay(const NodeTag &tag) {
             lod_count = res.count;
             lod_start = 0;
             lod_prim = u32(rex::graphics::xenos::PrimitiveType::kTriangleList);
+            lod_triangles = res.triangles;
           }
           break;
         }
@@ -2361,6 +2368,42 @@ bool HostDrawReplay(const NodeTag &tag) {
       Video::SetAlphaThreshold(d.alpha_threshold);
       mark_dirty();
       s.material_override = &ov;
+    }
+    if (!verify && REXCVAR_GET(bd_native_meshes) && d.indexed) {
+      u32 cell_bits;
+      std::memcpy(&cell_bits, &lod_cell, sizeof(cell_bits));
+      const u64 lod_key = (u64(u32(lod_grid)) << 32) | cell_bits;
+      if (d.native_generation != phys_gen || d.native_lod_key != lod_key) {
+        NativeMeshImport request;
+        request.declaration = d.pipelineState.vertexDeclaration;
+        request.index = d.cached_index;
+        request.start_index = d.start_index;
+        request.count = d.count;
+        request.base_vertex = d.base_vertex;
+        request.primitive_type = d.primitive_type;
+        if (lod_triangles)
+          request.lod_indices = *lod_triangles;
+        for (u32 slot = 0; slot < 16; ++slot) {
+          request.streams[slot] = d.cached_stream[slot];
+          request.offsets[slot] = d.stream_offset[slot];
+          request.strides[slot] = d.input_slots[slot].stride;
+        }
+        d.native_geometry = ImportNativeMesh(request);
+        d.native_generation = phys_gen;
+        d.native_lod_key = lod_key;
+      }
+      if (const auto &mesh = d.native_geometry) {
+        std::lock_guard lock(s.mutex);
+        for (u32 slot = 0; slot < 16; ++slot)
+          if (mesh->stream_mask & (1u << slot))
+            s.vertex_views[slot] = mesh->streams[slot];
+        s.index_view = mesh->index;
+        lod_count = mesh->count;
+        lod_start = mesh->start_index;
+        lod_prim = u32(rex::graphics::xenos::PrimitiveType::kTriangleList);
+        mark_dirty();
+      }
+      NativeMeshNoteDraw(bool(d.native_geometry));
     }
     if (verify) {
       // What the replay would dispatch, kept for the interpreter's draws

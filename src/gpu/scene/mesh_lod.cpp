@@ -30,6 +30,7 @@ namespace {
 
 struct Entry {
   std::unique_ptr<plume::RenderBuffer> buffer;
+  std::shared_ptr<const std::vector<u32>> triangles;
   u32 count = 0;
   plume::RenderFormat format = plume::RenderFormat::R16_UINT;
   bool usable = false;
@@ -386,6 +387,7 @@ bool Build(const MeshLodRequest &r, Entry &e, u64 &tris_in, u64 &tris_out) {
   buffer->unmap();
   e.buffer = std::move(buffer);
   e.count = u32(out.size());
+  e.triangles = std::make_shared<const std::vector<u32>>(std::move(out));
   e.format = r.index_format;
   e.usable = true;
   return true;
@@ -426,6 +428,7 @@ bool MeshLodFor(const MeshLodRequest &req, MeshLodResult &out) {
     return false;
   out.view = plume::RenderIndexBufferView(e.buffer->at(0), e.count * (e.format == plume::RenderFormat::R32_UINT ? 4 : 2), e.format);
   out.count = e.count;
+  out.triangles = e.triangles;
   return true;
 }
 

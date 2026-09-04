@@ -461,6 +461,11 @@ REXCVAR_DEFINE_BOOL(bd_node_write_diag, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_draw, true, kCvarGroup,
                     "Issue scene node draws from host templates, skipping the "
                     "guest's per-node interpreter.");
+// Desktop geometry and disk reuse qualified in native_mesh_test and flat /
+// multiview captures. Device qualification waits for the full host frame.
+REXCVAR_DEFINE_BOOL(bd_native_meshes, true, kCvarGroup,
+                    "Cook loaded model meshes into persistent native assets "
+                    "and shared host geometry buffers.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
 // when the interpreter issues them and when the host replays them, so the
 // two can be diffed.

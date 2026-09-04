@@ -23,6 +23,8 @@
  */
 #pragma once
 
+#include <memory>
+#include <vector>
 #include <rex/types.h>
 
 #include "plume_render_interface.h"
@@ -60,6 +62,8 @@ struct MeshLodRequest {
 struct MeshLodResult {
   plume::RenderIndexBufferView view;
   u32 count = 0; // indices, a triangle list
+  // The native asset importer consumes CPU indices, never reads upload RAM.
+  std::shared_ptr<const std::vector<u32>> triangles;
 };
 
 // The coarse list for the request, built on first sight and cached. False
