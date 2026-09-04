@@ -539,10 +539,13 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    own image (the 1:1 `bd_simple2d` tile copy quad) is skipped as an identity, any other
    reader copies on demand, and the host composite leaves its framebuffer bound so the
    2D draws continue its pass. Desktop: 17 -> 15 passes, `rs_materialize` 2 -> 0, barrier
-   calls 34 -> 29, image unchanged. Left of the post chain: the five-level dof pyramid
-   (levels are the guest's textures, one pass each) and the bloom's three passes at
-   480x270, which can fold into the composite from a pyramid level; the desktop's two
-   MSAA resolves; the present blit.
+   calls 34 -> 29, image unchanged. **Bloom folded into the composite (21:50,
+   `bd_host_post_bloom_fold`)**: the bright pass of dof level 2 computed in the composite
+   shader instead of bright + two blurs into a mask texture: 15 -> 12 passes, barrier
+   calls 29 -> 23, the capture reads the same. Left of the post chain: the five-level dof
+   pyramid (the guest's level textures, one pass each; a compute chain or fewer levels),
+   the desktop's two MSAA resolves, the present blit. A Quest field frame is now
+   shadow | reflection | scene | dof x5 | composite+2D | present.
 3. **The materials.** `bd_frag_census=true` on a desktop run prints `[frag] ... the top
    ten` every 300 frames: fragment shader invocations per guest pixel shader from
    pipeline-statistics queries around every queued draw (`gpu/frag_census.cpp`; the

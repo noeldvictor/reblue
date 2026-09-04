@@ -792,6 +792,11 @@ REXCVAR_DEFINE_BOOL(bd_host_targets, true, kCvarGroup,
 // image: the quad is skipped and the front texture's link is left in place
 // instead of copied, so the two 2D passes continue the composite's render
 // pass. Two full-res blits and two full-screen draws a frame (2026-09-03).
+// The bloom mask's three passes (bright, blur, blur at 480x270) folded into
+// the composite as the bright pass of dof level 2 (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_host_post_bloom_fold, true, kCvarGroup,
+                    "Compute bloom in the composite from a dof level instead "
+                    "of three mask passes.");
 REXCVAR_DEFINE_BOOL(bd_tail_identity_skip, true, kCvarGroup,
                     "Skip the tail's identity copy quads and the blits they "
                     "needed.");

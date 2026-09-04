@@ -71,6 +71,7 @@ REXCVAR_DECLARE(bool, bd_host_post);
 REXCVAR_DECLARE(bool, bd_host_post_composite);
 REXCVAR_DECLARE(i32, bd_host_post_debug);
 REXCVAR_DECLARE(f64, bd_host_post_blur);
+REXCVAR_DECLARE(bool, bd_host_post_bloom_fold);
 
 namespace bd::gpu {
 namespace {
@@ -107,6 +108,10 @@ struct CompositeConstants {
   float w1[4];
   u32 indices0[4];
   u32 indices1[4];
+  // Bloom folded into the composite (bd_host_post_bloom_fold): threshold,
+  // intensity, fold flag (nonzero: take the bright pass of dof level 2 in
+  // the composite instead of sampling a bloom mask texture).
+  float bloom[4];
 };
 
 struct Scratch {
@@ -475,7 +480,9 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   (void)s; (void)c; (void)scene; (void)bloom; (void)device_guest;
   return false; // the parameter block rides the Vulkan dynamic UBO binding
 #else
-  if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene || !bloom)
+  const bool fold = REXCVAR_GET(bd_host_post_bloom_fold);
+  if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene ||
+      (!bloom && !fold))
     return false;
   GuestTexture *rt = s.render_target;
   if (!rt || !rt->texture || rt->layers > 2)
@@ -493,6 +500,10 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
     k.w1[i] = GuestPixelConstant(device_guest, 14, i);
   }
   k.indices0[0] = depth->descriptorIndex;
+  k.bloom[0] = GuestPixelConstant(device_guest, 27, 0);
+  k.bloom[1] = GuestPixelConstant(device_guest, 27, 1);
+  k.bloom[2] = fold ? 1.0f : 0.0f;
+  k.bloom[3] = 0.0f;
   for (u32 i = 0; i < 5; ++i) {
     GuestTexture *level = Content(c.dof.levels[i]);
     if (!Readable(level))
@@ -511,7 +522,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   auto *pipe = Pipeline(s, c, Shader::Composite, rt->format, layered);
   if (!pipe)
     return false;
-  Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);
+  if (bloom)
+    Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);
   plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr);
   if (!fb)
     return false;
@@ -520,7 +532,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   s.command_list->setGraphicsDescriptorSetDynamic(
       s.constant_descriptor_set.get(), kConstantDescriptorSetIndex, offsets, 3);
   Pass(s, pipe, fb, rt->width, rt->height,
-       PostPush{scene->descriptorIndex, bloom->descriptorIndex,
+       PostPush{scene->descriptorIndex,
+                bloom ? bloom->descriptorIndex : 0u,
                 float(REXCVAR_GET(bd_host_post_debug)), 0.0f},
        /*keep_bound=*/true);
   if (c.composite_frames++ < 3)
@@ -627,7 +640,13 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
         c.dof.valid && c.dof.levels[0] ? Content(c.dof.levels[0]) : nullptr;
     if (!Readable(bloom_src) || c.dof.scene_scale == 1.0f)
       bloom_src = scene;
-    GuestTexture *bloom = BuildBloomMask(s, c, bloom_src, device_guest);
+    // Folded: the composite takes the bright pass of dof level 2 (240x135,
+    // twice dual-downsampled, a spread comparable to the guest's two 9-tap
+    // blurs at 480x270) instead of three passes into a mask texture
+    // (2026-09-03; approximate visuals are the owner's call).
+    GuestTexture *bloom = REXCVAR_GET(bd_host_post_bloom_fold)
+                              ? nullptr
+                              : BuildBloomMask(s, c, bloom_src, device_guest);
     c.bloom_mask = bloom;
     const bool composed = HostComposite(s, c, scene, bloom, device_guest);
     // Nothing reads the scene texture after the composite (a field frame's

@@ -71,7 +71,21 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
             dof = Tap(level[4], texCoord);
     }
 
-    const float4 bloom = Tap(g_PushConstants.ResourceDescriptorIndex2, texCoord);
+    // Bloom: the mask texture, or (folded) the bright pass of dof level 2.
+    float4 bloom;
+    if (g_PSC[5].z > 0.5)
+    {
+        const float3 rgb = Tap(level[2], texCoord).xyz;
+        const float threshold = g_PSC[5].x;
+        const float intensity = g_PSC[5].y;
+        const float3 over = max(rgb - threshold, 0.0);
+        const float luma = dot(over, float3(0.2125, 0.7154, 0.0722)) * intensity;
+        bloom = float4(saturate(min(rgb, 0.25) * 4.0 * luma), 1.0);
+    }
+    else
+    {
+        bloom = Tap(g_PushConstants.ResourceDescriptorIndex2, texCoord);
+    }
     // Param0: 1 shows depth, 2 shows the level over 8, 3 the scene alone.
     const int debug = int(g_PushConstants.Param0 + 0.5);
     if (debug == 1)
