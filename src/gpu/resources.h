@@ -169,6 +169,11 @@ struct GuestTexture {
   // clears wait here until its pass binds, and its resolve links are dropped
   // without a copy when it is redrawn.
   bool hostOwned = false;
+  // A resolve link into this texture whose source image the guest is now
+  // drawing over (the tail's 2D passes on the composite's tile): left in
+  // place instead of copied, and copied only if a draw samples it that is
+  // not the identity quad (gpu/hooks/draw.cpp, 2026-09-03).
+  bool selfReadDeferred = false;
   bool hostTargetLive = false; // the guest holds the handle now
   u8 hostTargetClass = 0;
   u32 hostClearFlags = 0; // X360 D3DCLEAR bits: 0x1 colour, 0x10 z, 0x20 stencil

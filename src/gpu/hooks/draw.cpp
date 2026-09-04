@@ -66,6 +66,7 @@ REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(bool, bd_draw_ledger);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
 REXCVAR_DECLARE(i32, bd_node_diag_mesh);
+REXCVAR_DECLARE(bool, bd_tail_identity_skip);
 REXCVAR_DECLARE(i32, bd_render_scale);
 REXCVAR_DECLARE(f64, bd_stereo_separation);
 REXCVAR_DECLARE(f64, bd_stereo_convergence);
@@ -82,6 +83,9 @@ namespace xe = rex::graphics::xenos;
 struct DrawArgs {
   bool indexed = false;
   bool is_up = false;
+  // A full-frame bd_simple2d quad whose texture is the image it draws into
+  // (the tail's tile copy): an identity, skipped (bd_tail_identity_skip).
+  bool identity_copy = false;
   u32 vertexOrIndexCount = 0;
   i32 baseVertexIndex = 0;
   u32 startIndex = 0;
@@ -326,12 +330,37 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // sample it - not one the host chain takes - gets the scaled copy first.
   // Materialising at SetTexture instead copied twice a frame for the dof
   // and ms_tex draws the chain drops (Quest, rs_materialize 2, 2026-09-02).
+  if (args.identity_copy) {
+    // The tail's tile copy onto its own image (IsIdentityCopyQuad).
+    static u32 skipped = 0;
+    if (skipped++ < 3)
+      BD_INFO("[tail] identity copy quad skipped ({}x{})",
+              s.render_target ? s.render_target->width : 0u,
+              s.render_target ? s.render_target->height : 0u);
+    bd::gpu::NoteTailIdentitySkip();
+    return;
+  }
   if (!(ps_hash && bd::gpu::HostPostWillIntercept(ps_hash))) {
+    bd::gpu::GuestTexture *rt_now = s.render_target;
     for (u32 i = 0; i < 16; ++i) {
       bd::gpu::GuestTexture *tex = s.textures[i];
-      if (tex && tex->sourceSurface && tex->sourceSurface != tex &&
-          tex->resolveScale != 1.0f)
+      if (!tex || !tex->sourceSurface || tex->sourceSurface == tex)
+        continue;
+      if (tex->resolveScale != 1.0f) {
         bd::gpu::MaterializeInboundLocked(s, tex);
+        continue;
+      }
+      // A deferred link into the image this draw renders into, sampled by
+      // a draw that is not the identity copy: it needs the copy after all.
+      if (tex->selfReadDeferred && rt_now && rt_now->texture &&
+          tex->sourceSurface->texture == rt_now->texture) {
+        static u32 told = 0;
+        if (told++ < 6)
+          BD_INFO("[tail] deferred self-read copied for a {}-vertex draw, ps "
+                  "{:016X}", args.vertexOrIndexCount, ps_hash);
+        tex->selfReadDeferred = false;
+        bd::gpu::MaterializeInboundLocked(s, tex);
+      }
     }
   }
   s.bind_overwrites = ps_hash && bd::gpu::HostPostOverwritesTarget(s, ps_hash);
@@ -1281,16 +1310,62 @@ void FitDesignCanvasVertices(u8 *verts, u32 vertexCount, u32 vertexStride,
   }
 }
 
+// The tail's tile copy: a full-canvas bd_simple2d strip, white, uv 0..1,
+// sampling a texture whose image is the bound target's own (a deferred link
+// out of the composite's tile). Drawing it would copy the image onto itself.
+bool IsIdentityCopyQuad(u32 primitiveType, u32 vertexCount, u32 pVertexData,
+                        u32 vertexStride) {
+  if (!REXCVAR_GET(bd_tail_identity_skip))
+    return false;
+  if (!IsScreenSpriteQuad(primitiveType, vertexCount, vertexStride))
+    return false;
+  auto &s = bd::gpu::state();
+  const auto *ps = s.pixel_shader;
+  constexpr u64 kSimple2DPS = 0xFF2C108217046270ull;
+  if (!ps || !ps->shaderCacheEntry || ps->shaderCacheEntry->hash != kSimple2DPS)
+    return false;
+  bd::gpu::GuestTexture *rt = s.render_target;
+  bd::gpu::GuestTexture *tex = s.textures[0];
+  if (!rt || !rt->texture || !tex || !tex->selfReadDeferred ||
+      !tex->sourceSurface || tex->sourceSurface == tex)
+    return false;
+  if (tex->sourceSurface->texture != rt->texture)
+    return false;
+  const auto *v = bd::mem::try_at<const ScreenSpriteVertex>(pVertexData);
+  if (!v)
+    return false;
+  float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+  float minu = 1e9f, minv = 1e9f, maxu = -1e9f, maxv = -1e9f;
+  for (u32 i = 0; i < kQuadVertices; ++i) {
+    if (static_cast<u32>(v[i].color) != 0xFFFFFFFFu)
+      return false;
+    const float x = v[i].x, y = v[i].y, u = v[i].u, w = v[i].v;
+    minx = std::min(minx, x); maxx = std::max(maxx, x);
+    miny = std::min(miny, y); maxy = std::max(maxy, y);
+    minu = std::min(minu, u); maxu = std::max(maxu, u);
+    minv = std::min(minv, w); maxv = std::max(maxv, w);
+  }
+  const float cw = bd::gpu::kDesignCanvasWidth, ch = bd::gpu::kDesignCanvasHeight;
+  if (minx > 1.0f || miny > 1.0f || maxx < cw - 1.0f || maxy < ch - 1.0f)
+    return false;
+  if (minu > 0.01f || minv > 0.01f || maxu < 0.99f || maxv < 0.99f)
+    return false;
+  return true;
+}
+
 u32 D3DDevice_DrawVerticesUP_hook(u32 device_guest, u32 primitiveType,
                                   u32 vertexCount, u32 pVertexData,
                                   u32 vertexStride) {
   InsetOverscanScreenSprite(pVertexData, primitiveType, vertexCount,
                             vertexStride);
+  const bool identity =
+      IsIdentityCopyQuad(primitiveType, vertexCount, pVertexData, vertexStride);
   const bool ok =
-      UploadAndBindUpVertices(primitiveType, pVertexData, vertexCount,
-                              vertexStride);
+      !identity && UploadAndBindUpVertices(primitiveType, pVertexData,
+                                           vertexCount, vertexStride);
   DrawArgs args{};
   args.is_up = ok;
+  args.identity_copy = identity;
   args.vertexOrIndexCount = vertexCount;
   args.startVertex = 0;
   bd::gpu::NoteDrawKind(2);

@@ -274,9 +274,13 @@ void Transition(VideoState &s, plume::RenderTexture *texture,
 }
 
 // One full-screen pass into fb at width x height.
+// keep_bound: leave fb bound afterwards. The composite's target is the tile
+// the guest's 2D passes alias next, and the same framebuffer bound again
+// continues plume's render pass; unbinding ended it and the 2D pass began a
+// new one over the same image (a full-res store and load, 2026-09-03).
 void Pass(VideoState &s, plume::RenderPipeline *pipeline,
           plume::RenderFramebuffer *fb, u32 width, u32 height,
-          const PostPush &push) {
+          const PostPush &push, bool keep_bound = false) {
   auto *cmd = s.command_list;
   cmd->setFramebuffer(fb);
   cmd->setPipeline(pipeline);
@@ -285,7 +289,8 @@ void Pass(VideoState &s, plume::RenderPipeline *pipeline,
   cmd->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &push,
                                 kCopyPushConstantByteOffset, sizeof(push));
   cmd->drawInstanced(3, 1, 0, 0);
-  cmd->setFramebuffer(nullptr);
+  if (!keep_bound)
+    cmd->setFramebuffer(nullptr);
 }
 
 // The surface that holds a guest texture's content: a deferred resolve leaves
@@ -516,7 +521,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
       s.constant_descriptor_set.get(), kConstantDescriptorSetIndex, offsets, 3);
   Pass(s, pipe, fb, rt->width, rt->height,
        PostPush{scene->descriptorIndex, bloom->descriptorIndex,
-                float(REXCVAR_GET(bd_host_post_debug)), 0.0f});
+                float(REXCVAR_GET(bd_host_post_debug)), 0.0f},
+       /*keep_bound=*/true);
   if (c.composite_frames++ < 3)
     BD_INFO("[post] composite into {}x{}: dof ({:.3g}, {:.3g}, focus {:.3g}) "
             "w0 {:.3g} w1 {:.3g}",

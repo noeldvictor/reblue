@@ -111,6 +111,8 @@ enum class ResolveOp : u8 {
   Seed,        // composite-chain tile seed copy
 };
 void NoteResolveOp(ResolveOp op);
+// The tail's identity copy quads skipped this frame (bd_tail_identity_skip).
+void NoteTailIdentitySkip();
 
 // GPU-side time from timestamp queries (gpu_timing), one frame late: the total
 // command list span, then the draw and resolve portions of it. The remainder is

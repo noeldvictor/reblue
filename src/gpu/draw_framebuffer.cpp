@@ -35,6 +35,7 @@ REXCVAR_DECLARE(bool, bd_barrier_hoist);
 REXCVAR_DECLARE(bool, bd_seed_targets);
 REXCVAR_DECLARE(bool, bd_chain_alias);
 REXCVAR_DECLARE(bool, bd_mv_test_clear);
+REXCVAR_DECLARE(bool, bd_tail_identity_skip);
 
 namespace bd::gpu {
 
@@ -372,8 +373,31 @@ bool AliasFreshTargetToChainHeadLocked(VideoState &s, GuestTexture *rt) {
   // a lazy link into the shared image (the front texture links to the last
   // alias, not to the root). A link left in place would have the next quad
   // sample the image it is drawing into.
-  for (u32 i = 0; i < chain_len; ++i)
+  //
+  // Which is exactly what the tail's first 2D draw does: a full-screen
+  // bd_simple2d quad copying the front texture (the composite's resolve)
+  // into the new tile - the same image. Under bd_tail_identity_skip the
+  // full-screen links stay in place, that quad is skipped as an identity
+  // copy (gpu/hooks/draw.cpp), and any other draw that samples a deferred
+  // link copies it then. Two full-res blits and two full-screen draws a
+  // frame gone, and the 2D passes continue the composite's render pass
+  // (2026-09-03).
+  for (u32 i = 0; i < chain_len; ++i) {
+    if (REXCVAR_GET(bd_tail_identity_skip)) {
+      bool deferred_all = true;
+      for (GuestTexture *dst : chain[i]->destinationTextures) {
+        if (dst && dst->sourceSurface == chain[i] &&
+            dst->type == ResourceType::Texture &&
+            FullscreenChainClassLocked(s, dst) && dst->layers == rt->layers)
+          dst->selfReadDeferred = true;
+        else
+          deferred_all = false;
+      }
+      if (deferred_all)
+        continue;
+    }
     MaterializeOutboundLocked(s, chain[i]);
+  }
   if (rt->ownFormat == plume::RenderFormat::UNKNOWN)
     rt->ownFormat = rt->format;
   rt->texture = root->texture;

@@ -58,6 +58,17 @@ shading is a switch; animation moves to the host after the walk; shadows on in t
 configuration, not measured apart; approximate visuals are fine; desktop first, one Quest run
 per finished stage.
 
+**Owner decision, 2026-09-03 evening: converting the assets is approved and expected.** "We
+okay with converting assets, we have recomp code, so we can reverse engineer stuff easily."
+The recompiled loaders (`bdSceneModelLoad`, `hcgLoadTextureArray`, `bdCreateTextureFromMemory`,
+the pack loaders) are the format reference; a desktop cook reads the game data through them
+and writes host-native assets that ship with the game data. Textures: the mip chains built
+offline (today `gpu/host_mips.cpp` builds them on the headset at load) and ASTC for the Quest -
+Adreno takes BC1/BC3 directly (checked 2026-09-03: no decode path, the device renders the DXT
+data as is), so the gain is not a decode but the bits per pixel: ASTC 6x6 is 3.6 bpp and 8x8 is
+2 bpp against DXT1's 4 and DXT5's 8, on a scene pass bound by texture fetches. Meshes: merged
+statics, LODs, impostors, as the 2026-09-02 decisions already allow.
+
 The fork is low-stakes and AI-driven. Prefer working, understandable changes over polish. No
 support infrastructure (issue templates, changelogs) unless asked.
 
@@ -520,7 +531,18 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    host does not yet choose the targets' size and layers; `Output::LatchedFit` still does.
 2. **The passes.** Composite with gamma folded in, into an 8-bit host target that the
    guest's 2D draws overlay, presented without the front copy; under XR straight into the
-   layered swapchain (`XR_FB_foveation` attaches there later).
+   layered swapchain (`XR_FB_foveation` attaches there later). **The tail is one pass
+   since 2026-09-03 21:30** (`bd_tail_identity_skip`): the chain alias used to copy every
+   full-screen resolve link out of the composite's tile before the 2D passes drew over it
+   (two blits a frame, and the 2D passes began new render passes over the same image);
+   the links now stay in place, the one guest draw that would read such a link into its
+   own image (the 1:1 `bd_simple2d` tile copy quad) is skipped as an identity, any other
+   reader copies on demand, and the host composite leaves its framebuffer bound so the
+   2D draws continue its pass. Desktop: 17 -> 15 passes, `rs_materialize` 2 -> 0, barrier
+   calls 34 -> 29, image unchanged. Left of the post chain: the five-level dof pyramid
+   (levels are the guest's textures, one pass each) and the bloom's three passes at
+   480x270, which can fold into the composite from a pyramid level; the desktop's two
+   MSAA resolves; the present blit.
 3. **The materials.** `bd_frag_census=true` on a desktop run prints `[frag] ... the top
    ten` every 300 frames: fragment shader invocations per guest pixel shader from
    pipeline-statistics queries around every queued draw (`gpu/frag_census.cpp`; the

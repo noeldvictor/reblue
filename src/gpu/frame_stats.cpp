@@ -538,3 +538,9 @@ FrameStats GetFrameStats() {
 }
 
 } // namespace bd::gpu
+
+namespace bd::gpu {
+static u32 g_tail_identity_skips = 0;
+void NoteTailIdentitySkip() { ++g_tail_identity_skips; }
+u32 TailIdentitySkips() { return g_tail_identity_skips; }
+} // namespace bd::gpu

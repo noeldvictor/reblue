@@ -787,6 +787,14 @@ REXCVAR_DEFINE_BOOL(bd_seed_targets, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_targets, true, kCvarGroup,
                     "The shadow map and the scene pair are host-owned "
                     "persistent targets (stage 4).");
+// The tail's 2D passes begin with a full-frame bd_simple2d quad copying the
+// front texture into the new tile, which under the chain alias is the same
+// image: the quad is skipped and the front texture's link is left in place
+// instead of copied, so the two 2D passes continue the composite's render
+// pass. Two full-res blits and two full-screen draws a frame (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_tail_identity_skip, true, kCvarGroup,
+                    "Skip the tail's identity copy quads and the blits they "
+                    "needed.");
 REXCVAR_DEFINE_BOOL(bd_chain_alias, true, kCvarGroup,
                     "Alias a fresh full-screen surface to the chain head's "
                     "texture instead of seeding it with a copy.");
