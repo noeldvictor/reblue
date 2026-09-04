@@ -807,6 +807,26 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   }
   };
 
+  // The census only ever saw the draw queue's emit, so every draw it counted
+  // was a node draw and the "outside any node" bucket was empty - which made
+  // the ~140 effects, particle and UI draws a frame invisible rather than
+  // cheap. Counting them here closes that (2026-09-04).
+  const bool census_here =
+      !s.deferring_draw && cmd_list && s.plume_framebuffer_bound;
+  const u64 census_ps =
+      (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
+          ? s.pixel_shader->shaderCacheEntry->hash
+          : 0ull;
+  const bool census_open =
+      census_here && bd::gpu::FragCensusBegin(
+                         cmd_list, census_ps, 0u, 0xFFu,
+                         bd::gpu::FragCensusFlags(
+                             s.pipelineState.alphaBlendEnable, false,
+                             s.pipelineState.zWriteEnable));
+
+  if (census_open)
+    bd::gpu::FragCensusEnd(cmd_list);
+
   // Scene geometry only. Doubling *every* draw compounds through the
   // post-process chain: each full-screen pass reads a target that is already
   // two half-width copies and writes two more, so the frame recursively

@@ -130,8 +130,13 @@ fragment census does not see any of them. It counts inside the draw queue's emit
 draw it counted this run belongs to render view 0, 1 or 3 with a valid node tag; the "outside
 any node" bucket is empty. So the per-draw ABI's remaining users are not just unported, they
 are unmeasured: nobody knows what share of the frame's fragments they are. Sizing them is the
-first step on that piece, and it needs the census extended past the queue, not another
-estimate.
+first step on that piece. **The census now covers the immediate path too (23:40)** and it
+sees 16 more draws and two more shaders a frame, contributing **essentially no fragments** -
+the "outside any node" bucket stays at zero. So either the effects and UI are fragment-cheap
+and the per-draw ABI is a CPU problem rather than a GPU one, or they reach the GPU by a
+route neither the queue nor the immediate emit covers (the UP/`BeginVertices` path is the
+obvious candidate). The census counts 494 of the frame's ~753 draws, so 259 are still
+unaccounted for and that gap is the thing to close before anything is built here.
 
 **WHAT IS LEFT OF THE GUEST IN A FRAME (2026-09-04, 15:00).** 579 node draws, 450-484
 host-issued, 95-129 still through the 1,935-instruction interpreter (refused: 18 fresh
