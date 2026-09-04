@@ -928,6 +928,18 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
                      "1 = normal map skipped past eight texels a pixel, 2 = one "
                      "shadow gather where the map is minified.")
     .range(0, 3);
+// A blended draw may move back to join its instancing group when every draw
+// it crosses has a bounding sphere that does not overlap its own in the view -
+// two draws that never write the same pixel cannot affect each other whatever
+// the order. This is bd_draw_instancing_reorder_blended's replacement: that
+// one moved blended draws freely and put the clear colour through the ground
+// at the village rock (2026-09-03).
+REXCVAR_DEFINE_BOOL(bd_draw_gather_blended, true, kCvarGroup,
+                    "Blended draws may join an instancing group across draws "
+                    "they provably do not overlap.");
+REXCVAR_DEFINE_INT32(bd_draw_gather_window, 64, kCvarGroup,
+                     "How far back the blended gather looks for its group.")
+    .range(0, 1024);
 REXCVAR_DEFINE_BOOL(bd_lod, true, kCvarGroup,
                     "Coarse index lists for the shadow and reflection views "
                     "(the grids below); off draws every view at full detail.");

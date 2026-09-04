@@ -656,7 +656,17 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    draws kept in order the desktop scene forms no instancing group at all (261 draws in,
    261 issued; indirect calls 92 -> 155), so the Quest's -8 ms from instancing plus
    reorder is partly this reorder; it can return for blended draws the host knows do not
-   overlap, which stage 3 (meshes as host assets) makes knowable. Fixed on the way and
+   overlap, which stage 3 (meshes as host assets) makes knowable. **The safe replacement
+           shipped 2026-09-04** (`bd_draw_gather_blended`, `bd_draw_gather_window` 64): the walk
+           publishes each node's world bounding sphere, and a blended draw may move back to join
+           its group only across draws whose spheres do not overlap its own *in the view* (an
+           angular cone test from the camera eye, so a sphere behind another counts as
+           overlapping). A node's sub-draws share one sphere and so always veto each other, which
+           is exactly the ground-and-skirt case that broke. Correct but nearly inert in this
+           scene: **1 blended draw gathered a flush, 2 groups of >1 covering 4 draws of 286**,
+           because the game's blended terrain genuinely overlaps everywhere the camera looks. 120
+           consecutive captures show no artefact (0 neighbour jumps over 6%). Per-draw mesh bounds
+           from the cook (stage 3) would tighten the veto; the node sphere is all the walk has. Fixed on the way and
    worth keeping: the reflection view's eye register composed from the live block (VS/PS
    c0-c1 per pass), stale templates after a resolution change, the render-list loop's
    visual switch skipped by a replayed entry (the `r23` gate), the bool constants

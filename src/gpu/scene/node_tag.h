@@ -20,6 +20,13 @@ namespace bd::gpu::scene {
 // the queue records it; what is missing is which mesh, which node of which
 // visual, and which pass, and those are the four arguments of the guest's
 // per-node draw plus what its context points at.
+// The world-space bounding sphere of the node the draws after this belong to,
+// published by the host walk. The draw queue reads it to decide whether two
+// blended draws can swap: spheres that do not overlap in the view never write
+// the same pixel. Radius 0 means unknown, and unknown never moves.
+void PublishNodeSphere(const float centre[3], float radius);
+bool LastNodeSphere(float out[4]);
+
 struct NodeTag {
   u32 mesh_va = 0;     // r3
   u32 node_index = 0;  // r4

@@ -54,6 +54,7 @@
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/node_tag.h"
 #include "gpu/shadow_fit.h"
 #include <cmath>
 
@@ -259,6 +260,10 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
           for (u32 k = 0; k < 3; ++k)
             out[k] = m[12 + k] + c[0] * m[k] + c[1] * m[4 + k] + c[2] * m[8 + k];
           const float radius = radius_scale * LoadF32(mesh + offsetof(GuestMesh, radius));
+          // The node's world sphere, for the draw queue's blended gather: two
+          // draws whose spheres do not overlap in the view cannot write the
+          // same pixel, so their order is free (draw_queue.cpp).
+          bd::gpu::scene::PublishNodeSphere(out, radius);
           bool visible = false;
           if (have_eye) {
             const float dx = out[0] - eye[0], dy = out[1] - eye[1], dz = out[2] - eye[2];

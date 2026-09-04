@@ -105,6 +105,9 @@ struct QueuedDraw {
   // constantRegisterMask, eight words), for the instance records to carry
   // only those; null when unknown.
   const u32 *vs_reg_mask = nullptr;
+  // The node's world bounding sphere (centre, radius), for the blended
+  // gather; radius 0 when unknown, which never moves.
+  float sphere[4] = {0.0f, 0.0f, 0.0f, 0.0f};
   // Depth prepass. When set, the flush first emits this draw with
   // `prepass_pipeline` (colour writes off, depth as recorded) and then again
   // with `color_pipeline` (depth writes off, LEQUAL) in submission order. The

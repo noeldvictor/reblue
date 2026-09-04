@@ -6,7 +6,11 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/draw_queue.h"
+
+#include <cmath>
 #include "gpu/frame_stats.h"
+#include "gpu/scene/host_draw.h"
+#include "gpu/scene/node_tag.h"
 #include "gpu/frag_census.h"
 #include "gpu/vertex_pull.h"
 
@@ -37,6 +41,8 @@ REXCVAR_DECLARE(i32, bd_debug_bisect_frames);
 REXCVAR_DECLARE(i32, bd_debug_bisect_span);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
+REXCVAR_DECLARE(bool, bd_draw_gather_blended);
+REXCVAR_DECLARE(i32, bd_draw_gather_window);
 REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
 
 namespace bd::gpu {
@@ -49,6 +55,7 @@ namespace {
 std::vector<QueuedDraw> g_queue;
 u32 g_sequence = 0;
 u32 g_pulled_draws = 0; // per flush, reported with the instancing line
+u32 g_gathered = 0;     // blended draws moved to join their group
 u32 g_indirect_calls = 0, g_indirect_draws = 0;
 
 // Only what actually has to be re-emitted. Sorting by pipeline means runs of
@@ -65,6 +72,72 @@ struct EmitState {
   bool any = false;
   bool dummy_bound = false; // the pulled path's slot-15 binding
 };
+
+// Do the two draws' bounding spheres overlap as seen from the eye? Angles,
+// not screen rects: a sphere subtends a cone of half-angle asin(r / d) around
+// its direction from the eye, and two cones intersect when the angle between
+// their axes is under the sum of their half-angles. That needs no projection
+// matrix and treats a sphere behind another as overlapping, which it is.
+// Unknown (radius 0) or eye-containing spheres overlap everything.
+bool SpheresOverlapInView(const float a[4], const float b[4],
+                          const float eye[3]) {
+  if (!(a[3] > 0.0f) || !(b[3] > 0.0f))
+    return true;
+  const float av[3] = {a[0] - eye[0], a[1] - eye[1], a[2] - eye[2]};
+  const float bv[3] = {b[0] - eye[0], b[1] - eye[1], b[2] - eye[2]};
+  const float ad = std::sqrt(av[0] * av[0] + av[1] * av[1] + av[2] * av[2]);
+  const float bd_ = std::sqrt(bv[0] * bv[0] + bv[1] * bv[1] + bv[2] * bv[2]);
+  if (ad <= a[3] || bd_ <= b[3])
+    return true; // the eye is inside one of them: it covers the whole view
+  const float sa = a[3] / ad, sb = b[3] / bd_;
+  const float ca = std::sqrt(std::max(0.0f, 1.0f - sa * sa));
+  const float cb = std::sqrt(std::max(0.0f, 1.0f - sb * sb));
+  // cos(alpha + beta) = ca*cb - sa*sb, and the axes' angle has cosine dot.
+  const float dot = (av[0] * bv[0] + av[1] * bv[1] + av[2] * bv[2]) / (ad * bd_);
+  return dot > (ca * cb - sa * sb);
+}
+
+// Move each blended draw back to sit beside the nearest earlier draw of its
+// own group, when nothing it crosses overlaps it. Stable for everything else:
+// a draw that cannot move stays exactly where it was, and a draw that moves
+// passes only draws whose pixels it never touches.
+void GatherBlendedGroups() {
+  float eye[3];
+  if (!bd::gpu::scene::HostSceneEye(eye))
+    return;
+  const i32 cfg = REXCVAR_GET(bd_draw_gather_window);
+  const size_t window = cfg > 0 ? static_cast<size_t>(cfg) : 0;
+  if (!window)
+    return;
+  for (size_t p = 1; p < g_queue.size(); ++p) {
+    QueuedDraw &d = g_queue[p];
+    if (!d.blended || !(d.sphere[3] > 0.0f) || d.reorderable)
+      continue;
+    const void *dp =
+        d.instanced_pipeline ? d.instanced_pipeline : d.pipeline;
+    const size_t first = p > window ? p - window : 0;
+    size_t target = p;
+    for (size_t q = p; q-- > first;) {
+      const QueuedDraw &e = g_queue[q];
+      const void *ep =
+          e.instanced_pipeline ? e.instanced_pipeline : e.pipeline;
+      if (ep == dp && e.batch_key == d.batch_key &&
+          e.group_key == d.group_key && e.framebuffer == d.framebuffer) {
+        target = q + 1;
+        break;
+      }
+      // Crossing this draw is only safe if it can never write d's pixels.
+      if (SpheresOverlapInView(d.sphere, e.sphere, eye))
+        break;
+    }
+    if (target < p) {
+      QueuedDraw moved = g_queue[p];
+      g_queue.erase(g_queue.begin() + p);
+      g_queue.insert(g_queue.begin() + target, moved);
+      ++g_gathered;
+    }
+  }
+}
 
 // instance_count / first_instance: the instanced group this draw stands for
 // (1 and 0 for a plain draw). d.pipeline is whichever variant the caller chose.
@@ -508,6 +581,18 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
   // is ever moved across it. The merge below only joins *consecutive* equal
   // keys, so this is what turns "same mesh, ten nodes apart" into one draw.
   const bool instancing = REXCVAR_GET(bd_draw_instancing);
+  // Blended depth-writing draws keep their submission order, because the
+  // result depends on what is already in the framebuffer - the whole reason
+  // bd_draw_instancing_reorder_blended was retired on 2026-09-03, after a
+  // transparent skirt piece moved ahead of the ground piece it overlapped and
+  // left the clear colour showing through. But two draws that never write the
+  // same pixel cannot affect each other whatever their order, and the walk
+  // hands every node a world bounding sphere. So a blended draw may move back
+  // to join its group as long as every draw it crosses has a sphere that does
+  // not overlap its own in the view. A node's own sub-draws share one sphere,
+  // so they always veto each other - which is exactly the case that broke.
+  if (instancing && REXCVAR_GET(bd_draw_gather_blended))
+    GatherBlendedGroups();
   if (instancing && REXCVAR_GET(bd_draw_instancing_reorder)) {
     size_t i = 0;
     while (i < g_queue.size()) {
@@ -941,11 +1026,13 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
     if (n_flush == 300) {
       BD_INFO("[draw-queue] instancing: {} draws in -> {} issued per flush; "
               "{} groups of >1 covering {} draws; {} issued pulled; indirect: "
-              "{} draws in {} calls",
+              "{} draws in {} calls; {} blended draws gathered",
               acc_in / n_flush, acc_out / n_flush, acc_groups / n_flush,
               acc_grouped / n_flush, g_pulled_draws / n_flush,
-              g_indirect_draws / n_flush, g_indirect_calls / n_flush);
+              g_indirect_draws / n_flush, g_indirect_calls / n_flush,
+              g_gathered / n_flush);
       n_flush = acc_in = acc_out = acc_groups = acc_grouped = 0;
+      g_gathered = 0;
       g_pulled_draws = g_indirect_calls = g_indirect_draws = 0;
     }
   }

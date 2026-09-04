@@ -598,6 +598,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       q.visual_va = tag.valid ? tag.visual_va : 0u;
       q.render_view = tag.valid ? tag.render_view : 0xFFu;
       q.zwrite = s.pipelineState.zWriteEnable;
+      if (!bd::gpu::scene::LastNodeSphere(q.sphere))
+        q.sphere[3] = 0.0f;
       q.vs_reg_mask = (s.pipelineState.vertexShader &&
                        s.pipelineState.vertexShader->shaderCacheEntry)
                           ? s.pipelineState.vertexShader->shaderCacheEntry
