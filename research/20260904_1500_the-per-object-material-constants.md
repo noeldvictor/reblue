@@ -442,6 +442,22 @@ The 15 drift left are tree draws, which have no entry; their material is
 `visual + 3404` times the modulator at the staging struct's `+396`, and sourcing those is
 the next step on this thread.
 
+## The tree draws: formula right, operands stale (21:30)
+
+`bd_material_from_visual` (default **off**) reproduces the interpreter's own arithmetic for
+a tree draw, which has no entry to read: base float4 at `visual + 3404`, gate at the staging
+struct's `+392`, and if the gate is not positive, multiply component-wise by `+396..+404` -
+exactly the `loc_822807F4` / `loc_82280824` split.
+
+The verifier prices it at **ps c3 wrong on 11 draws against 1** with the entry path alone.
+So the formula is right and the operands are not: the staging struct is per-draw state, and
+at replay time its gate and modulator belong to whichever node the interpreter ran last. The
+same staleness the whole thread has been about, one level down.
+
+Left in, off, with the arithmetic recorded - it is the correct shape and becomes usable the
+moment the modulator has a per-draw source. For a render-list draw that source is the entry,
+which is why `bd_material_from_entry` works and this does not.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.

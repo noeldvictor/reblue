@@ -82,6 +82,7 @@ REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(bool, bd_material_census);
 REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(bool, bd_material_from_entry);
+REXCVAR_DECLARE(bool, bd_material_from_visual);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -2023,6 +2024,39 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
         if (ok)
           std::memcpy(t_ps_block + reg * 16, v, 16);
+      }
+    }
+    // A tree draw has no entry, but both operands of the same formula are
+    // addressable: the base is a float4 at visual + 3404, and the staging
+    // struct at 0x82DE80D8 holds the gate at +392 and a per-component
+    // modulator at +396..+404. The interpreter stores the base straight
+    // through when the gate is positive, and base * modulator otherwise
+    // (loc_822807F4 / loc_82280824). Reproducing that removes the sibling
+    // inference for tree draws too (2026-09-04).
+    if (!tag.from_list && REXCVAR_GET(bd_material_from_visual) &&
+        tag.visual_va) {
+      constexpr u32 kStaging = 0x82DE80D8u;
+      float base[4];
+      bool ok = true;
+      for (u32 i = 0; i < 4; ++i) {
+        const u32 w = bd::mem::try_load<u32>(tag.visual_va + 3404 + i * 4);
+        std::memcpy(&base[i], &w, 4);
+        if (!std::isfinite(base[i]))
+          ok = false;
+      }
+      const i32 gate = static_cast<i32>(bd::mem::try_load<u32>(kStaging + 392));
+      if (ok) {
+        float out[4] = {base[0], base[1], base[2], base[3]};
+        if (gate <= 0) {
+          for (u32 i = 0; i < 3; ++i) {
+            const u32 w = bd::mem::try_load<u32>(kStaging + 396 + i * 4);
+            float m;
+            std::memcpy(&m, &w, 4);
+            if (std::isfinite(m))
+              out[i] = base[i] * m;
+          }
+        }
+        std::memcpy(t_ps_block + 3 * 16, out, 16);
       }
     }
     // The pass camera, from this frame's interpreted draws of this view.

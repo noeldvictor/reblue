@@ -961,6 +961,12 @@ REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_material_from_entry, true, kCvarGroup,
                     "Read a render-list draw's material constants from its "
                     "entry rather than a sibling's.");
+// The same for a tree draw, which has no entry: base at visual + 3404 times
+// the staging struct's modulator, gated the way the interpreter gates it.
+// Off until the verifier prices it.
+REXCVAR_DEFINE_BOOL(bd_material_from_visual, false, kCvarGroup,
+                    "Compose a tree draw's material from visual + 3404 and "
+                    "the staging modulator.");
 REXCVAR_DEFINE_BOOL(bd_material_source, false, kCvarGroup,
                     "Search a tree draw's mesh for its captured material "
                     "colours, to find where the cook reads them from.");
