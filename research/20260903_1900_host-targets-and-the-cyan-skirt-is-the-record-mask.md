@@ -194,3 +194,31 @@ The evening's sequence runs separated what the eye read as one flicker:
 `bd_record_mask_high` (default off) keeps registers c64 and up in the record, which one run
 read clean and which costs nothing measured on the desktop; it goes back on with the Quest
 measurement if the patch is named elsewhere.
+
+## Addendum (01:30): the patch is the ground pieces not rasterising
+
+The draw bisector (`bd_debug_bisect_windows = 16`, `bd_debug_bisect_span = 960`, a window of 60
+draws dropped for 15 frames at a time over a 240-frame sequence) reproduced the patch exactly,
+in every frame of one window: draws 480-540 of the frame, the ground pieces of two visuals
+(`282c5ce0`, `282c32a0` in that run: ~30 blended sub-draws each through `bd_normal_ps`). Nothing
+else made it. So the patch is those pieces failing to rasterise where they should, with the
+scene clear showing.
+
+In a bad run the ledger shows the pieces drawn identically in patch and clean frames (medians:
+66 draws, 53 interpreted, 13 replayed, 29 meshes) and no piece's path correlates with the
+patch. The sampled verifier (`bd_host_draw_verify_every = 20`) in bad runs first reported the
+ground visual's PS bool constants differing (interp `046000E9`, replay `046000E0`, then
+`046000C9`): bits 0 and 3 are set by the node's run (the bool setter hooks now record what a
+run sets, like the float setters), bit 5 by a store the hooks never see (the bools are now
+diffed against a snapshot at capture, as the float block is). With those in, the verifier
+reports no composition difference for the pieces, and the patch is still there in about half
+the runs. The remaining candidates are a depth-only write over the region by some other
+queued draw (a caster or proxy with colour write off landing in the scene framebuffer) and
+the guest-side state an interpreted node inherits after replays; the composite's depth view
+alternated with colour frames (`bd_host_post_debug_depth` under `bd_ab_flag`) is the
+instrument for the first, and three attempts landed in good runs.
+
+Also on the way: replayed draws re-resolve their streams from the guest addresses at replay
+(`VideoState::vertex_stream_va`, `SubDraw::stream_va`), because the plume buffer behind a
+physical block is evicted at `bdSceneGraphDestroy` and replaced by the refresh path; the
+`[node]` line counts moved buffers (none seen yet in the rock scene) and refusals.

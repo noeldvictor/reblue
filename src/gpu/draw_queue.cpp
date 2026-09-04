@@ -32,6 +32,9 @@ REXCVAR_DECLARE(bool, bd_draw_instancing);
 REXCVAR_DECLARE(bool, bd_draw_pull);
 REXCVAR_DECLARE(bool, bd_draw_indirect);
 REXCVAR_DECLARE(bool, bd_record_mask);
+REXCVAR_DECLARE(i32, bd_debug_bisect_windows);
+REXCVAR_DECLARE(i32, bd_debug_bisect_frames);
+REXCVAR_DECLARE(i32, bd_debug_bisect_span);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder);
 REXCVAR_DECLARE(bool, bd_draw_instancing_singles_plain);
@@ -258,7 +261,40 @@ u64 GroupKey(const QueuedDraw &d) {
 
 bool DrawQueueEnabled() { return REXCVAR_GET(bd_draw_defer); }
 
+// bd_debug_bisect_windows: the draw bisector. Each frame's queued draws are
+// numbered in push order; the frame's draws in window w of N (each
+// bd_debug_bisect_span / N draws wide) are dropped, and w advances every
+// bd_debug_bisect_frames frames. A capture sequence over the run shows which
+// window removes an artefact, and the draw ledger names the draws in it
+// (2026-09-03, for the cyan polygon RenderDoc never captures).
+static bool BisectDrops(u32 &index_in_frame) {
+  const i32 windows = REXCVAR_GET(bd_debug_bisect_windows);
+  static u32 last_frame = ~0u, count = 0, last_window = ~0u;
+  const u32 frame = FrameStatFrameCount();
+  if (frame != last_frame) {
+    last_frame = frame;
+    count = 0;
+  }
+  index_in_frame = count++;
+  if (windows <= 0)
+    return false;
+  const u32 frames = static_cast<u32>(std::max(1, REXCVAR_GET(bd_debug_bisect_frames)));
+  const u32 span = static_cast<u32>(std::max(1, REXCVAR_GET(bd_debug_bisect_span)));
+  const u32 w = (frame / frames) % static_cast<u32>(windows);
+  const u32 size = std::max(1u, span / static_cast<u32>(windows));
+  const u32 lo = w * size, hi = lo + size;
+  if (w != last_window) {
+    last_window = w;
+    BD_INFO("[bisect] frame {}: window {} of {} drops draws [{}, {})", frame, w,
+            windows, lo, hi);
+  }
+  return index_in_frame >= lo && index_in_frame < hi;
+}
+
 void DrawQueuePush(const QueuedDraw &draw) {
+  u32 index_in_frame = 0;
+  if (BisectDrops(index_in_frame))
+    return;
   if (g_queue.capacity() == 0)
     g_queue.reserve(4096);
   g_queue.push_back(draw);

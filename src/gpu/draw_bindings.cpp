@@ -75,6 +75,21 @@ void Video::SetVertexDeclaration(GuestVertexDeclaration *decl) {
   s.vertex_declaration = decl;
 }
 
+void Video::NoteStreamSource(u32 slot, u32 guest_va, u32 offset) {
+  if (slot >= 16)
+    return;
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  s.vertex_stream_va[slot] = guest_va;
+  s.vertex_stream_offset[slot] = offset;
+}
+
+void Video::NoteIndexSource(u32 guest_va) {
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  s.index_va = guest_va;
+}
+
 void Video::SetIndices(GuestBuffer *indices) {
   auto &s = state();
   std::lock_guard lock(s.mutex);

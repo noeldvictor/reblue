@@ -106,6 +106,10 @@ public:
   static void SetPixelShader(GuestShader *shader);
   static void SetVertexDeclaration(GuestVertexDeclaration *decl);
   static void SetIndices(GuestBuffer *indices);
+  // The guest addresses behind SetStreamSource / SetIndices (see
+  // VideoState::vertex_stream_va).
+  static void NoteStreamSource(u32 slot, u32 guest_va, u32 offset);
+  static void NoteIndexSource(u32 guest_va);
   // buffer = RenderBufferReference{} clears the slot.
   static void SetVertexStream(u32 slot, plume::RenderBufferReference buffer,
                               u32 size, u32 stride);
@@ -640,6 +644,14 @@ struct VideoState {
   GuestBuffer *index_buffer = nullptr;
 
   plume::RenderVertexBufferView vertex_views[16]{};
+  // The guest buffer each stream slot was bound from, and the offset: a
+  // host-issued node draw re-resolves its streams from these at replay,
+  // because the plume buffer behind a physical block is evicted when the
+  // guest streams the scene graph out and replaced when it refreshes
+  // (gpu/scene/host_draw.cpp, 2026-09-03).
+  u32 vertex_stream_va[16]{};
+  u32 vertex_stream_offset[16]{};
+  u32 index_va = 0;
   plume::RenderInputSlot input_slots[16]{};
   plume::RenderIndexBufferView index_view{plume::RenderBufferReference{}, 0,
                                           plume::RenderFormat::R16_UINT};

@@ -72,6 +72,7 @@ REXCVAR_DECLARE(bool, bd_host_post_composite);
 REXCVAR_DECLARE(i32, bd_host_post_debug);
 REXCVAR_DECLARE(f64, bd_host_post_blur);
 REXCVAR_DECLARE(bool, bd_host_post_bloom_fold);
+REXCVAR_DECLARE(bool, bd_host_post_debug_depth);
 
 namespace bd::gpu {
 namespace {
@@ -547,7 +548,10 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   Pass(s, pipe, fb, rt->width, rt->height,
        PostPush{scene->descriptorIndex,
                 bloom ? bloom->descriptorIndex : 0u,
-                float(REXCVAR_GET(bd_host_post_debug)), 0.0f},
+                float(REXCVAR_GET(bd_host_post_debug_depth)
+                          ? 1
+                          : REXCVAR_GET(bd_host_post_debug)),
+                0.0f},
        /*keep_bound=*/true);
   if (c.composite_frames++ < 3)
     BD_INFO("[post] composite into {}x{}: dof ({:.3g}, {:.3g}, focus {:.3g}) "

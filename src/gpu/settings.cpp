@@ -472,6 +472,10 @@ REXCVAR_DEFINE_INT32(bd_node_diag_mesh, 0, kCvarGroup,
 // Diagnostic: every node the replay would issue is composed by the replay
 // and then interpreted, and the interpreter's draws are diffed against the
 // replay's composition ([verify] lines). The frame stays correct.
+REXCVAR_DEFINE_INT32(bd_host_draw_verify_every, 0, kCvarGroup,
+                     "Verify every Nth replay candidate in a normal run "
+                     "(0 = off).")
+    .range(0, 100000);
 REXCVAR_DEFINE_BOOL(bd_host_draw_verify, false, kCvarGroup,
                     "Diff the host replay against the interpreter per draw "
                     "(the interpreter draws).");
@@ -497,6 +501,18 @@ REXCVAR_DEFINE_BOOL(bd_host_list_build, true, kCvarGroup,
                     "Emit the guest's deferred render-list entries from a "
                     "host template instead of running the per-node "
                     "interpreter to build them.");
+// The draw bisector (draw_queue.cpp BisectDrops): N windows over the first
+// `span` queued draws of a frame, one window dropped at a time, advancing
+// every `frames` frames. 0 windows = off.
+REXCVAR_DEFINE_INT32(bd_debug_bisect_windows, 0, kCvarGroup,
+                     "Draw bisector: windows over a frame's draws (0 = off).")
+    .range(0, 4096);
+REXCVAR_DEFINE_INT32(bd_debug_bisect_frames, 15, kCvarGroup,
+                     "Draw bisector: frames per window.")
+    .range(1, 10000);
+REXCVAR_DEFINE_INT32(bd_debug_bisect_span, 1024, kCvarGroup,
+                     "Draw bisector: draws covered by the windows.")
+    .range(1, 100000);
 REXCVAR_DEFINE_BOOL(bd_debug_skip_list_draws, false, kCvarGroup,
                     "Probe: drop the scene-pass draws that come from the "
                     "guest's deferred render list (sorted and translucent "
@@ -799,6 +815,10 @@ REXCVAR_DEFINE_BOOL(bd_host_targets, true, kCvarGroup,
 // pass. Two full-res blits and two full-screen draws a frame (2026-09-03).
 // The bloom mask's three passes (bright, blur, blur at 480x270) folded into
 // the composite as the bright pass of dof level 2 (2026-09-03).
+// A bool twin of bd_host_post_debug = 1 (the scene depth as the frame), so
+// bd_ab_flag can alternate colour and depth frames in one capture sequence.
+REXCVAR_DEFINE_BOOL(bd_host_post_debug_depth, false, kCvarGroup,
+                    "Composite the scene depth instead of the image.");
 REXCVAR_DEFINE_BOOL(bd_host_post_bloom_fold, true, kCvarGroup,
                     "Compute bloom in the composite from a dof level instead "
                     "of three mask passes.");

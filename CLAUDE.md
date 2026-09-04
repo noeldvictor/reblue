@@ -641,13 +641,27 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    evening were noise - the artefact is present in about half the runs and in half
    the frames when present, so only within-run A/Bs count), the replay verifier sees
    no difference in what is composed, the draw ledger sees the same draws with paths
-   swapped, and RenderDoc never captures a frame with it. The next instrument is a
-   draw-id render (every queued draw's pixels coloured by its sequence through a spec
-   constant and a push constant) so a capture without RenderDoc names the draw.
-   Kept from the hunt: `bd_record_mask_high` (off: registers c64+ always from the
-   record), `bd_record_mask_mode` and the `[records]` group dump, the sequence
-   metrics in the session scratchpad (`seqstats.py`: uniform frames, lower-frame
-   cyan, neighbour jumps).
+   swapped, and RenderDoc never captures a frame with it. **Later the same night
+   (01:30)**: the draw bisector (`bd_debug_bisect_windows`: the queue drops a window of
+   each frame's draws, moving every N frames) reproduces the patch exactly by dropping
+   draws 480-540 of the frame, which are the ground pieces of two visuals drawn as ~30
+   blended lit sub-draws each - so the patch is those pieces failing to rasterise, not a
+   draw painting cyan. The ledger shows the pieces drawn identically in patch and clean
+   frames (66 draws, 53 interpreted, 13 replayed, 29 meshes, no piece's path tracks the
+   patch), so the interpreted pieces fail too; the sampled verifier
+   (`bd_host_draw_verify_every`, a normal run verifying every Nth replay) found and
+   fixed three real composition gaps on the way (PS bools bits 0/3 set by the node's
+   run and bit 5 set by a store the setter hooks never see, both now diffed against a
+   snapshot like the float block; the pass camera stays c0-c1) and then reports nothing
+   for those pieces in bad runs. What is left to look at: a depth-only write over the
+   region (the composite's depth view, `bd_host_post_debug_depth` alternated with
+   colour by `bd_ab_flag`, in a bad run - three attempts landed in good runs), and the
+   inherited state an *interpreted* node takes from the guest device after replays.
+   Only within-run comparisons count: the artefact is present in about half the runs.
+   Kept: `bd_record_mask_high` (off: registers c64+ always from the record),
+   `bd_record_mask_mode`, the `[records]` group dump, the sequence metrics in the
+   session scratchpad (`seqstats.py`), the stream re-resolution of replayed draws
+   (the plume buffer behind a physical block moves; `[node] ... re-resolved` counts).
 7. **Assets** (stage 3), then animation and foveation.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.

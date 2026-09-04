@@ -51,6 +51,8 @@ void NoteTextureSet(u32 index);
 // count) of the vertex (or pixel) file were written while a node's run is
 // being captured - written, whether or not the value moved.
 void NoteConstantsSet(bool vertex, u32 start, u32 count);
+// The bool registers [start, start + count) a node's run set.
+void NoteBoolsSet(bool vertex, u32 start, u32 count);
 // The same write with its source: the guest address the values were copied
 // from. Where that lands (inside the visual, the mesh, the node's palette
 // slot, the traverse context, or elsewhere) is what lets the host read the

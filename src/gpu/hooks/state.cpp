@@ -294,6 +294,7 @@ void D3DDevice_SetStreamSource_hook(u32 /*device*/, u32 stream,
     bd::gpu::Video::SetVertexStream(stream, plume::RenderBufferReference{}, 0,
                                     0);
   }
+  bd::gpu::Video::NoteStreamSource(stream, buffer_guest, offset);
 }
 
 void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
@@ -307,6 +308,7 @@ void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
         ResolveGuestBufferVa(indices_guest, bd::gpu::ResourceType::IndexBuffer);
   }
   bd::gpu::Video::SetIndices(ib);
+  bd::gpu::Video::NoteIndexSource(indices_guest);
 }
 
 // SetSamplerState is deliberately NOT hooked: its recompiled body writes the
@@ -346,12 +348,30 @@ REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantFN) {
 }
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantI,
                            bd::gpu::Video::MarkVSConstantsDirty())
-REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantB,
-                           bd::gpu::Video::MarkVSConstantsDirty())
+// The bool setters also tell the host-issued node draw which bool registers
+// a node's interpreter run writes: (device, start, data, count). A replay
+// takes those bits from its template and the rest from the live device
+// (2026-09-03: the ground pieces at the village rock set PS bools 0 and 3
+// per node; taken live they were the previous node's, and the pieces drew
+// without their texture path - the "cyan skirt").
+REX_EXTERN(__imp__D3DDevice_SetVertexShaderConstantB);
+REX_HOOK_RAW(D3DDevice_SetVertexShaderConstantB) {
+  const u32 start = ctx.r4.u32;
+  const u32 count = ctx.r6.u32;
+  __imp__D3DDevice_SetVertexShaderConstantB(ctx, base);
+  bd::gpu::Video::MarkVSConstantsDirty();
+  bd::gpu::scene::NoteBoolsSet(true, start, count);
+}
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantI,
                            bd::gpu::Video::MarkPSConstantsDirty())
-REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetPixelShaderConstantB,
-                           bd::gpu::Video::MarkPSConstantsDirty())
+REX_EXTERN(__imp__D3DDevice_SetPixelShaderConstantB);
+REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantB) {
+  const u32 start = ctx.r4.u32;
+  const u32 count = ctx.r6.u32;
+  __imp__D3DDevice_SetPixelShaderConstantB(ctx, base);
+  bd::gpu::Video::MarkPSConstantsDirty();
+  bd::gpu::scene::NoteBoolsSet(false, start, count);
+}
 
 // bdSetViewportConstants writes (1/W, 1/H, 0, scale) into VS c21 (device+0x850)
 // and PS c21 (device+0x1850), while Visual__DrawVerticesUP writes PS c3

@@ -55,6 +55,8 @@
 #include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/host_resource_heap.h"
+#include "gpu/physical_buffers.h"
 #include "gpu/draw_queue.h"
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/draw_dispatch.h"
@@ -66,6 +68,7 @@ REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
+REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 
 namespace bd::gpu::scene {
 
@@ -106,6 +109,15 @@ struct SubDraw {
   u32 surface_mask = 0;
   plume::RenderVertexBufferView vertex_views[16]{};
   plume::RenderInputSlot input_slots[16]{};
+  // The guest buffers behind the streams and the index buffer at capture.
+  // The replay re-resolves the plume buffers from these: a physical block
+  // is evicted when its scene graph streams out and replaced when it
+  // refreshes, and a template holding the old plume reference drew nothing
+  // where the ground pieces at the village rock should be, on the frames
+  // they replayed (2026-09-03). A buffer that is gone refuses the replay.
+  u32 stream_va[16]{};
+  u32 stream_offset[16]{};
+  u32 index_va = 0;
   u32 vertex_first = 0;
   u32 vertex_count = 0;
   plume::RenderIndexBufferView index_view{plume::RenderBufferReference{}, 0,
@@ -122,6 +134,9 @@ struct SubDraw {
   std::vector<RegDelta> ps_delta;
   std::vector<FetchDelta> fetch_delta;
   u32 bools[8]{};
+  // Which bool bits the node set (VS words 0-3, PS words 4-7): the replay
+  // takes these from the template and the rest from the live device.
+  u32 bools_set[8]{};
 };
 
 struct NodeTemplate {
@@ -185,6 +200,8 @@ struct Store {
   std::mutex mutex;
   PassRegs pass_regs[16]; // by render view
   u32 why_pass = 0;       // replays refused: the pass's camera not seen yet
+  u32 stale_buffer = 0;   // replays refused: a stream's buffer is gone
+  u32 moved_buffer = 0;   // replayed streams whose plume buffer had moved
   u32 why_drift = 0;      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
   std::unordered_map<u64, u32> never; // keys that cannot replay: frame noted
@@ -240,6 +257,14 @@ struct Pending {
   u32 sampler_mask = 0;
   u32 vs_set[8] = {};
   u32 ps_set[8] = {};
+  // The bool registers the run set (a bit per bool, 128 a stage).
+  u32 vs_bools_set[4] = {};
+  u32 ps_bools_set[4] = {};
+  // The bools as the run found them: a bit that moved by a store the
+  // setter hooks never saw counts as set (the ground pieces' PS bit 5,
+  // sampled verifier 2026-09-03), as DiffBlock does for the float block.
+  u32 vs_bools_before[4] = {};
+  u32 ps_bools_before[4] = {};
   std::vector<SubDraw> draws;
   u32 bone_count = 0;  // matrices uploaded at c60 by this run, 0 if none
   bool needs_bones = false; // a draw's vertex shader reads c60..c155
@@ -542,6 +567,12 @@ const char *const kWhy[8] = {"count", "pipeline", "textures", "params",
 // Folds a later sighting into the template. False when the structure
 // differs, which makes the template volatile.
 bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
+  for (size_t i = 0; i < have.size() && i < now.size(); ++i) {
+    if (std::memcmp(have[i].stream_va, now[i].stream_va, sizeof(have[i].stream_va)) != 0 ||
+        std::memcmp(have[i].stream_offset, now[i].stream_offset, sizeof(have[i].stream_offset)) != 0 ||
+        have[i].index_va != now[i].index_va)
+      return false;
+  }
   if (have.size() != now.size()) {
     ++g_why[0];
     return false;
@@ -663,7 +694,12 @@ void Tally(Store &st, bool replayed, bool from_list) {
               st.acc_never / st.acc_frames, st.why_pass / st.acc_frames,
               st.why_drift / st.acc_frames, st.templates.size(),
               st.volatile_count, why.empty() ? " -" : why);
-      st.why_pass = st.why_drift = 0;
+      if (st.stale_buffer || st.moved_buffer)
+        BD_INFO("[node] since the last report: {} replays refused (a stream's "
+                "buffer gone, the template recaptures), {} replayed streams "
+                "re-resolved to a moved plume buffer",
+                st.stale_buffer, st.moved_buffer);
+      st.why_pass = st.why_drift = st.stale_buffer = st.moved_buffer = 0;
       st.acc_replayed = st.acc_interpreted = st.acc_frames = st.acc_stale = 0;
       st.acc_none = st.acc_refresh = st.acc_volatile = st.acc_never = 0;
     }
@@ -696,6 +732,16 @@ void NoteTextureSet(u32 index) {
   auto &p = t_pending;
   if (p.valid && index < 16)
     p.set_mask |= 1u << index;
+}
+
+void NoteBoolsSet(bool vertex, u32 start, u32 count) {
+  auto &p = t_pending;
+  if (!p.valid)
+    return;
+  u32 *set = vertex ? p.vs_bools_set : p.ps_bools_set;
+  const u32 end = std::min<u32>(start + count, 128u);
+  for (u32 b = start; b < end; ++b)
+    set[b / 32] |= 1u << (b % 32);
 }
 
 void NoteConstantsSet(bool vertex, u32 start, u32 count) {
@@ -757,6 +803,13 @@ void HostDrawSnapshotBefore() {
   p.sampler_mask = 0;
   std::memset(p.vs_set, 0, sizeof(p.vs_set));
   std::memset(p.ps_set, 0, sizeof(p.ps_set));
+  std::memset(p.vs_bools_set, 0, sizeof(p.vs_bools_set));
+  std::memset(p.ps_bools_set, 0, sizeof(p.ps_bools_set));
+  if (const auto *dev0 = bd::mem::try_at<const D3DDevice>(LastGuestDeviceVa()))
+    for (u32 i = 0; i < 4; ++i) {
+      p.vs_bools_before[i] = static_cast<u32>(dev0->vsBoolConstants[i]);
+      p.ps_bools_before[i] = static_cast<u32>(dev0->psBoolConstants[i]);
+    }
   p.draws.clear();
   const u32 device_guest = LastGuestDeviceVa();
   const auto *dev = bd::mem::try_at<const D3DDevice>(device_guest);
@@ -1013,7 +1066,10 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   for (u32 i = 0; i < 16; ++i) {
     d.vertex_views[i] = q.vertex_views[i];
     d.input_slots[i] = q.input_slots[i];
+    d.stream_va[i] = s.vertex_stream_va[i];
+    d.stream_offset[i] = s.vertex_stream_offset[i];
   }
+  d.index_va = s.index_va;
   d.vertex_first = q.vertex_first;
   d.vertex_count = q.vertex_count;
   d.index_view = q.index_view;
@@ -1027,6 +1083,8 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   for (u32 i = 0; i < 4; ++i) {
     d.bools[i] = static_cast<u32>(dev->vsBoolConstants[i]);
     d.bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
+    d.bools_set[i] = p.vs_bools_set[i] | (d.bools[i] ^ p.vs_bools_before[i]);
+    d.bools_set[4 + i] = p.ps_bools_set[i] | (d.bools[4 + i] ^ p.ps_bools_before[i]);
   }
   if (t_verify.active && t_verify.key == KeyOf(tag))
     VerifyAgainstReplay(tag, d, p.needs_bones);
@@ -1311,6 +1369,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   const NodeTemplate *t = nullptr;
   const VisualRegs *v = nullptr;
   const u32 frame = FrameStatFrameCount();
+  bool sampled_verify = false;
   {
     std::lock_guard lock(st.mutex);
     auto it = st.templates.find(KeyOf(tag));
@@ -1413,12 +1472,67 @@ bool HostDrawReplay(const NodeTag &tag) {
         ++st.why_pass;
         return false;
       }
-    if (!REXCVAR_GET(bd_host_draw_verify)) {
+    // Sampled verification: every Nth replay candidate is composed and then
+    // interpreted and diffed, in an otherwise normal run, so a run that goes
+    // wrong reports what its replays would have composed differently.
+    static u32 sample_counter = 0;
+    const i32 every = REXCVAR_GET(bd_host_draw_verify_every);
+    sampled_verify = every > 0 && (++sample_counter % static_cast<u32>(every)) == 0;
+    if (!REXCVAR_GET(bd_host_draw_verify) && !sampled_verify) {
       Tally(st, true, tag.from_list);
       ++it->second.replays;
     }
   }
-  const bool verify = REXCVAR_GET(bd_host_draw_verify);
+  // The streams as the guest holds them now. The plume buffer behind a
+  // physical block moves under the template (streaming, refresh); a slot
+  // whose buffer is gone refuses the replay and recaptures.
+  struct ResolvedStreams {
+    plume::RenderVertexBufferView views[16];
+    plume::RenderIndexBufferView index;
+  };
+  static thread_local std::vector<ResolvedStreams> resolved;
+  resolved.resize(t->draws.size());
+  for (size_t di = 0; di < t->draws.size(); ++di) {
+    const SubDraw &d = t->draws[di];
+    ResolvedStreams &rs = resolved[di];
+    for (u32 k = 0; k < 16; ++k) {
+      rs.views[k] = d.vertex_views[k];
+      if (!d.stream_va[k] || !d.vertex_views[k].buffer.ref)
+        continue;
+      GuestBuffer *b = HostResourceHeap::FromGuest<GuestBuffer>(d.stream_va[k]);
+      if (!b)
+        b = ResolveGuestBufferVa(d.stream_va[k], ResourceType::VertexBuffer);
+      if (!b || !b->hasBuffer()) {
+        std::lock_guard lock(st.mutex);
+        ++st.stale_buffer;
+        if (auto it = st.templates.find(KeyOf(tag)); it != st.templates.end())
+          it->second.captured_frame = 0;
+        return false;
+      }
+      rs.views[k].buffer = b->bufferRef(d.stream_offset[k]);
+      rs.views[k].size = d.stream_offset[k] < b->dataSize
+                             ? b->dataSize - d.stream_offset[k]
+                             : 0;
+      if (rs.views[k].buffer.ref != d.vertex_views[k].buffer.ref)
+        ++st.moved_buffer; // the plume buffer changed under the template
+    }
+    rs.index = d.index_view;
+    if (d.indexed && d.index_va) {
+      GuestBuffer *ib = HostResourceHeap::FromGuest<GuestBuffer>(d.index_va);
+      if (!ib)
+        ib = ResolveGuestBufferVa(d.index_va, ResourceType::IndexBuffer);
+      if (!ib || !ib->hasBuffer()) {
+        std::lock_guard lock(st.mutex);
+        ++st.stale_buffer;
+        if (auto it = st.templates.find(KeyOf(tag)); it != st.templates.end())
+          it->second.captured_frame = 0;
+        return false;
+      }
+      rs.index.buffer = ib->bufferRef(0);
+      rs.index.size = ib->dataSize;
+    }
+  }
+  const bool verify = REXCVAR_GET(bd_host_draw_verify) || sampled_verify;
   if (verify) {
     t_verify.active = false;
     t_verify.key = KeyOf(tag);
@@ -1488,7 +1602,9 @@ bool HostDrawReplay(const NodeTag &tag) {
   alignas(16) static thread_local u8 ps_base[kBlockBytes];
   CopyGuestVertexBlock(device_guest, vs_base);
   CopyGuestPixelBlock(device_guest, ps_base);
-  for (const SubDraw &d : t->draws) {
+  for (size_t di = 0; di < t->draws.size(); ++di) {
+    const SubDraw &d = t->draws[di];
+    const ResolvedStreams &rs = resolved[di];
     // The constant sources: the live files, the template's stable values,
     // the visual's fresh values, and the world rows.
     std::memcpy(t_vs_block, vs_base, kBlockBytes);
@@ -1509,14 +1625,27 @@ bool HostDrawReplay(const NodeTag &tag) {
     if (!t->bone_slots.empty())
       GatherBones(tag, t->bone_slots, t_vs_block);
     u32 bools[8];
-    // The live device's: the bits the guest toggles per pass and per visual
-    // (VS bit 30, PS bit 5 in the verifier) are set by the visual switch
-    // the guest performs itself before any replay of the visual, and the
-    // node's own bit (31, foliage) is applied below. The template's copy
-    // was the capture frame's (503 draws wrong).
+    // The bits the node's run set come from the template; the rest (the
+    // pass and visual bits the guest toggles - VS bit 30, PS bit 5 in the
+    // verifier) from the live device, which the guest's own visual switch
+    // wrote before any replay of the visual. Taking everything live gave
+    // the ground pieces at the rock the previous node's PS bits 0 and 3
+    // (sampled verifier, 2026-09-03); taking everything from the template
+    // gave 503 draws the capture frame's pass bits.
+    // The bits the node did not set are the visual's: an earlier node of
+    // the visual in the guest's order set them and nothing cleared them
+    // (PS bit 5 on the ground pieces, sampled verifier 2026-09-03), so they
+    // come from the visual's interpreted node this frame, and from the live
+    // device only before it has one.
+    const bool visual_fresh = v && v->bools_frame == frame;
     for (u32 i = 0; i < 4; ++i) {
-      bools[i] = static_cast<u32>(dev->vsBoolConstants[i]);
-      bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
+      const u32 rest_vs = visual_fresh ? v->bools[i]
+                                       : static_cast<u32>(dev->vsBoolConstants[i]);
+      const u32 rest_ps = visual_fresh ? v->bools[4 + i]
+                                       : static_cast<u32>(dev->psBoolConstants[i]);
+      bools[i] = (rest_vs & ~d.bools_set[i]) | (d.bools[i] & d.bools_set[i]);
+      bools[4 + i] = (rest_ps & ~d.bools_set[4 + i]) |
+                     (d.bools[4 + i] & d.bools_set[4 + i]);
     }
     if (has_foliage) {
       std::memcpy(t_vs_block + 57 * 16, foliage.v, sizeof(foliage.v));
@@ -1556,11 +1685,11 @@ bool HostDrawReplay(const NodeTag &tag) {
           s.textures[k] = d.textures[k];
         }
       }
-      std::memcpy(s.vertex_views, d.vertex_views, sizeof(s.vertex_views));
+      std::memcpy(s.vertex_views, rs.views, sizeof(s.vertex_views));
       std::memcpy(s.input_slots, d.input_slots, sizeof(s.input_slots));
       s.bound_vertex_first = d.vertex_first;
       s.bound_vertex_count = d.vertex_count;
-      s.index_view = d.index_view;
+      s.index_view = rs.index;
       Video::SetAlphaThreshold(d.alpha_threshold);
       mark_dirty();
       s.material_override = &ov;
