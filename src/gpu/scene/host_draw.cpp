@@ -80,6 +80,7 @@ REXCVAR_DECLARE(bool, bd_lod);
 REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(bool, bd_material_census);
+REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -1282,6 +1283,56 @@ void HostDrawCommit(const NodeTag &tag) {
   // and the pixel constants the run set. Two sub-draws with the same key want
   // the same cooked material record, whichever visual they belong to. Counted
   // here so the cook's size is known before it is written (2026-09-04).
+  // Where a tree draw's material colours sit, searched rather than guessed:
+  // the drift is all list draws, but a tree draw has a real mesh address and
+  // the same material structure, so the offset found here applies to both.
+  if (REXCVAR_GET(bd_material_source)) {
+    static u32 shown = 0;
+    if (!tag.from_list && tag.mesh_va && shown < 8) {
+      for (const SubDraw &d : p.draws) {
+        for (const RegDelta &r : d.ps_delta) {
+          if (r.reg != 3 && r.reg != 4)
+            continue;
+          const float *want = reinterpret_cast<const float *>(r.value);
+          // A needle of only 0s and 1s matches anything; wait for a material
+          // with a real colour in it.
+          bool interesting = false;
+          for (u32 i = 0; i < 4; ++i)
+            if (want[i] != 0.0f && want[i] != 1.0f)
+              interesting = true;
+          if (!interesting)
+            continue;
+          const u32 bases[3] = {tag.mesh_va,
+                                bd::mem::try_load<u32>(tag.mesh_va),
+                                bd::mem::try_load<u32>(tag.mesh_va + 0x10)};
+          const char *names[3] = {"mesh", "mesh[0]", "mesh+0x10 ptr"};
+          std::string found;
+          for (u32 bi = 0; bi < 3 && found.empty(); ++bi) {
+            const u32 b0 = bi ? __builtin_bswap32(bases[bi]) : bases[bi];
+            if (!b0)
+              continue;
+            for (u32 off = 0; off + 16 <= 4096 && found.empty(); off += 4) {
+              bool all = true;
+              for (u32 i = 0; i < 4 && all; ++i) {
+                const u32 w = bd::mem::try_load<u32>(b0 + off + i * 4);
+                const u32 sw = __builtin_bswap32(w);
+                float f;
+                std::memcpy(&f, &sw, 4);
+                all = std::fabs(f - want[i]) <= 1e-6f * (1.0f + std::fabs(want[i]));
+              }
+              if (all)
+                found = fmt::format(" FOUND at {}+{}", names[bi], off);
+            }
+          }
+          ++shown;
+          BD_INFO("[material] tree ps c{} ({:.3f} {:.3f} {:.3f} {:.3f}) mesh "
+                  "{:08x}:{}",
+                  r.reg, want[0], want[1], want[2], want[3], tag.mesh_va,
+                  found.empty() ? " not found" : found);
+        }
+      }
+    }
+  }
   if (REXCVAR_GET(bd_material_census)) {
     for (const SubDraw &d : p.draws) {
       u64 h = 0xC0FFEEull;

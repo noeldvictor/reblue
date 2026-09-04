@@ -153,14 +153,40 @@ mesh ran last.
 The next step is concrete: decode the material-colour tokens out of the mesh stream, which
 is a read of the interpreter around its material selection rather than another probe.
 
+## Materials are shared objects, not per-mesh data (17:10)
+
+`bd_material_source` runs the same search on a tree draw, which unlike a list draw has a
+real mesh address. Searched: the mesh, the object its first word points at, and the object
+at `mesh + 0x10` (the VB/declaration record table), 4 KB each. Not found in any of them.
+
+Two things fell out that matter more than the negative:
+
+- The first samples all carried `c3 = (1, 1, 1, 1)`, the default white diffuse - a needle of
+  only zeros and ones matches anything and finds nothing, so the search now waits for a
+  material with a real colour in it. Worth remembering for the next search of this kind.
+- With that filter on, **the same material `(0.149, 0.122, 0.051, 12.0)` appears across
+  several different meshes**. So a material is a *shared* object referenced by the token
+  stream, not data inline in the mesh.
+
+That is the shape of the thing to cook, and it agrees with the census: 121 distinct
+materials behind 579 node draws a frame is a table with references into it, not a value per
+draw. So the cook is a material table plus a per-sub-draw index, which is also what makes it
+small enough to ship.
+
+What is left to find is the table's base and how the token stream indexes it, and that is a
+read of the interpreter's material selection rather than a search - every structure reachable
+from the draw has now been scanned and ruled out.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
 - `bd_material_diag` - what a drifting material constant holds, beside the guest's
   per-draw material colour, so the source can be identified.
 - `bd_material_census` - distinct sub-draw materials by content, which sizes the cook.
-- The search in `bd_material_diag`: given a value, find it in a guest structure, or say it
-  is not there. Two structures were ruled out with it in one run each.
+- The search in `bd_material_diag` and `bd_material_source`: given a value, find it in a
+  guest structure or say it is not there. Four structures were ruled out with it, one run
+  each. Its two traps: the needle must be the value this node's own run captured, not a
+  sibling's, and a needle of only zeros and ones matches anything.
 
 Sources: `src/gpu/scene/host_draw.cpp` (`drifted`, the visual register publish, the drift
 counters), `src/gpu/shaders/hlsl/bd_normal_lit.hlsl` (the constant names),

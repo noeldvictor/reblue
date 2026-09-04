@@ -954,6 +954,9 @@ REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 1.0, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
                     "Multiview half width halves the height too, so the "
                     "present maps 1:1 instead of discarding half the frame.");
+REXCVAR_DEFINE_BOOL(bd_material_source, false, kCvarGroup,
+                    "Search a tree draw's mesh for its captured material "
+                    "colours, to find where the cook reads them from.");
 REXCVAR_DEFINE_BOOL(bd_material_census, false, kCvarGroup,
                     "Count distinct sub-draw materials by content, to size "
                     "the material cook.");
