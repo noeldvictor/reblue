@@ -827,6 +827,10 @@ REXCVAR_DEFINE_BOOL(bd_host_targets, true, kCvarGroup,
 // bd_ab_flag can alternate colour and depth frames in one capture sequence.
 REXCVAR_DEFINE_BOOL(bd_host_post_debug_depth, false, kCvarGroup,
                     "Composite the scene depth instead of the image.");
+// The five dof levels as one pass into a level atlas (post_pyramid_ps), each
+// filtered from the scene directly (2026-09-04); off = the five-pass chain.
+REXCVAR_DEFINE_BOOL(bd_host_post_atlas, true, kCvarGroup,
+                    "Build the dof pyramid as one pass into a level atlas.");
 REXCVAR_DEFINE_BOOL(bd_host_post_bloom_fold, true, kCvarGroup,
                     "Compute bloom in the composite from a dof level instead "
                     "of three mask passes.");

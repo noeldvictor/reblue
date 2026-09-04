@@ -59,12 +59,14 @@
 #include "src/gpu/shaders/hlsl/post_composite_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_composite_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -73,6 +75,7 @@ REXCVAR_DECLARE(i32, bd_host_post_debug);
 REXCVAR_DECLARE(f64, bd_host_post_blur);
 REXCVAR_DECLARE(bool, bd_host_post_bloom_fold);
 REXCVAR_DECLARE(bool, bd_host_post_debug_depth);
+REXCVAR_DECLARE(bool, bd_host_post_atlas);
 
 namespace bd::gpu {
 namespace {
@@ -91,6 +94,7 @@ enum class Shader : u32 {
   Bright = 2,
   DualDown = 3,
   Composite = 4,
+  Pyramid = 5,
   Count
 };
 
@@ -111,8 +115,11 @@ struct CompositeConstants {
   u32 indices1[4];
   // Bloom folded into the composite (bd_host_post_bloom_fold): threshold,
   // intensity, fold flag (nonzero: take the bright pass of dof level 2 in
-  // the composite instead of sampling a bloom mask texture).
+  // the composite instead of sampling a bloom mask texture), atlas flag
+  // (nonzero: the levels are rects of the atlas at indices1[2]).
   float bloom[4];
+  // The five levels' rects in the atlas, as UV (x, y, w, h).
+  float rects[5][4];
 };
 
 struct Scratch {
@@ -140,6 +147,9 @@ struct DofInputs {
   // copy of the scene - the frame came out four times too bright reading it.
   GuestTexture *scene_src = nullptr;
   GuestTexture *scene_tex = nullptr;
+  // The level atlas (bd_host_post_atlas): one pass, the levels side by side.
+  Scratch *atlas = nullptr;
+  float rects[5][4] = {};
   float scene_scale = 1.0f; // what the composite multiplies the scene tap by
   float params[4] = {0, 0, 0, 0}; // c27.x, .y, .z, .w
   bool valid = false;
@@ -179,6 +189,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(post_dual_down_ps), "main", kHostShaderFormat);
   c.shaders[u32(Shader::Composite)] = s.device->createShader(
       REBLUE_SHADER_BLOB(post_composite_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Pyramid)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_pyramid_ps), "main", kHostShaderFormat);
   for (auto &sh : c.shaders) {
     if (!sh) {
       BD_ERROR("[post] host post shaders failed to create; chain disabled");
@@ -284,6 +296,21 @@ void Transition(VideoState &s, plume::RenderTexture *texture,
 // the guest's 2D passes alias next, and the same framebuffer bound again
 // continues plume's render pass; unbinding ended it and the 2D pass began a
 // new one over the same image (a full-res store and load, 2026-09-03).
+void PassAt(VideoState &s, plume::RenderPipeline *pipeline,
+            plume::RenderFramebuffer *fb, u32 x, u32 y, u32 width, u32 height,
+            const PostPush &push, bool keep_bound) {
+  auto *cmd = s.command_list;
+  cmd->setFramebuffer(fb);
+  cmd->setPipeline(pipeline);
+  cmd->setViewports(plume::RenderViewport(float(x), float(y), float(width), float(height)));
+  cmd->setScissors(plume::RenderRect(i32(x), i32(y), i32(x + width), i32(y + height)));
+  cmd->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &push,
+                                kCopyPushConstantByteOffset, sizeof(push));
+  cmd->drawInstanced(3, 1, 0, 0);
+  if (!keep_bound)
+    cmd->setFramebuffer(nullptr);
+}
+
 void Pass(VideoState &s, plume::RenderPipeline *pipeline,
           plume::RenderFramebuffer *fb, u32 width, u32 height,
           const PostPush &push, bool keep_bound = false) {
@@ -379,6 +406,50 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   if (!scene)
     return false;
   const bool layered = scene->layers > 1;
+  if (REXCVAR_GET(bd_host_post_atlas)) {
+    // One pass: the five levels side by side in an atlas half the scene's
+    // height (W/2 + W/4 + W/8 + W/16 + W/16 = W), each filtered from the
+    // scene by post_pyramid_ps. Five render passes into the guest's level
+    // textures before (2026-09-04).
+    auto *pyr = Pipeline(s, c, Shader::Pyramid, scene->format, layered);
+    Scratch *atlas = GetScratch(s, c, scene->width, std::max(1u, scene->height / 2),
+                                scene->format, 2, scene->layers);
+    if (!pyr || !atlas)
+      return false;
+    const float level_scale = SourceScale(s.textures[1]);
+    c.dof.scene_scale = level_scale;
+    c.dof.scene_src = scene;
+    c.dof.scene_tex = s.textures[1];
+    Transition(s, atlas->texture.get(), atlas->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    u32 x = 0;
+    for (u32 level = 0; level < 5; ++level) {
+      const u32 shift = std::min(level + 1, 4u);
+      const u32 w = std::max(1u, scene->width >> shift);
+      const u32 h = std::max(1u, scene->height >> shift);
+      PassAt(s, pyr, atlas->framebuffer.get(), x, 0, w, h,
+             PostPush{scene->descriptorIndex, level,
+                      float(REXCVAR_GET(bd_host_post_blur)), level_scale},
+             /*keep_bound=*/level + 1 < 5);
+      c.dof.rects[level][0] = float(x) / float(atlas->width);
+      c.dof.rects[level][1] = 0.0f;
+      c.dof.rects[level][2] = float(w) / float(atlas->width);
+      c.dof.rects[level][3] = float(h) / float(atlas->height);
+      x += w;
+    }
+    Transition(s, atlas->texture.get(), atlas->layout, plume::RenderTextureLayout::SHADER_READ);
+    c.dof.atlas = atlas;
+    for (u32 i = 0; i < 5; ++i)
+      c.dof.levels[i] = nullptr;
+    c.dof.depth = s.textures[0];
+    for (u32 i = 0; i < 4; ++i)
+      c.dof.params[i] = GuestPixelConstant(device_guest, 27, i);
+    c.dof.valid = Readable(Content(c.dof.depth));
+    if (c.dof_frames++ < 3)
+      BD_INFO("[post] dof atlas {}x{} from the {}x{} scene in one pass, depth {}",
+              atlas->width, atlas->height, scene->width, scene->height,
+              c.dof.valid ? "yes" : "no");
+    return true;
+  }
   auto *dual = Pipeline(s, c, Shader::DualDown, scene->format, layered);
   if (!dual)
     return false;
@@ -517,17 +588,22 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   k.bloom[0] = GuestPixelConstant(device_guest, 27, 0);
   k.bloom[1] = GuestPixelConstant(device_guest, 27, 1);
   k.bloom[2] = fold ? 1.0f : 0.0f;
-  k.bloom[3] = 0.0f;
-  for (u32 i = 0; i < 5; ++i) {
-    GuestTexture *level = Content(c.dof.levels[i]);
-    if (!Readable(level))
-      return bail("a dof level not readable");
-    Transition(s, level->texture, level->layout, plume::RenderTextureLayout::SHADER_READ);
-    const u32 idx = level->descriptorIndex;
-    if (i < 3)
-      k.indices0[1 + i] = idx;
-    else
-      k.indices1[i - 3] = idx;
+  k.bloom[3] = c.dof.atlas ? 1.0f : 0.0f;
+  if (c.dof.atlas) {
+    k.indices1[2] = c.dof.atlas->slot;
+    std::memcpy(k.rects, c.dof.rects, sizeof(k.rects));
+  } else {
+    for (u32 i = 0; i < 5; ++i) {
+      GuestTexture *level = Content(c.dof.levels[i]);
+      if (!Readable(level))
+        return bail("a dof level not readable");
+      Transition(s, level->texture, level->layout, plume::RenderTextureLayout::SHADER_READ);
+      const u32 idx = level->descriptorIndex;
+      if (i < 3)
+        k.indices0[1 + i] = idx;
+      else
+        k.indices1[i - 3] = idx;
+    }
   }
   auto alloc = UploadHostConstants(&k, sizeof(k));
   if (!alloc.memory)

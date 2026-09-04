@@ -542,10 +542,14 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    calls 34 -> 29, image unchanged. **Bloom folded into the composite (21:50,
    `bd_host_post_bloom_fold`)**: the bright pass of dof level 2 computed in the composite
    shader instead of bright + two blurs into a mask texture: 15 -> 12 passes, barrier
-   calls 29 -> 23, the capture reads the same. Left of the post chain: the five-level dof
-   pyramid (the guest's level textures, one pass each; a compute chain or fewer levels),
-   the desktop's two MSAA resolves, the present blit. A Quest field frame is now
-   shadow | reflection | scene | dof x5 | composite+2D | present.
+   calls 29 -> 23, the capture reads the same. **The dof pyramid is one pass (2026-09-04
+   03:30, `bd_host_post_atlas`)**: `post_pyramid_ps` filters each of the five levels
+   straight from the scene into a level atlas half the scene's height (W/2 + W/4 + W/8 +
+   W/16 + W/16 = W), a 5x5 tent at the level's radius standing in for the chained dual
+   downsample, and the composite taps the atlas by rect; 12 -> 8 passes, barrier calls
+   23 -> 15, the capture reads the same. Left: the desktop's two MSAA resolves and the
+   present blit. A Quest field frame is now shadow | reflection | scene | dof atlas |
+   composite+2D | present - six passes.
 3. **The materials.** `bd_frag_census=true` on a desktop run prints `[frag] ... the top
    ten` every 300 frames: fragment shader invocations per guest pixel shader from
    pipeline-statistics queries around every queued draw (`gpu/frag_census.cpp`; the

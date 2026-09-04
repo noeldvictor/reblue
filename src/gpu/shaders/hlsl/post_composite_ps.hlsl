@@ -28,6 +28,23 @@ float4 Tap(uint index, float2 uv)
     return g_Texture2DDescriptorHeap[index].SampleLevel(g_SamplerDescriptorHeap[0], float3(uv, float(g_ViewId)), 0.0);
 }
 
+// A dof level: its own texture, or its rect of the level atlas (g_PSC[5].w),
+// the tap kept half a texel inside the rect so levels do not bleed.
+float4 TapLevel(uint i, uint level_index, float2 uv)
+{
+    if (g_PSC[5].w > 0.5)
+    {
+        const uint atlas = asuint(g_PSC[4].z);
+        const float4 r = g_PSC[6 + i];
+        uint w, h, layers;
+        g_Texture2DDescriptorHeap[atlas].GetDimensions(w, h, layers);
+        const float2 inset = 0.5 / float2(max(w, 1u), max(h, 1u));
+        const float2 t = clamp(r.xy + uv * r.zw, r.xy + inset, r.xy + r.zw - inset);
+        return Tap(atlas, t);
+    }
+    return Tap(level_index, uv);
+}
+
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
             in uint viewId : SV_ViewID) : SV_Target
 {
@@ -54,28 +71,28 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
     float4 dof;
     if (lvl < 1.0)
     {
-        dof = lerp(scene, Tap(level[0], texCoord), lvl);
+        dof = lerp(scene, TapLevel(0, level[0], texCoord), lvl);
     }
     else
     {
         const float l2 = log2(lvl);
         if (l2 < 1.0)
-            dof = lerp(Tap(level[0], texCoord), Tap(level[1], texCoord), l2);
+            dof = lerp(TapLevel(0, level[0], texCoord), TapLevel(1, level[1], texCoord), l2);
         else if (l2 < 2.0)
-            dof = lerp(Tap(level[1], texCoord), Tap(level[2], texCoord), frac(l2));
+            dof = lerp(TapLevel(1, level[1], texCoord), TapLevel(2, level[2], texCoord), frac(l2));
         else if (l2 < 3.0)
-            dof = lerp(Tap(level[2], texCoord), Tap(level[3], texCoord), frac(l2));
+            dof = lerp(TapLevel(2, level[2], texCoord), TapLevel(3, level[3], texCoord), frac(l2));
         else if (l2 < 4.0)
-            dof = lerp(Tap(level[3], texCoord), Tap(level[4], texCoord), frac(l2));
+            dof = lerp(TapLevel(3, level[3], texCoord), TapLevel(4, level[4], texCoord), frac(l2));
         else
-            dof = Tap(level[4], texCoord);
+            dof = TapLevel(4, level[4], texCoord);
     }
 
     // Bloom: the mask texture, or (folded) the bright pass of dof level 2.
     float4 bloom;
     if (g_PSC[5].z > 0.5)
     {
-        const float3 rgb = Tap(level[2], texCoord).xyz;
+        const float3 rgb = TapLevel(2, level[2], texCoord).xyz;
         const float threshold = g_PSC[5].x;
         const float intensity = g_PSC[5].y;
         const float3 over = max(rgb - threshold, 0.0);
