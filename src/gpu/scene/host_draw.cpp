@@ -47,6 +47,7 @@
 
 #include <fmt/format.h>
 #include <rex/cvar.h>
+#include <rex/graphics/xenos.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
 
@@ -58,9 +59,11 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/draw_queue.h"
+#include "gpu/format.h"
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
 
@@ -69,6 +72,9 @@ REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
 REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
+REXCVAR_DECLARE(bool, bd_lod);
+REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
+REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 
 namespace bd::gpu::scene {
 
@@ -1499,9 +1505,17 @@ bool HostDrawReplay(const NodeTag &tag) {
   struct ResolvedStreams {
     plume::RenderVertexBufferView views[16];
     plume::RenderIndexBufferView index;
+    // The guest bytes behind the streams and the index buffer, for the
+    // coarse lists (mesh_lod.cpp) to read positions and indices from.
+    u32 mirror_va[16]{};
+    u32 mirror_size[16]{};
+    u32 index_mirror_va = 0;
+    u32 index_mirror_size = 0;
   };
   static thread_local std::vector<ResolvedStreams> resolved;
   resolved.resize(t->draws.size());
+  const bool verify_requested =
+      REXCVAR_GET(bd_host_draw_verify) || sampled_verify;
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     ResolvedStreams &rs = resolved[di];
@@ -1523,6 +1537,8 @@ bool HostDrawReplay(const NodeTag &tag) {
       rs.views[k].size = d.stream_offset[k] < b->dataSize
                              ? b->dataSize - d.stream_offset[k]
                              : 0;
+      rs.mirror_va[k] = b->guestMirrorVa;
+      rs.mirror_size[k] = b->dataSize;
       if (rs.views[k].buffer.ref != d.vertex_views[k].buffer.ref)
         ++st.moved_buffer; // the plume buffer changed under the template
     }
@@ -1540,8 +1556,17 @@ bool HostDrawReplay(const NodeTag &tag) {
       }
       rs.index.buffer = ib->bufferRef(0);
       rs.index.size = ib->dataSize;
+      rs.index_mirror_va = ib->guestMirrorVa;
+      rs.index_mirror_size = ib->dataSize;
     }
   }
+  // The shadow and reflection views draw coarse lists over the same
+  // vertices (mesh_lod.h). Not under the verifier: it compares against the
+  // interpreter's own draw.
+  const i32 lod_grid = (verify_requested || !REXCVAR_GET(bd_lod)) ? 0
+                       : tag.render_view == 1 ? REXCVAR_GET(bd_lod_shadow_grid)
+                       : tag.render_view == 0 ? REXCVAR_GET(bd_lod_reflection_grid)
+                                              : 0;
   const bool verify = REXCVAR_GET(bd_host_draw_verify) || sampled_verify;
   if (verify) {
     t_verify.active = false;
@@ -1615,6 +1640,8 @@ bool HostDrawReplay(const NodeTag &tag) {
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     const ResolvedStreams &rs = resolved[di];
+    u32 lod_count = d.count, lod_start = d.start_index,
+        lod_prim = d.primitive_type;
     // The constant sources: the live files, the template's stable values,
     // the visual's fresh values, and the world rows.
     std::memcpy(t_vs_block, vs_base, kBlockBytes);
@@ -1700,6 +1727,45 @@ bool HostDrawReplay(const NodeTag &tag) {
       s.bound_vertex_first = d.vertex_first;
       s.bound_vertex_count = d.vertex_count;
       s.index_view = rs.index;
+      if (lod_grid > 0 && d.indexed && rs.index.buffer.ref &&
+          d.pipelineState.vertexDeclaration) {
+        const GuestVertexDeclaration *decl = d.pipelineState.vertexDeclaration;
+        for (u32 ei = 0; ei < decl->vertexElementCount; ++ei) {
+          const GuestVertexElement &el = decl->vertexElements[ei];
+          if (el.usage != u8(D3DDeclUsage::kPosition) || el.usageIndex != 0)
+            continue;
+          const u32 stream = u32(el.stream);
+          if (stream >= 16 || !rs.views[stream].buffer.ref ||
+              !rs.mirror_va[stream] || !d.input_slots[stream].stride)
+            break;
+          MeshLodRequest req;
+          req.device = Video::HostDevice();
+          req.index_buffer = rs.index.buffer.ref;
+          req.index_mirror_va = rs.index_mirror_va;
+          req.index_mirror_size = rs.index_mirror_size;
+          req.index_format = rs.index.format;
+          req.start_index = d.start_index;
+          req.count = d.count;
+          req.primitive_type = d.primitive_type;
+          req.base_vertex = d.base_vertex;
+          req.vertex_buffer = rs.views[stream].buffer.ref;
+          req.vertex_mirror_va = rs.mirror_va[stream];
+          req.vertex_mirror_size = rs.mirror_size[stream];
+          req.stream_offset = d.stream_offset[stream];
+          req.stride = d.input_slots[stream].stride;
+          req.position_offset = u32(el.offset);
+          req.position_type = u32(el.type);
+          req.grid = u32(lod_grid);
+          MeshLodResult res;
+          if (MeshLodFor(req, res)) {
+            s.index_view = res.view;
+            lod_count = res.count;
+            lod_start = 0;
+            lod_prim = u32(rex::graphics::xenos::PrimitiveType::kTriangleList);
+          }
+          break;
+        }
+      }
       Video::SetAlphaThreshold(d.alpha_threshold);
       mark_dirty();
       s.material_override = &ov;
@@ -1733,10 +1799,12 @@ bool HostDrawReplay(const NodeTag &tag) {
       t_verify.expected.push_back(e);
       continue;
     }
-    bd::gpu::hooks::DispatchHostNodeDraw(device_guest, d.primitive_type,
-                                         d.indexed, d.count, d.start_index,
-                                         d.base_vertex, d.start_vertex);
+    bd::gpu::hooks::DispatchHostNodeDraw(device_guest, lod_prim, d.indexed,
+                                         lod_count, lod_start, d.base_vertex,
+                                         d.start_vertex);
   }
+  if (lod_grid > 0)
+    MeshLodLogMaybe();
   t_replaying = false;
   if (verify) {
     // The interpreter runs this node now, from the state it found: put the

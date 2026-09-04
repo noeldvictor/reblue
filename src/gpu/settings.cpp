@@ -888,6 +888,21 @@ REXCVAR_DEFINE_DOUBLE(bd_reflection_cull_distance, 350.0, kCvarGroup,
                       "Reflection-view nodes beyond this distance from the "
                       "camera are not drawn (0 = off).")
     .range(0.0, 100000.0);
+// Coarse index lists for the shadow and reflection views
+// (gpu/scene/mesh_lod.cpp): cells across a mesh's longest axis, 0 = the
+// original mesh. The views are a 1024 map and a 128x72 reflection on the
+// Quest; the census of 2026-09-04 read 81k and 49k triangles a frame for them.
+REXCVAR_DEFINE_BOOL(bd_lod, true, kCvarGroup,
+                    "Coarse index lists for the shadow and reflection views "
+                    "(the grids below); off draws every view at full detail.");
+REXCVAR_DEFINE_INT32(bd_lod_shadow_grid, 24, kCvarGroup,
+                   "Shadow casters draw a vertex-clustered list at this grid "
+                   "(0 = full detail).")
+    .range(0, 256);
+REXCVAR_DEFINE_INT32(bd_lod_reflection_grid, 16, kCvarGroup,
+                   "Reflection-view meshes draw a vertex-clustered list at "
+                   "this grid (0 = full detail).")
+    .range(0, 256);
 REXCVAR_DEFINE_BOOL(bd_host_cull, true, kCvarGroup,
                     "Host frustum test for the scene walk's default view "
                     "path, from the guest's own plane table.");

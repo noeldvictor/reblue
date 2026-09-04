@@ -936,7 +936,7 @@ void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q
       << ' ' << q.count << ' ' << (q.blended ? 1 : 0) << ' ' << std::hex
       << (ps_h & 0xFFFFFFFFu) << ' ' << (vs_h & 0xFFFFFFFFu) << ' '
       << (tex_h & 0xFFFFFFFFu) << ' ' << ps_hash << std::dec << ' '
-      << q.depth << '\n';
+      << q.depth << ' ' << u32(st.pipelineState.primitiveTopology) << '\n';
 }
 
 bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,

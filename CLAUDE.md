@@ -679,6 +679,16 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    90 draws and 49k -> 37k triangles; the shadow pass only 338 -> 313 draws and 81k ->
    77k triangles - its casters are the visible world at full detail, so the shadow
    lever is coarse caster meshes from the cook, not culling. Image unchanged.
+   **Second slice (06:00): coarse casters** (`gpu/scene/mesh_lod.*`, `bd_lod`,
+   `bd_lod_shadow_grid` 24, `bd_lod_reflection_grid` 16): at the host replay, a draw
+   for the shadow or reflection view goes out as a vertex-clustered triangle list over
+   the same vertex buffer (positions and the restart-carrying strips read from guest
+   memory once, cached by buffer identity). Guards: a list keeps at most 80% of the
+   triangles and at least 80% of the surface area (a thin fence flattened to a line
+   without it; the grid doubles until it passes). Shadow view 77k -> 59k triangles,
+   reflection 37k -> 23k; a per-frame on/off capture pair differs only at the bushes
+   and one-pixel shadow edges; desktop CPU and GPU flat within the run.
+   `research/20260904_0600_coarse-casters-...md`.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 
