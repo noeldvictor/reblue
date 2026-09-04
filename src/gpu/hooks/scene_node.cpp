@@ -121,6 +121,31 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
   if (n == 200000)
     BD_INFO("[node] host bdSceneNodeDrawSingle has run {} times", n);
 
+  // The material base, from the PowerPC rather than a guess:
+  //   addi r10,r23,3404 ; addi r11,r1,336 ; lwz x4 from r10 ; stw x4 to r11
+  // so a float4 at visual + 3404 is copied into the stack slots that later
+  // become pixel constant c3, after a component-wise multiply by the
+  // modulator at the staging struct's +396 (2026-09-04).
+  if (REXCVAR_GET(bd_material_source)) {
+    static u32 shown = 0;
+    if (shown < 6) {
+      const u32 visual = bd::mem::try_load<u32>(ctx.r6.u32);
+      if (visual) {
+        float b[4];
+        for (u32 i = 0; i < 4; ++i) {
+          const u32 w = bd::mem::try_load<u32>(visual + 3404 + i * 4);
+          std::memcpy(&b[i], &w, 4);
+        }
+        if (b[0] != 0.0f || b[1] != 0.0f || b[2] != 0.0f) {
+          ++shown;
+          BD_INFO("[material] visual {:08x} base at +3404: {:.3f} {:.3f} "
+                  "{:.3f} {:.3f}",
+                  visual, b[0], b[1], b[2], b[3]);
+        }
+      }
+    }
+  }
+
   // A probe for the material base at visual + 5040 lived here on 2026-09-04
   // and is removed: the window is zero or denormal noise for every visual
   // sampled, before the interpreter has run, so that offset is not where these

@@ -81,6 +81,7 @@ REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(bool, bd_material_census);
 REXCVAR_DECLARE(bool, bd_material_source);
+REXCVAR_DECLARE(bool, bd_material_from_entry);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -1615,6 +1616,11 @@ bool HostDrawReplay(const NodeTag &tag) {
     auto drifted = [&](const RegDelta &r, bool vertex) {
       if (!r.stable || !v)
         return false;
+      // ps c3/c4 of a list draw come from its entry now, so a mismatch
+      // against a sibling says nothing about the template.
+      if (!vertex && tag.from_list && REXCVAR_GET(bd_material_from_entry) &&
+          (r.reg == 3 || r.reg == 4))
+        return false;
       const u32 *fresh = vertex ? v->vs[r.reg] : v->ps[r.reg];
       const u32 seen = vertex ? v->vs_frame[r.reg] : v->ps_frame[r.reg];
       return seen == frame && std::memcmp(fresh, r.value, 16) != 0;
@@ -1994,6 +2000,30 @@ bool HostDrawReplay(const NodeTag &tag) {
       if (r.reg < kPassPsRegs)
         continue;
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
+    }
+    // A render-list draw's own pixel constants, straight from its entry.
+    //
+    // The loop uploads them itself - SetPixelShaderConstantFN(device, 0,
+    // r30 + 80, 14) with r30 = entry + 388 - so register N is at
+    // entry + 468 + N*16, and the search confirms it: c3's captured value
+    // turns up at exactly entry+516. That removes the sibling guesswork for
+    // the per-object material colours, which is what all the template drift
+    // was (2026-09-04).
+    if (tag.from_list && REXCVAR_GET(bd_material_from_entry)) {
+      const u32 entry = tag.matrix_va - 16;
+      for (u32 reg = 3; reg <= 4; ++reg) {
+        u32 v[4];
+        bool ok = true;
+        for (u32 i = 0; i < 4; ++i) {
+          v[i] = bd::mem::try_load<u32>(entry + 468 + reg * 16 + i * 4);
+          float f;
+          std::memcpy(&f, &v[i], 4);
+          if (!std::isfinite(f))
+            ok = false;
+        }
+        if (ok)
+          std::memcpy(t_ps_block + reg * 16, v, 16);
+      }
     }
     // The pass camera, from this frame's interpreted draws of this view.
     {

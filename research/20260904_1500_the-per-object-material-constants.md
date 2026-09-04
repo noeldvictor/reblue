@@ -400,6 +400,48 @@ worth carrying in:
 - The flush is `sub_821981E0`, called once per node draw.
 - All drift is render-list draws; 121 distinct materials; identity does not determine colour.
 
+## Found, and shipped (21:00)
+
+Two things landed together once the byte-swap was fixed.
+
+**The base is at `visual + 3404`.** The PowerPC copies a float4 from there into the stack
+slots that become pixel c3:
+
+```
+addi r10, r23, 3404      ; r23 = ctx[0] = the visual
+addi r11, r1, 336        ; the stack slots
+lwz  r9,0(r10) ... lwz r10,12(r10)
+stw  r9,0(r11) ... stw r10,12(r11)
+beq  cr6, loc_822807e4   ; the +5040 path is the *conditional override*, not the source
+```
+
+It reads `(1, 1, 1, 1)` - a sensible white base - where `+5040` was zeros. The offset chased
+all afternoon was the override branch these draws never take.
+
+**And for a render-list draw the finished constants are in its entry.** With correct reads
+the search reports `FOUND at entry+516`, which is exactly what the loop's own upload
+arithmetic predicts: `SetPixelShaderConstantFN(device, 0, r30 + 80, 14)` with
+`r30 = entry + 388` puts register N at `entry + 468 + N*16`, so c3 is +516 and c4 is +532.
+The derivation was right hours ago; only the double swap made it look wrong.
+
+`bd_material_from_entry` (default on) reads those two registers from the entry at replay
+instead of inferring them from a sibling mesh, and drops them from the drift test. Measured:
+
+| | before | after |
+| --- | --- | --- |
+| host-issued node draws | 483 of 579 | **497 of 579** |
+| template drift a frame | 29 | **15** |
+| verifier: ps c4 wrong | 1,351 | **1,030** |
+| verifier: ps c3 wrong | ~2 | **1** |
+| 120-frame sequence | 0 jumps | **0 jumps** |
+
+So it is both more host-owned and *more accurate* than the path it replaces - the entry holds
+this draw's material, where the sibling cache held some other mesh's.
+
+The 15 drift left are tree draws, which have no entry; their material is
+`visual + 3404` times the modulator at the staging struct's `+396`, and sourcing those is
+the next step on this thread.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.

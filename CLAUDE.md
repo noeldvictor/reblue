@@ -145,10 +145,15 @@ texture, shader and material-colour selection. Every drifting draw is a render-l
 (19:30)**: the interpreter's branch at `loc_82280824` forms it as a base triple at the
 staging struct's `+396..+404` multiplied by a scalar, then stores it at `+128` (= pixel c3).
 That is why no structure a draw can reach ever held it. The host can read the base from that
-global; the remaining unknown is the per-draw modulator. **Searching for the value is
-retired** - a product is not findable by scanning - and note that `bd::mem::try_load` already
-byte-swaps while `try_at` does not, which invalidated a whole afternoon of searches until it
-was caught.
+global; the remaining unknown is the per-draw modulator. Note that `bd::mem::try_load` already byte-swaps while `try_at` does not, which invalidated
+a whole afternoon of searches until it was caught. **Found and shipped (21:00)**: the base is
+`visual + 3404` (the `+5040` path is a conditional override these draws never take), and a
+render-list draw's finished constants are in its own entry at `entry + 468 + reg*16`, which
+is what the loop's upload arithmetic said all along. `bd_material_from_entry` (default on)
+reads c3/c4 from there instead of a sibling's: **host-issued draws 483 -> 497 of 579**, drift
+29 -> 15, and the verifier prices it as *more* accurate than the path it replaces (ps c4
+wrong 1,351 -> 1,030), with 0 jumps over 120 frames. The 15 left are tree draws, whose
+material is `visual + 3404` times the modulator at the staging struct's `+396`.
 `research/20260904_1500_the-per-object-material-constants.md`.
 
 **HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**

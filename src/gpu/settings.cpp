@@ -954,6 +954,13 @@ REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 1.0, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
                     "Multiview half width halves the height too, so the "
                     "present maps 1:1 instead of discarding half the frame.");
+// A render-list draw's per-object material constants read straight from its
+// entry (entry + 468 + reg*16, the address the loop's own upload uses)
+// instead of inferred from a sibling mesh's - which is what every template
+// drift refusal was (2026-09-04).
+REXCVAR_DEFINE_BOOL(bd_material_from_entry, true, kCvarGroup,
+                    "Read a render-list draw's material constants from its "
+                    "entry rather than a sibling's.");
 REXCVAR_DEFINE_BOOL(bd_material_source, false, kCvarGroup,
                     "Search a tree draw's mesh for its captured material "
                     "colours, to find where the cook reads them from.");
