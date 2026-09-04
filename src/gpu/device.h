@@ -396,6 +396,9 @@ struct VideoState {
   std::unique_ptr<plume::RenderPipelineLayout> pipeline_layout;
   std::unique_ptr<plume::RenderPipeline> copy_color_pipeline;
   std::unique_ptr<plume::RenderPipeline> gamma_correction_pipeline;
+  // The same pass with a view mask of 3, for the layered XR swapchain: one
+  // draw writes both eyes, each layer reading its own layer of the source.
+  std::unique_ptr<plume::RenderPipeline> gamma_correction_pipeline_layered;
   std::unique_ptr<plume::RenderShader> gamma_correction_ps;
   // Cel shading. Same slot in present as the gamma pass, and does the gamma
   // work itself, so the two are alternatives rather than a chain.

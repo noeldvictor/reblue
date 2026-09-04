@@ -423,6 +423,12 @@ bool BuildCopyPipeline(VideoState &s) {
     BD_ERROR("Plume createGraphicsPipeline for gamma_correction failed");
     return false;
   }
+  // The layered twin (present.cpp, bd_xr_layered_swapchain). Its absence is
+  // not fatal: the present falls back to the side-by-side flatten.
+  pipe_desc.viewMask = 0x3u;
+  s.gamma_correction_pipeline_layered = CreateHostGraphicsPipeline(
+      s.device.get(), pipe_desc, "gamma-correction-layered");
+  pipe_desc.viewMask = 0u;
 
   // Cel shading: the same present pass with posterisation and ink lines in
   // front of the gamma maths. Built unconditionally so bd_cel_shading can be

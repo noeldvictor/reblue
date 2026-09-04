@@ -133,7 +133,11 @@ public:
   // projection: it is genuinely immersive, it needs no per-eye rendering, and
   // it is the mode most likely to be comfortable for a fixed-camera JRPG. The
   // projection path comes later and reuses all of this.
-  bool CreateSwapchain(u32 width, u32 height);
+  // array_size 2 is the layered swapchain: one array layer an eye, each
+  // submitted as its own projection view at the runtime's own per-eye size,
+  // so the compositor is handed the two eyes instead of a side-by-side panel
+  // it has to resample. It is also what XR_FB_foveation attaches to.
+  bool CreateSwapchain(u32 width, u32 height, u32 array_size = 1);
 
   // The runtime's images, as raw VkImage handles for the GPU layer to wrap.
   u32 SwapchainImageCount() const { return static_cast<u32>(swapchainImages_.size()); }
@@ -142,6 +146,7 @@ public:
   u32 SwapchainHeight() const { return swapchainHeight_; }
   // Colour format the runtime chose, as a VkFormat.
   i64 SwapchainFormat() const { return swapchainFormat_; }
+  u32 SwapchainArraySize() const { return swapchainArraySize_; }
 
   // Acquire/wait the next image. Returns its index, or -1 if unavailable.
   i32 AcquireSwapchainImage();
@@ -205,6 +210,7 @@ private:
   std::vector<void *> swapchainImages_;
   u32 swapchainWidth_ = 0;
   u32 swapchainHeight_ = 0;
+  u32 swapchainArraySize_ = 1;
   i64 swapchainFormat_ = 0;
   bool quadQueued_ = false;
   bool quadAnchored_ = false;

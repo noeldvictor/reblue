@@ -914,6 +914,13 @@ REXCVAR_DEFINE_BOOL(bd_record_declared, true, kCvarGroup,
 // averaged away there) and the four-gather shadow kernel becomes one gather
 // where the shadow map is minified (the penumbra is under a pixel). Fetches,
 // which the Quest's scene pass is bound by, not visible detail (2026-09-04).
+// The XR swapchain as a two-layer array, one layer an eye, submitted as two
+// projection views by array index instead of a side-by-side panel the
+// compositor resamples. Multiview only, and the shape stage 7's foveation
+// attaches to (2026-09-04).
+REXCVAR_DEFINE_BOOL(bd_xr_layered_swapchain, true, kCvarGroup,
+                    "Two-layer XR swapchain, one array layer an eye "
+                    "(multiview only).");
 REXCVAR_DEFINE_BOOL(bd_material_tier, true, kCvarGroup,
                     "Host lit material drops fetches where the footprint says "
                     "they are invisible (bd_material_tier_bits).");

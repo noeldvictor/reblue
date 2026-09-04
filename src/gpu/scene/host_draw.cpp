@@ -1721,10 +1721,22 @@ bool HostDrawReplay(const NodeTag &tag) {
     // the visual's fresh values, and the world rows.
     std::memcpy(t_vs_block, vs_base, kBlockBytes);
     std::memcpy(t_ps_block, ps_base, kBlockBytes);
-    for (const RegDelta &r : d.vs_delta)
+    // The pass camera's own registers are composed below and the check above
+    // deliberately skips them, so a node whose visual has no interpreted draw
+    // this frame reaches here with a null `v` - and a moving delta at c0/c1
+    // then dereferenced it. That is every multiview XR frame under xrsim
+    // (ACCESS_VIOLATION reading v->vs[1], 2026-09-04); the value would be
+    // overwritten by the pass block a few lines down in any case.
+    for (const RegDelta &r : d.vs_delta) {
+      if (r.reg < kPassVsRegs)
+        continue;
       std::memcpy(t_vs_block + r.reg * 16, r.stable ? r.value : v->vs[r.reg], 16);
-    for (const RegDelta &r : d.ps_delta)
+    }
+    for (const RegDelta &r : d.ps_delta) {
+      if (r.reg < kPassPsRegs)
+        continue;
       std::memcpy(t_ps_block + r.reg * 16, r.stable ? r.value : v->ps[r.reg], 16);
+    }
     // The pass camera, from this frame's interpreted draws of this view.
     {
       const PassRegs &pass = st.pass_regs[tag.render_view];

@@ -25,10 +25,19 @@
 // declared Texture2D and nothing downstream could read an array at all. With an
 // array heap the scene is sampled directly and the flatten costs one branch in
 // the blit that was already happening.
-float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD) : SV_Target
+// ResourceDescriptorIndex2 == 3 is the layered swapchain: the pass itself has
+// two views, so each output layer reads the source layer of the same index and
+// the flatten does not happen at all. That is what the compositor wants (one
+// projection view an array layer) and what XR_FB_foveation attaches to.
+float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
+            in uint viewId : SV_ViewID) : SV_Target
 {
     float3 srcCoord = float3(texCoord, 0.0);
-    if (g_PushConstants.ResourceDescriptorIndex2 != 0)
+    if (g_PushConstants.ResourceDescriptorIndex2 == 3)
+    {
+        srcCoord = float3(texCoord, float(viewId));
+    }
+    else if (g_PushConstants.ResourceDescriptorIndex2 != 0)
     {
         const float eye = texCoord.x < 0.5 ? 0.0 : 1.0;
         srcCoord = float3(saturate(texCoord.x * 2.0 - eye), texCoord.y, eye);

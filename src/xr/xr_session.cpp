@@ -915,7 +915,11 @@ void Session::EndFrame(const FrameState &state) {
     // of it. That is flat rather than wrong: an image drawn from the head and
     // shown to both eyes is comfortable, where an image drawn for one eye and
     // shown to both is a stereo mismatch.
-    const bool sideBySide = REXCVAR_GET(bd_stereo);
+    // A layered swapchain needs neither of those: each eye is its own array
+    // layer at the full rect, which is the multiview frame submitted as the
+    // runtime wants it (2026-09-04).
+    const bool layered = swapchainArraySize_ >= 2;
+    const bool sideBySide = !layered && REXCVAR_GET(bd_stereo);
     const int32_t fullW = static_cast<int32_t>(swapchainWidth_);
     const int32_t fullH = static_cast<int32_t>(swapchainHeight_);
     const int32_t eyeW = sideBySide ? fullW / 2 : fullW;
@@ -926,7 +930,7 @@ void Session::EndFrame(const FrameState &state) {
       projViews[i].subImage.imageRect.offset = {
           sideBySide ? static_cast<int32_t>(i) * eyeW : 0, 0};
       projViews[i].subImage.imageRect.extent = {eyeW, fullH};
-      projViews[i].subImage.imageArrayIndex = 0;
+      projViews[i].subImage.imageArrayIndex = layered ? i : 0;
     }
     // One-shot: what the compositor is actually handed per eye. This is the
     // only part of stereo that can be checked without wearing the headset -
@@ -935,14 +939,16 @@ void Session::EndFrame(const FrameState &state) {
       static bool logged = false;
       if (!logged) {
         logged = true;
-        BD_INFO("[xr] projection views: eye0 rect {}x{}+{} eye1 rect {}x{}+{} "
-                "(sideBySide={})",
+        BD_INFO("[xr] projection views: eye0 rect {}x{}+{} layer {}, eye1 rect "
+                "{}x{}+{} layer {} (sideBySide={}, layered={})",
                 projViews[0].subImage.imageRect.extent.width,
                 projViews[0].subImage.imageRect.extent.height,
                 projViews[0].subImage.imageRect.offset.x,
+                projViews[0].subImage.imageArrayIndex,
                 projViews[1].subImage.imageRect.extent.width,
                 projViews[1].subImage.imageRect.extent.height,
-                projViews[1].subImage.imageRect.offset.x, sideBySide);
+                projViews[1].subImage.imageRect.offset.x,
+                projViews[1].subImage.imageArrayIndex, sideBySide, layered);
       }
     }
     projection.space = AsSpace(appSpace_);
@@ -986,7 +992,7 @@ void Session::EndFrame(const FrameState &state) {
   xrEndFrame(AsSession(session_), &end);
 }
 
-bool Session::CreateSwapchain(u32 width, u32 height) {
+bool Session::CreateSwapchain(u32 width, u32 height, u32 array_size) {
   if (!session_ || swapchain_)
     return swapchain_ != nullptr;
 
@@ -1040,7 +1046,7 @@ bool Session::CreateSwapchain(u32 width, u32 height) {
   info.width = width;
   info.height = height;
   info.faceCount = 1;
-  info.arraySize = 1;
+  info.arraySize = array_size ? array_size : 1;
   info.mipCount = 1;
 
   XrSwapchain swapchain = XR_NULL_HANDLE;
@@ -1050,6 +1056,7 @@ bool Session::CreateSwapchain(u32 width, u32 height) {
   swapchain_ = swapchain;
   swapchainWidth_ = width;
   swapchainHeight_ = height;
+  swapchainArraySize_ = info.arraySize;
   swapchainFormat_ = chosen;
 
   uint32_t imageCount = 0;
@@ -1066,8 +1073,8 @@ bool Session::CreateSwapchain(u32 width, u32 height) {
   for (const auto &image : images)
     swapchainImages_.push_back(reinterpret_cast<void *>(image.image));
 
-  BD_INFO("OpenXR: swapchain {}x{} format {} with {} images", width, height,
-          chosen, swapchainImages_.size());
+  BD_INFO("OpenXR: swapchain {}x{}x{} format {} with {} images", width, height,
+          info.arraySize, chosen, swapchainImages_.size());
   return true;
 }
 

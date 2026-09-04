@@ -60,10 +60,16 @@ REXCVAR_DECLARE(bool, bd_mv_debug_layer_diff);
 REXCVAR_DECLARE(bool, bd_xr_mirror);
 REXCVAR_DECLARE(f64, bd_xr_present_scale);
 REXCVAR_DECLARE(bool, bd_xr_direct_present);
+REXCVAR_DECLARE(bool, bd_xr_layered_swapchain);
+REXCVAR_DECLARE(bool, bd_stereo_multiview);
 
 namespace bd::gpu {
 
 namespace {
+
+// Defined with the XR target wrappers far below; the present pass reads it
+// to know its back buffer is the runtime's layered swapchain image.
+extern i32 g_xr_direct_index;
 
 // Defined further down, next to the rest of the capture machinery. Declared
 // here because the only point at which the composited frame - game plus
@@ -420,8 +426,35 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // shader ends with the same gamma maths, so this is a swap and the push
   // constants below are unchanged either way.
   const bool cel = REXCVAR_GET(bd_cel_shading) && s.cel_pipeline;
-  s.command_list->setPipeline(cel ? s.cel_pipeline.get()
-                                  : s.gamma_correction_pipeline.get());
+  // The layered path: the back buffer is the runtime's two-layer image and
+  // the pass has two views, so one draw writes both eyes and neither layer is
+  // flattened. Cel keeps the mono pipeline (it has no layered twin yet).
+  const bool layered_present = g_xr_direct_index >= 0 &&
+                               bd::xr::Session::Get().SwapchainArraySize() > 1 &&
+                               !cel &&
+                               s.gamma_correction_pipeline_layered != nullptr &&
+                               rt->layers > 1;
+  {
+    // Once, and once more the first time it turns true: the layered path
+    // needs four things to line up and this line says which one is missing.
+    // bd_xr_mirror is on by default off Android and gates direct present, so
+    // a desktop XR run never took this path until it was turned off.
+    static u32 told = 0;
+    static bool told_layered = false;
+    if (told < 1 || (layered_present && !told_layered)) {
+      ++told;
+      told_layered = told_layered || layered_present;
+      BD_INFO("[xr] present pass: layered={} (direct index {}, swapchain "
+              "layers {}, source layers {}, layered pipeline {})",
+              layered_present, g_xr_direct_index,
+              bd::xr::Session::Get().SwapchainArraySize(), rt->layers,
+              s.gamma_correction_pipeline_layered ? "yes" : "no");
+    }
+  }
+  s.command_list->setPipeline(
+      cel ? s.cel_pipeline.get()
+          : (layered_present ? s.gamma_correction_pipeline_layered.get()
+                             : s.gamma_correction_pipeline.get()));
   struct PresentPushConstants {
     u32 descriptor_index;
     u32 descriptor_index_2;
@@ -432,7 +465,9 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
     // layer 1 into the right. That is the whole of the multiview flatten now -
     // the five full-resolution resolve passes it replaces are gone.
   } pc{gamma_src_desc,
-       REXCVAR_GET(bd_mv_debug_layer_diff) ? 2u : (rt->layers > 1 ? 1u : 0u),
+       REXCVAR_GET(bd_mv_debug_layer_diff) ? 2u
+       : layered_present                   ? 3u
+       : (rt->layers > 1                   ? 1u : 0u),
        s.guest_gamma * kPresentGamma, kPresentDisplayCorrection};
   s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &pc,
                                            kCopyPushConstantByteOffset,
@@ -477,9 +512,11 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   const bool wants_guest_surface = REXCVAR_GET(bd_mv_capture_array) ||
                                    REXCVAR_GET(bd_mv_capture_resolved);
   if (!wants_guest_surface && !g_captured_in_pass && CaptureDue()) {
-    g_captured_in_pass =
-        RecordCapture(s, back, swap_w, swap_h, kCaptureFmt, 1,
-                      plume::RenderTextureLayout::COLOR_WRITE);
+    // Both layers of a layered swapchain image, stacked: the presented pair
+    // is the only place the two eyes the compositor receives can be seen.
+    g_captured_in_pass = RecordCapture(
+        s, back, swap_w, swap_h, kCaptureFmt, layered_present ? 2u : 1u,
+        plume::RenderTextureLayout::COLOR_WRITE);
   }
 
   // PRESENT for a swapchain image of our own; the runtime's image goes back
@@ -619,11 +656,38 @@ u32 g_offscreen_h = 0;
 // The size the headset frame is composed at - see bd_xr_present_scale. Locked
 // to the XR swapchain once that exists: the copy into the runtime's image
 // needs both sides equal, and the swapchain is created once.
+// True when the frame should be handed to the runtime as a two-layer array,
+// one layer an eye: multiview only, since that is the only path that renders
+// the eyes as array layers in the first place.
+// The layer size the layered swapchain will take, latched from the first
+// real front buffer. Zero until one exists.
+u32 g_xr_layered_size_w = 0;
+u32 g_xr_layered_size_h = 0;
+
+bool XrWantsLayeredSwapchain() {
+  return REXCVAR_GET(bd_xr_layered_swapchain) &&
+         REXCVAR_GET(bd_stereo_multiview);
+}
+
 void XrPresentSize(VideoState &s, const GuestTexture *front, u32 &w, u32 &h) {
   auto &session = bd::xr::Session::Get();
   if (session.SwapchainWidth() && session.SwapchainHeight()) {
     w = session.SwapchainWidth();
     h = session.SwapchainHeight();
+    return;
+  }
+  // The layered swapchain is one eye, and a multiview front buffer's layer is
+  // already that: no panel to fit the pair into, and no resample in the
+  // compositor (2026-09-04).
+  if (XrWantsLayeredSwapchain() && front && front->width && front->height) {
+    w = front->width;
+    h = front->height;
+    if (!g_xr_layered_size_w) {
+      g_xr_layered_size_w = w;
+      g_xr_layered_size_h = h;
+      BD_INFO("[xr] layered swapchain sized to the frame's layer: {}x{} x2", w,
+              h);
+    }
     return;
   }
   // A fraction of the window, aspect preserved: the first present comes
@@ -1024,6 +1088,7 @@ std::vector<std::unique_ptr<plume::RenderFramebuffer>> g_xr_fbs;
 bool g_xr_targets_ready = false;
 // The image acquired for direct present this frame, -1 when the offscreen
 // path is in use. Set before RecordPresentPass, consumed by RecordXrQuad.
+// Forward-declared above, where the present pass reads it.
 i32 g_xr_direct_index = -1;
 
 bool EnsureXrTargets(VideoState &s, u32 sw, u32 sh) {
@@ -1032,7 +1097,23 @@ bool EnsureXrTargets(VideoState &s, u32 sw, u32 sh) {
   auto &session = bd::xr::Session::Get();
   if (!sw || !sh)
     XrPresentSize(s, nullptr, sw, sh);
-  if (!session.CreateSwapchain(sw, sh))
+  const u32 layers = XrWantsLayeredSwapchain() ? 2u : 1u;
+  // The swapchain's size is locked for the session (the runtime hands out its
+  // images once), and the first present happens before any game frame exists -
+  // which is how the panel-sized swapchain of 2026-09-02 got locked in. Under
+  // the layered path the size has to be the frame's own layer, so nothing is
+  // created until a frame has been seen (XrLayeredFrameSize).
+  if (layers > 1 && !g_xr_layered_size_w) {
+    static u32 waited = 0;
+    if (waited++ == 0)
+      BD_INFO("[xr] layered swapchain waiting for the first game frame");
+    return false;
+  }
+  if (layers > 1) {
+    sw = g_xr_layered_size_w;
+    sh = g_xr_layered_size_h;
+  }
+  if (!session.CreateSwapchain(sw, sh, layers))
     return false;
   auto *vk_device = static_cast<plume::VulkanDevice *>(s.device.get());
   for (u32 i = 0; i < session.SwapchainImageCount(); ++i) {
@@ -1047,17 +1128,22 @@ bool EnsureXrTargets(VideoState &s, u32 sw, u32 sh) {
     tex->desc.height = session.SwapchainHeight();
     tex->desc.depth = 1;
     tex->desc.mipLevels = 1;
-    tex->desc.arraySize = 1;
+    // arraySize > 1 makes plume's own view a 2D array, which is what the
+    // layered pass writes through and what the runtime reads per eye.
+    tex->desc.arraySize = session.SwapchainArraySize();
     tex->desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
     tex->desc.format = kPresentBackFormat;
     tex->desc.flags = plume::RenderTextureFlag::RENDER_TARGET;
     tex->imageFormat = static_cast<VkFormat>(session.SwapchainFormat());
-    tex->imageSubresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    tex->imageSubresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0,
+                                  session.SwapchainArraySize()};
     // A view, so the image can be a framebuffer attachment.
     tex->createImageView(tex->imageFormat);
     const plume::RenderTexture *attachments[1] = {tex.get()};
-    auto fb = s.device->createFramebuffer(
-        plume::RenderFramebufferDesc(attachments, 1));
+    plume::RenderFramebufferDesc fb_desc(attachments, 1);
+    // Must match the pipeline's mask, or the render pass is rejected.
+    fb_desc.viewMask = session.SwapchainArraySize() > 1 ? 0x3u : 0u;
+    auto fb = s.device->createFramebuffer(fb_desc);
     if (!fb) {
       BD_ERROR("[xr] framebuffer over swapchain image {} failed", i);
       return false;
@@ -1066,8 +1152,9 @@ bool EnsureXrTargets(VideoState &s, u32 sw, u32 sh) {
     g_xr_fbs.push_back(std::move(fb));
   }
   g_xr_targets_ready = true;
-  BD_INFO("[xr] quad swapchain ready, {} images wrapped as render targets",
-          g_xr_textures.size());
+  BD_INFO("[xr] swapchain ready, {} images wrapped as render targets, {} "
+          "layer(s) each",
+          g_xr_textures.size(), session.SwapchainArraySize());
   return true;
 }
 

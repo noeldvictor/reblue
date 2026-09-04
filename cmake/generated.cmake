@@ -18,10 +18,14 @@ foreach(shader IN ITEMS copy_vs bd_2d_blit_vs imgui_vs)
     reblue_host_shader(${shader} vs_6_0)
 endforeach()
 foreach(shader IN ITEMS
-        gamma_correction_ps cel_ps pfx_occlusion_count_ps
+        cel_ps pfx_occlusion_count_ps
         bd_2d_blit_ps imgui_ps)
     reblue_host_shader(${shader} ps_6_0)
 endforeach()
+# 6.1: the present pass reads SV_ViewID for the layered XR swapchain, where
+# each output array layer takes its own eye's layer of the source instead of
+# the pair being flattened side by side (bd_xr_layered_swapchain).
+reblue_host_shader(gamma_correction_ps ps_6_1)
 # 6.1: the MSAA resolves read SV_ViewID to pick the right eye's slice view of
 # a two-layer multisampled scene - without it they flattened the stereo pair.
 foreach(shader IN ITEMS
