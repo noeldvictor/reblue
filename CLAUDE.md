@@ -141,9 +141,14 @@ instead of watching the interpreter set it, which is the cook. **Where it comes 
 settled by search, not guesswork (16:40)**: the value a node's own run captured is in
 neither the render-list entry nor the visual (both scanned to 8 KB), which leaves the mesh's
 own token stream - what `bdSceneNodeDrawSingle` walks for stream, declaration, index buffer,
-texture, shader and material-colour selection. A fixed asset, so it is cookable: decoded
-once per mesh it gives the host a record to compose c3 and c4 from, with no interpreter and
-nothing to drift. Every drifting draw is a render-list draw.
+texture, shader and material-colour selection. Every drifting draw is a render-list draw. **The colour turns out to be computed, not stored
+(19:30)**: the interpreter's branch at `loc_82280824` forms it as a base triple at the
+staging struct's `+396..+404` multiplied by a scalar, then stores it at `+128` (= pixel c3).
+That is why no structure a draw can reach ever held it. The host can read the base from that
+global; the remaining unknown is the per-draw modulator. **Searching for the value is
+retired** - a product is not findable by scanning - and note that `bd::mem::try_load` already
+byte-swaps while `try_at` does not, which invalidated a whole afternoon of searches until it
+was caught.
 `research/20260904_1500_the-per-object-material-constants.md`.
 
 **HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**

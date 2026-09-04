@@ -273,6 +273,31 @@ So the conclusion survives its evidence being rebuilt - but it had to be rebuilt
 note above stood for half an hour on a swap bug. `try_at` hands back raw guest bytes and
 needs a manual swap; `try_load` does not. Mixing them is silent.
 
+## Why no structure held it: the colour is a product (19:30)
+
+The interpreter has two stores into the staging struct's diffuse slot, on different branches,
+and the one the sampled draws take is `loc_82280824`:
+
+```
+f11 = f10 * f11     with loads from r31 + 396, + 400, + 404 feeding the operands
+f12 = f10 * f12
+f13 = f10 * f13
+store f11,f12,f13 -> r31 + 128, +132, +136   (which is pixel constant c3)
+```
+
+So `g_vObjectDiffuse` is **computed, not stored**: a base triple times a scalar. That is why
+sixteen kilobytes of every structure a draw can reach held nothing matching - the value never
+exists in memory until the multiply, and then only in the staging struct the flush reads.
+
+The base is in the staging struct itself, at `+396`, `+400`, `+404` - immediately after the
+`+392` gate that chooses between the two branches. The struct is a global, so the host can
+read the base; what it still needs is `f10`, the per-draw modulator, and that is one more
+hop back through the interpreter.
+
+This also retires the search approach for good. A value that is the product of two others is
+not findable by scanning for it, however correct the byte order, and three of today's dead
+ends were spent looking for something that was never there.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
