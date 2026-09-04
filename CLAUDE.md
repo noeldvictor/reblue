@@ -698,6 +698,25 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    the rest is the game's visible layering and quad overshade. No draw is opaque at
    the texture level (`GuestTexture::alphaOpaque`, read off the BC blocks at upload).
    `research/20260904_0600_coarse-casters-...md`.
+8. **The Draw Thread, profiled again (2026-09-04, 08:30)**: 7,101 samples, four threads,
+   the frame's thread carrying the host's per-draw work spread thin - instance record
+   commit 3.9%, guest address translation 2.8%, replay self 2.6%, stream resolution 1.9%,
+   constant hashing 3.5%, the per-visual template capture 2.5% - and the guest's own
+   frame code (the walk hook, `bdSinCos`, `bdMatrixSet`, `bdSceneSubmitRenderList`,
+   `bdCameraRender`; `bdFrameSubmitAndDebugHUD` is the swap and its waits) for the rest.
+   **`bdAnimBoneEvaluate` is 0.5%: animation on the host is not a CPU lever**; stage 6
+   is for the GPU skinning design, not the Draw Thread. Cut since: records carry only
+   the vertex shader's declared registers (`bd_record_declared`: commit 274 -> 54
+   samples), the replay's 8 KB block copy only after a guest constant write (a
+   generation in the FN setter hooks), templates keep their resolved streams until a
+   physical buffer is evicted or refreshed (`PhysicalBufferGeneration`, 99.8% hits),
+   the matrix and palette reads translate once, the pixel block's content key covers
+   only the pixel shader's declared registers (`bd_host_draw_fast` A/B: `other_ms`
+   5.22 -> 5.08; image pair 0.07% different). Desktop `other_ms` ~5.1 ms, about a third
+   host and two thirds guest; the Quest's cores are roughly three times slower, so the
+   CPU is as far over the 13.9 ms budget as the GPU until the guest's frame assembly
+   (the render-list submit, the camera render, the other views' walks and tests) moves
+   to the host too.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 
