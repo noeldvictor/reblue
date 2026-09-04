@@ -75,6 +75,7 @@ REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
 REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 REXCVAR_DECLARE(bool, bd_lod);
+REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -132,6 +133,13 @@ struct SubDraw {
   u32 vertex_count = 0;
   plume::RenderIndexBufferView index_view{plume::RenderBufferReference{}, 0,
                                           plume::RenderFormat::R16_UINT};
+  // The guest buffers the streams and index buffer resolved to, and the
+  // physical-buffer generation they were resolved at: valid while the
+  // generation holds (bd_host_draw_fast). The lookup was 135 of 7,101
+  // profile samples (2026-09-04).
+  mutable GuestBuffer *cached_stream[16]{};
+  mutable GuestBuffer *cached_index = nullptr;
+  mutable u64 cached_generation = 0;
   bool indexed = false;
   u32 count = 0;
   u32 start_index = 0;
@@ -432,8 +440,13 @@ constexpr u32 kBoneRegs = kBoneMax * 4;
 // A palette slot as the constant file would hold it after the guest's
 // SetVertexShaderConstantFN and the host's byte-swapping copy (NaN flushed).
 void LoadPaletteSlot(u32 va, u32 out[16]) {
+  const u8 *src = bd::mem::try_at<u8>(va);
   for (u32 i = 0; i < 16; ++i) {
-    u32 v = bd::mem::try_load<u32>(va + i * 4);
+    u32 v = 0;
+    if (src) {
+      std::memcpy(&v, src + i * 4, 4);
+      v = __builtin_bswap32(v);
+    }
     if ((v & 0x7F800000u) == 0x7F800000u && (v & 0x007FFFFFu))
       v = 0;
     out[i] = v;
@@ -1520,16 +1533,22 @@ bool HostDrawReplay(const NodeTag &tag) {
   resolved.resize(t->draws.size());
   const bool verify_requested =
       REXCVAR_GET(bd_host_draw_verify) || sampled_verify;
+  const u64 phys_gen = PhysicalBufferGeneration();
+  const bool fast = REXCVAR_GET(bd_host_draw_fast);
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     ResolvedStreams &rs = resolved[di];
+    const bool cached = fast && d.cached_generation == phys_gen;
     for (u32 k = 0; k < 16; ++k) {
       rs.views[k] = d.vertex_views[k];
       if (!d.stream_va[k] || !d.vertex_views[k].buffer.ref)
         continue;
-      GuestBuffer *b = HostResourceHeap::FromGuest<GuestBuffer>(d.stream_va[k]);
+      GuestBuffer *b = cached ? d.cached_stream[k] : nullptr;
+      if (!b)
+        b = HostResourceHeap::FromGuest<GuestBuffer>(d.stream_va[k]);
       if (!b)
         b = ResolveGuestBufferVa(d.stream_va[k], ResourceType::VertexBuffer);
+      d.cached_stream[k] = b;
       if (!b || !b->hasBuffer()) {
         std::lock_guard lock(st.mutex);
         ++st.stale_buffer;
@@ -1548,9 +1567,12 @@ bool HostDrawReplay(const NodeTag &tag) {
     }
     rs.index = d.index_view;
     if (d.indexed && d.index_va) {
-      GuestBuffer *ib = HostResourceHeap::FromGuest<GuestBuffer>(d.index_va);
+      GuestBuffer *ib = cached ? d.cached_index : nullptr;
+      if (!ib)
+        ib = HostResourceHeap::FromGuest<GuestBuffer>(d.index_va);
       if (!ib)
         ib = ResolveGuestBufferVa(d.index_va, ResourceType::IndexBuffer);
+      d.cached_index = ib;
       if (!ib || !ib->hasBuffer()) {
         std::lock_guard lock(st.mutex);
         ++st.stale_buffer;
@@ -1563,6 +1585,7 @@ bool HostDrawReplay(const NodeTag &tag) {
       rs.index_mirror_va = ib->guestMirrorVa;
       rs.index_mirror_size = ib->dataSize;
     }
+    d.cached_generation = phys_gen;
   }
   // The shadow and reflection views draw coarse lists over the same
   // vertices (mesh_lod.h). Not under the verifier: it compares against the
@@ -1587,9 +1610,16 @@ bool HostDrawReplay(const NodeTag &tag) {
   float world_rows[16];
   {
     float m[16];
-    for (u32 i = 0; i < 16; ++i) {
-      const u32 bits = bd::mem::try_load<u32>(tag.matrix_va + i * 4);
-      std::memcpy(&m[i], &bits, sizeof(float));
+    if (const u8 *src = bd::mem::try_at<u8>(tag.matrix_va)) {
+      // One translation for the 64 bytes; the guest holds them big-endian.
+      for (u32 i = 0; i < 16; ++i) {
+        u32 bits;
+        std::memcpy(&bits, src + i * 4, 4);
+        bits = __builtin_bswap32(bits);
+        std::memcpy(&m[i], &bits, sizeof(float));
+      }
+    } else {
+      std::memset(m, 0, sizeof(m));
     }
     for (u32 r = 0; r < 4; ++r) {
       world_rows[r * 4 + 0] = m[0 * 4 + r];
@@ -1655,8 +1685,20 @@ bool HostDrawReplay(const NodeTag &tag) {
   // samples on the desktop (2026-09-03), scalar on the Quest's ARM64 tail.
   alignas(16) static thread_local u8 vs_base[kBlockBytes];
   alignas(16) static thread_local u8 ps_base[kBlockBytes];
-  CopyGuestVertexBlock(device_guest, vs_base);
-  CopyGuestPixelBlock(device_guest, ps_base);
+  // The guest's blocks change only through its constant setters (hooked, a
+  // generation each write); between two host-issued nodes nothing writes
+  // them, so the previous copy stands (bd_host_draw_fast).
+  {
+    static thread_local u64 copied_gen = 0;
+    static thread_local u32 copied_device = 0;
+    const u64 gen = GuestConstantWriteGeneration();
+    if (!fast || copied_gen != gen || copied_device != device_guest) {
+      CopyGuestVertexBlock(device_guest, vs_base);
+      CopyGuestPixelBlock(device_guest, ps_base);
+      copied_gen = gen;
+      copied_device = device_guest;
+    }
+  }
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     const ResolvedStreams &rs = resolved[di];

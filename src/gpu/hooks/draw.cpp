@@ -598,6 +598,11 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       q.visual_va = tag.valid ? tag.visual_va : 0u;
       q.render_view = tag.valid ? tag.render_view : 0xFFu;
       q.zwrite = s.pipelineState.zWriteEnable;
+      q.vs_reg_mask = (s.pipelineState.vertexShader &&
+                       s.pipelineState.vertexShader->shaderCacheEntry)
+                          ? s.pipelineState.vertexShader->shaderCacheEntry
+                                ->constantRegisterMask
+                          : nullptr;
       bool any = false, opaque = true, others_opaque = true;
       for (u32 k = 0; k < 16; ++k) {
         const bd::gpu::GuestTexture *t = s.textures[k];

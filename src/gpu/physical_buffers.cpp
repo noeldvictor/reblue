@@ -13,6 +13,12 @@
  */
 #include "gpu/physical_buffers.h"
 
+#include <atomic>
+
+namespace {
+std::atomic<u64> g_physical_generation{1};
+} // namespace
+
 #include <map>
 #include <memory>
 #include <mutex>
@@ -165,6 +171,7 @@ bd::gpu::GuestBuffer *RegisterPhysicalBufferOnce(u32 base_va, u32 size,
     }
     g_physicalBufferGraveyard[bd::gpu::Video::RetireSlot("physical buffer")]
         .push_back(std::move(cached->buffer));
+    g_physical_generation.fetch_add(1, std::memory_order_relaxed);
     g_physUploadBytes += size;
     g_physUploadBytes -= cached->dataSize;
     cached->buffer = std::move(fresh);
@@ -344,6 +351,7 @@ bd::gpu::GuestBuffer *RegisterPhysicalGeometry(u32 struct_va, u32 base_va,
 // The guest block memory is the engine's, freed by the following
 // XPhysicalFree.
 void EvictPhysicalBuffersInBlock(u32 block_base, u32 block_size) {
+  g_physical_generation.fetch_add(1, std::memory_order_relaxed);
   if (!block_base || !block_size)
     return;
   const u32 block_end = block_base + block_size;
@@ -495,6 +503,10 @@ AdoptPhysicalBuffer(u32 struct_va, bd::gpu::ResourceType rtype) {
           : plume::RenderFormat::UNKNOWN;
   return RegisterPhysicalGeometry(struct_va, base_va, size_bytes, rtype,
                                   element_size, ib_format);
+}
+
+u64 PhysicalBufferGeneration() {
+  return g_physical_generation.load(std::memory_order_relaxed);
 }
 
 GuestBuffer *ResolveGuestBufferVa(u32 va, ResourceType rtype) {

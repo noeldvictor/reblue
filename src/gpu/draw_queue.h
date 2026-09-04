@@ -101,6 +101,10 @@ struct QueuedDraw {
   bool tex_opaque = false;
   bool tex_slot0_only = false; // slot 0 is the only partial-alpha texture bound
   bool zwrite = false;
+  // The vertex shader's declared constant registers (ShaderCacheEntry::
+  // constantRegisterMask, eight words), for the instance records to carry
+  // only those; null when unknown.
+  const u32 *vs_reg_mask = nullptr;
   // Depth prepass. When set, the flush first emits this draw with
   // `prepass_pipeline` (colour writes off, depth as recorded) and then again
   // with `color_pipeline` (depth writes off, LEQUAL) in submission order. The

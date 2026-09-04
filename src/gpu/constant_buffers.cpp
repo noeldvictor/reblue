@@ -14,6 +14,8 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <atomic>
+#include <bit>
 #include <cstring>
 #include <memory>
 #include <unordered_map>
@@ -45,6 +47,7 @@
 
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 REXCVAR_DECLARE(bool, bd_record_mask);
+REXCVAR_DECLARE(bool, bd_record_declared);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
 REXCVAR_DECLARE(bool, bd_record_mask_high);
 
@@ -679,8 +682,19 @@ const InstanceRecord *StagedInstanceRecord(u32 index) {
   return index < s.staged.size() ? &s.staged[index] : nullptr;
 }
 
+namespace {
+std::atomic<u64> g_guest_constant_gen{1};
+} // namespace
+
+void NoteGuestConstantWrite() {
+  g_guest_constant_gen.fetch_add(1, std::memory_order_relaxed);
+}
+u64 GuestConstantWriteGeneration() {
+  return g_guest_constant_gen.load(std::memory_order_relaxed);
+}
+
 u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask,
-                          bool allow_mask_low) {
+                          bool allow_mask_low, const u32 *declared) {
   auto &s = upload_state();
   if (!s.instances.mapped || n == 0)
     return ~0u;
@@ -718,6 +732,14 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask,
       continue;
     }
     const InstanceRecord &r = s.staged[idx];
+    // The registers the shader declares: only those are compared, masked and
+    // copied - it never reads the rest, from either source. The profile of
+    // 2026-09-04 had this loop and its 4 KB copy as the Draw Thread's largest
+    // host item (274 of 7,101 samples).
+    u32 decl[8];
+    const bool use_declared = declared && REXCVAR_GET(bd_record_declared);
+    for (u32 w = 0; w < 8; ++w)
+      decl[w] = use_declared ? declared[w] : 0xFFFFFFFFu;
     u32 mask[8];
     if (!base) {
       for (u32 w = 0; w < 8; ++w)
@@ -725,7 +747,10 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask,
     } else {
       for (u32 w = 0; w < 8; ++w) {
         u32 bits = 0;
-        for (u32 b = 0; b < 32; ++b) {
+        u32 rest = decl[w];
+        while (rest) {
+          const u32 b = static_cast<u32>(std::countr_zero(rest));
+          rest &= rest - 1;
           const u32 reg = w * 32 + b;
           if (std::memcmp(r.regs + reg * 4, base + reg * 4, 16) != 0)
             bits |= 1u << b;
@@ -748,8 +773,22 @@ u32 CommitInstanceRecords(const u32 *staged, u32 n, bool allow_mask,
         for (u32 w = 2; w < 8; ++w)
           mask[w] = 0xFFFFFFFFu;
     }
-    // The ring is write-combined: one contiguous write, no read back.
-    std::memcpy(dst[i].regs, r.regs, sizeof(r.regs));
+    // The ring is write-combined: contiguous writes, no read back. Only the
+    // declared registers are written; the shader reads no other.
+    if (use_declared) {
+      for (u32 w = 0; w < 8; ++w) {
+        u32 rest = decl[w];
+        while (rest) {
+          const u32 b = static_cast<u32>(std::countr_zero(rest));
+          rest &= rest - 1;
+          const u32 reg = w * 32 + b;
+          std::memcpy(dst[i].regs + reg * 4, r.regs + reg * 4, 16);
+        }
+        mask[w] &= decl[w];
+      }
+    } else {
+      std::memcpy(dst[i].regs, r.regs, sizeof(r.regs));
+    }
     std::memcpy(dst[i].mask, mask, sizeof(mask));
     if (base && n > 1 && i > 0) {
       // Per frame, for a few frames: how many groups have members with

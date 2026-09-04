@@ -46,6 +46,9 @@ GuestBuffer *AdoptPhysicalBuffer(u32 struct_va,
 // FindPhysicalBufferByStruct, then AdoptPhysicalBuffer. Used by
 // every draw/lock hook that binds a physical VB/IB by its engine-owned VA.
 GuestBuffer *ResolveGuestBufferVa(u32 va, ResourceType rtype);
+// Bumped whenever a physical buffer is evicted or refreshed: a GuestBuffer
+// pointer resolved at one generation is still that buffer while it holds.
+u64 PhysicalBufferGeneration();
 
 // Free the plume buffers retired by the registry's stale-reuse refresh. Runs
 // from the per-slot post-fence drain, so no in-flight list references them.

@@ -595,7 +595,8 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
           cmds ? CommitInstanceRecords(records.data(),
                                        static_cast<u32>(records.size()),
                                        REXCVAR_GET(bd_record_mask_mode) != 4,
-                                       REXCVAR_GET(bd_record_mask_mode) != 9)
+                                       REXCVAR_GET(bd_record_mask_mode) != 9,
+                                       q.vs_reg_mask)
                : ~0u;
       if (cmds && first != ~0u) {
         const u32 index_bytes =
@@ -714,7 +715,8 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
                   g_queue[i].sequence, g_queue[j - 1].sequence);
         }
       }
-      const u32 first = CommitInstanceRecords(records.data(), n);
+      const u32 first =
+          CommitInstanceRecords(records.data(), n, true, true, q.vs_reg_mask);
       if (first != ~0u) {
         QueuedDraw d = q;
         d.pipeline = q.instanced_pipeline;

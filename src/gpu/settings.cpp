@@ -898,6 +898,17 @@ REXCVAR_DEFINE_DOUBLE(bd_reflection_cull_distance, 350.0, kCvarGroup,
 // (gpu/scene/mesh_lod.cpp): cells across a mesh's longest axis, 0 = the
 // original mesh. The views are a 1024 map and a 128x72 reflection on the
 // Quest; the census of 2026-09-04 read 81k and 49k triangles a frame for them.
+// The Draw Thread's per-node work, cut after the 2026-09-04 profile: the
+// replay's 8 KB guest block copy only when the guest wrote a constant since
+// the last one, the streams resolved once per template until a physical
+// buffer moves, and instance records carrying only the registers the vertex
+// shader declares.
+REXCVAR_DEFINE_BOOL(bd_host_draw_fast, true, kCvarGroup,
+                    "Replay caches: skip the guest block copy and the stream "
+                    "resolution when nothing changed.");
+REXCVAR_DEFINE_BOOL(bd_record_declared, true, kCvarGroup,
+                    "Instance records carry only the registers the vertex "
+                    "shader declares.");
 REXCVAR_DEFINE_BOOL(bd_lod, true, kCvarGroup,
                     "Coarse index lists for the shadow and reflection views "
                     "(the grids below); off draws every view at full detail.");

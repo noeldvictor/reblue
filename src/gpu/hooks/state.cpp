@@ -20,6 +20,7 @@
 #include "gpu/foveation.h"
 #include "gpu/draw_queue.h"
 #include "gpu/d3d.h"
+#include "gpu/constant_buffers.h"
 #include "gpu/device.h"
 #include "gpu/shadow_fit.h"
 #include "gpu/frame_stats.h"
@@ -332,6 +333,7 @@ REX_HOOK_RAW(D3DDevice_SetVertexShaderConstantFN) {
   const u32 src = ctx.r5.u32;
   const u32 count = ctx.r6.u32;
   __imp__D3DDevice_SetVertexShaderConstantFN(ctx, base);
+  bd::gpu::NoteGuestConstantWrite();
   bd::gpu::Video::MarkVSConstantsDirty();
   bd::gpu::scene::NoteConstantsSet(true, start, count);
   bd::gpu::scene::NoteConstantsSource(true, start, count, src);
@@ -342,6 +344,7 @@ REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantFN) {
   const u32 src = ctx.r5.u32;
   const u32 count = ctx.r6.u32;
   __imp__D3DDevice_SetPixelShaderConstantFN(ctx, base);
+  bd::gpu::NoteGuestConstantWrite();
   bd::gpu::Video::MarkPSConstantsDirty();
   bd::gpu::scene::NoteConstantsSet(false, start, count);
   bd::gpu::scene::NoteConstantsSource(false, start, count, src);
