@@ -44,9 +44,11 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <fmt/format.h>
+#include <xxhash.h>
 #include <rex/cvar.h>
 #include <rex/graphics/xenos.h>
 #include <rex/hook.h>
@@ -77,6 +79,7 @@ REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 REXCVAR_DECLARE(bool, bd_lod);
 REXCVAR_DECLARE(bool, bd_host_draw_fast);
 REXCVAR_DECLARE(bool, bd_material_diag);
+REXCVAR_DECLARE(bool, bd_material_census);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -231,6 +234,8 @@ struct Store {
   // Which registers a template is recaptured for: a "stable" register that
   // moves every frame is a misclassification, and each one costs an
   // interpreter run (2026-09-04).
+  // Distinct sub-draw material keys seen (bd_material_census): the cook's size.
+  std::unordered_set<u64> material_keys;
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
@@ -751,6 +756,9 @@ void Tally(Store &st, bool replayed, bool from_list) {
         }
         if (!top.empty())
           BD_INFO("[node] drift by register a frame:{}", top);
+        if (!st.material_keys.empty())
+          BD_INFO("[material] {} distinct sub-draw materials seen so far",
+                  st.material_keys.size());
         std::memset(st.drift_vs, 0, sizeof(st.drift_vs));
         std::memset(st.drift_ps, 0, sizeof(st.drift_ps));
       }
@@ -1268,6 +1276,35 @@ void HostDrawCommit(const NodeTag &tag) {
     }
   }
   NodeTemplate &t = st.templates[key];
+  // The cook's unit of work: a content key per sub-draw, over the state that
+  // makes a material rather than the node that happens to carry it - the
+  // pixel shader, the pipeline's blend and depth, the textures by content,
+  // and the pixel constants the run set. Two sub-draws with the same key want
+  // the same cooked material record, whichever visual they belong to. Counted
+  // here so the cook's size is known before it is written (2026-09-04).
+  if (REXCVAR_GET(bd_material_census)) {
+    for (const SubDraw &d : p.draws) {
+      u64 h = 0xC0FFEEull;
+      auto mix = [&h](u64 v) {
+        h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
+      };
+      const auto &ps = d.pipelineState;
+      mix(ps.pixelShader ? XXH3_64bits(&ps.pixelShader, sizeof(void *)) : 0);
+      mix(ps.vertexShader ? XXH3_64bits(&ps.vertexShader, sizeof(void *)) : 0);
+      mix(u64(ps.alphaBlendEnable) | (u64(ps.srcBlend) << 1) |
+          (u64(ps.destBlend) << 9) | (u64(ps.zWriteEnable) << 17) |
+          (u64(ps.zFunc) << 18) | (u64(ps.cullMode) << 24));
+      for (u32 k = 0; k < 16; ++k)
+        if (d.textures[k])
+          mix(u64(d.tex_va[k]) ^ (u64(k) << 56));
+      // The pixel constants this material carries, value and register.
+      for (const RegDelta &r : d.ps_delta)
+        mix(XXH3_64bits(r.value, 16) ^ (u64(r.reg) << 32));
+      // No lock: the capture path already holds st.mutex, and taking it again
+      // on a non-recursive mutex deadlocked the app on the first frame.
+      st.material_keys.insert(h);
+    }
+  }
   t.captured_frame = frame;
   t.draws = std::move(p.draws);
   t.bone_slots = std::move(bone_slots);

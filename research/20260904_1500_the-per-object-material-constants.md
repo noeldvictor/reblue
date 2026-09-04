@@ -85,11 +85,27 @@ catch, and those 29 draws a frame would join the host's.
 That is the same conclusion the effects and UI paths reach from the other direction, and it
 is why the cook is the next structural piece rather than another inference on the seam.
 
+## The cook's size, measured (15:40)
+
+`bd_material_census` keys every captured sub-draw by content rather than by the node that
+carries it: the pixel and vertex shader, the blend and depth state, the textures by guest
+address, and the pixel constants the run set. Two sub-draws with the same key want the same
+cooked record whichever visual they belong to.
+
+**A village scene has 121 distinct sub-draw materials**, against 579 node draws a frame and
+612 node templates. So the cook is small - a hundred-odd records, not thousands - and the
+reason the host currently re-learns them every sixteen frames is that it keys them by node
+instead of by content.
+
+(The census deadlocked on its first run by taking the store's mutex inside the capture path,
+which already holds it. Non-recursive; the app froze on frame one and wrote a 330-line log.)
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
 - `bd_material_diag` - what a drifting material constant holds, beside the guest's
   per-draw material colour, so the source can be identified.
+- `bd_material_census` - distinct sub-draw materials by content, which sizes the cook.
 
 Sources: `src/gpu/scene/host_draw.cpp` (`drifted`, the visual register publish, the drift
 counters), `src/gpu/shaders/hlsl/bd_normal_lit.hlsl` (the constant names),
