@@ -366,6 +366,40 @@ whether the offset is right and the field is transient, or the offset is wrong.
 Not claiming the source is found until those agree - three earlier conclusions in this note
 were withdrawn for less.
 
+## Where this stopped, and how to pick it up (20:30)
+
+The offset is wrong for these visuals and probing is exhausted. A last check printed only
+visuals whose `+5040` window is non-zero: the hits carry denormal noise, not colours. So
+`visual + 5040` is a field of some other kind, and the branch that reads it is not the one
+these draws take. The probe is removed rather than left to mislead.
+
+Four conclusions on this thread were stated and withdrawn in one afternoon:
+
+1. Reclassify the drifting register as moving - priced by the verifier at ps c4 wrong on
+   44,924 draws, reverted.
+2. Skip the drift check for per-sub-draw registers - 5,718 wrong, reverted.
+3. A set of memory searches "eliminating" every structure - invalidated by a double
+   byte-swap, rebuilt, and the conclusion happened to survive.
+4. The traced load from `visual + 5040` - on a branch these draws do not take.
+
+Each was caught by measurement, and the numbers are here so the next attempt starts past
+them. But four is a pattern, and the pattern is that **probing a 1,935-instruction
+interpreter one offset at a time does not converge.** The next attempt should not add a
+fifth guess.
+
+What would converge: read `bdSceneNodeDrawSingle`'s material path as a whole - the token
+loop, the type switch on the virtual call's return, and both operand sources - rather than
+sampling addresses and testing them. The recompilation carries the PowerPC as comments, so
+this is a reading task, not an experiment. The pieces already established stand and are
+worth carrying in:
+
+- The colour is a component-wise product, base times modulator.
+- The modulator is at the staging struct's `+396..+404`, and that struct is a global.
+- The struct's layout is mapped: vertex constants at `+0`, pixel at `+80`, bools at `+304`,
+  dirty flags at `+372/+376/+380`, a write counter at `+408`.
+- The flush is `sub_821981E0`, called once per node draw.
+- All drift is render-list draws; 121 distinct materials; identity does not determine colour.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
