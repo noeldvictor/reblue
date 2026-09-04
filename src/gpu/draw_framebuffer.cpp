@@ -93,7 +93,7 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   // leaves undefined rather than reporting, so it would show up as a plausible
   // black frame rather than an error.
   if (rt) {
-    bd::gpu::FoveationEnsure(rt->width, rt->height);
+    bd::gpu::FoveationEnsure(rt->width, rt->height, rt->layers);
     if (bd::gpu::FoveationWanted(rt->width, rt->height, rt->layers))
       desc.fragmentDensityMap = bd::gpu::FoveationMapFor(rt->width, rt->height);
   }

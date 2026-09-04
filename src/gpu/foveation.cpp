@@ -61,6 +61,14 @@ u8 DensityAt(float nx, float ny, float floor_density) {
   return static_cast<u8>(std::clamp(d, 0.05f, 1.0f) * 255.0f + 0.5f);
 }
 
+// The fragments a pass over this target shades, against the smallest pass
+// worth a density attachment (the old 1024x512 threshold, as an area).
+bool FoveationBigEnough(u32 width, u32 height, u32 layers) {
+  const u64 fragments =
+      u64(width) * height * (layers > 1 ? u64(layers) : u64(1));
+  return fragments >= 1024ull * 512ull;
+}
+
 } // namespace
 
 bool FoveationWanted(u32 width, u32 height, u32 layers) {
@@ -72,8 +80,14 @@ bool FoveationWanted(u32 width, u32 height, u32 layers) {
   // Only the pass worth foveating. Small post targets are already cheap - the
   // whole post chain is under 8ms of a 56ms frame - and foveating them would
   // add a density attachment, and so a distinct pipeline variant, for nothing.
-  (void)layers;
-  if (width < 1024 || height < 512)
+  //
+  // Counted in fragments, not in width. The old test wanted 1024 wide, which
+  // the multiview scene layer never is - 960 on the desktop and 688 on a Quest
+  // under bd_mv_half_width - so foveation could not fire on the path this port
+  // actually ships, whatever the device supported (2026-09-04). A two-layer
+  // target shades every fragment twice, which is the whole reason it is the
+  // pass worth foveating.
+  if (!FoveationBigEnough(width, height, layers))
     return false;
 
   // AND the map must actually be live. The pipeline and the framebuffer both
@@ -87,8 +101,8 @@ bool FoveationWanted(u32 width, u32 height, u32 layers) {
   return it != g_maps.end() && it->second.ready;
 }
 
-void FoveationEnsure(u32 width, u32 height) {
-  if (!REXCVAR_GET(bd_foveation) || width < 1024 || height < 512)
+void FoveationEnsure(u32 width, u32 height, u32 layers) {
+  if (!REXCVAR_GET(bd_foveation) || !FoveationBigEnough(width, height, layers))
     return;
   if (g_maps.find(Key(width, height)) != g_maps.end())
     return;

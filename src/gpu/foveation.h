@@ -43,7 +43,9 @@ bool FoveationWanted(u32 width, u32 height, u32 layers);
 // Queue a density map for this target size if there is not one yet. Called from
 // the framebuffer bind; the map goes live at the next frame start, so the first
 // frames at a new size are simply unfoveated.
-void FoveationEnsure(u32 width, u32 height);
+// `layers` counts a two-layer multiview target's fragments twice, which is
+// what makes the half-width stereo scene qualify.
+void FoveationEnsure(u32 width, u32 height, u32 layers);
 
 // Called at the start of a frame, with a freshly opened command list and no
 // render pass active. Uploads any map created since the last frame.
