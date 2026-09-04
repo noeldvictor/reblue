@@ -124,6 +124,15 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**EFFECTS AND UI ARE UNMEASURED (2026-09-04, 23:20).** A frame issues about 753 draws of
+which 611 are node draws, so **roughly 140 a frame are effects, particles and UI** - and the
+fragment census does not see any of them. It counts inside the draw queue's emit, and every
+draw it counted this run belongs to render view 0, 1 or 3 with a valid node tag; the "outside
+any node" bucket is empty. So the per-draw ABI's remaining users are not just unported, they
+are unmeasured: nobody knows what share of the frame's fragments they are. Sizing them is the
+first step on that piece, and it needs the census extended past the queue, not another
+estimate.
+
 **WHAT IS LEFT OF THE GUEST IN A FRAME (2026-09-04, 15:00).** 579 node draws, 450-484
 host-issued, 95-129 still through the 1,935-instruction interpreter (refused: 18 fresh
 values, 18 no template, 4-19 refresh, 1 never, 29 drift), plus effects, particles and UI
