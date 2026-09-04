@@ -180,7 +180,9 @@ void EmitOne(plume::RenderCommandList *cmd, const QueuedDraw &d,
 
   // Fragment census: every draw's fragment shader invocations, folded per
   // pixel shader at readback (bd_frag_census).
-  const bool counted = FragCensusBegin(cmd, d.ps_hash);
+  const bool counted = FragCensusBegin(
+      cmd, d.ps_hash, d.visual_va, d.render_view,
+      FragCensusFlags(d.blended, d.tex_opaque, d.zwrite));
   if (d.indexed)
     cmd->drawIndexedInstanced(d.count, instance_count, d.start_index,
                               d.base_vertex, first_instance);
@@ -627,9 +629,16 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         }
         if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
         if (EmitBindings(cmd, d, st)) {
+          // The census counts the batch under its first draw's visual; the
+          // batch shares the pixel shader, the view and the blend state.
+          const bool counted = FragCensusBegin(
+              cmd, q.ps_hash, q.visual_va, q.render_view,
+              FragCensusFlags(q.blended, q.tex_opaque, q.zwrite));
           cmd->drawIndexedIndirect(VertexPullIndirectBuffer(), byte_offset,
                                    static_cast<u32>(spans.size()),
                                    sizeof(IndirectCommand));
+          if (counted)
+            FragCensusEnd(cmd);
           ++g_indirect_calls;
           g_indirect_draws += static_cast<u32>(j - i);
           g_pulled_draws += static_cast<u32>(spans.size());

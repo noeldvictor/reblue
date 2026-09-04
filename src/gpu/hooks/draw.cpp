@@ -585,6 +585,22 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // cull traverse last visited, which is the node these draws belong to. The
     // guest computes it anyway for its own culling, so this costs a load.
     q.depth = static_cast<float>(bd::engine::LastNodeViewDistanceSq());
+    {
+      const auto &tag = bd::gpu::scene::CurrentNodeTag();
+      q.visual_va = tag.valid ? tag.visual_va : 0u;
+      q.render_view = tag.valid ? tag.render_view : 0xFFu;
+      q.zwrite = s.pipelineState.zWriteEnable;
+      bool any = false, opaque = true;
+      for (u32 k = 0; k < 16 && opaque; ++k) {
+        const bd::gpu::GuestTexture *t = s.textures[k];
+        if (!t || t->type != bd::gpu::ResourceType::Texture)
+          continue;
+        any = true;
+        if (t->alphaOpaque != 1)
+          opaque = false;
+      }
+      q.tex_opaque = any && opaque;
+    }
     q.recorded_rt = s.render_target;
     q.framebuffer = s.pending_framebuffer;
     if (eye_vp) {

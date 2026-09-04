@@ -136,6 +136,12 @@ struct GuestTexture {
   // host textures. The scene recorder's texture key: a guest VA is recycled
   // within a session and asset names collide, this does neither.
   u64 contentHash = 0;
+  // Whether every texel of the base level has alpha one, read off the BC
+  // blocks at upload (texture_upload.cpp): 1 yes, 2 some texel has partial or
+  // zero alpha, 0 unknown (uncompressed, surface, host texture). A draw whose
+  // textures are all opaque and blends source-over with depth write is opaque
+  // in effect, and can leave the guest's back-to-front order (2026-09-04).
+  u8 alphaOpaque = 0;
   // The asset name the mirror was registered under, for the recorder's
   // listing; empty for surfaces.
   char nameTag[32] = {};

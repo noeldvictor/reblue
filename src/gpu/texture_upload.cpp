@@ -61,6 +61,48 @@ struct BCSubresourceUpload {
 // triggered TDR during load. Uploads precede AllocateSlot so a failure path
 // deletes the texture without leaking a slot (GuestTexture has no destructor-
 // side slot release).
+// 1 when every texel of a BC1/2/3 level has alpha one, 2 when any has not,
+// 0 for other formats. Reads the block headers only: BC1's transparent mode
+// is colour0 <= colour1 with an index of 3; BC2 carries explicit nibbles;
+// BC3's alpha block is opaque only when both endpoints are 255 (an eight-value
+// block could still be all-255 through its indices; treated as partial, which
+// only keeps a draw on the conservative side).
+u8 ScanBCAlpha(plume::RenderFormat format, const void *data, size_t size) {
+  const u8 *p = static_cast<const u8 *>(data);
+  switch (format) {
+  case plume::RenderFormat::BC1_UNORM:
+  case plume::RenderFormat::BC1_UNORM_SRGB:
+    for (size_t off = 0; off + 8 <= size; off += 8) {
+      const u16 c0 = u16(p[off]) | (u16(p[off + 1]) << 8);
+      const u16 c1 = u16(p[off + 2]) | (u16(p[off + 3]) << 8);
+      if (c0 > c1)
+        continue;
+      for (u32 b = 4; b < 8; ++b) {
+        const u8 idx = p[off + b];
+        if ((idx & 3) == 3 || ((idx >> 2) & 3) == 3 || ((idx >> 4) & 3) == 3 ||
+            ((idx >> 6) & 3) == 3)
+          return 2;
+      }
+    }
+    return 1;
+  case plume::RenderFormat::BC2_UNORM:
+  case plume::RenderFormat::BC2_UNORM_SRGB:
+    for (size_t off = 0; off + 16 <= size; off += 16)
+      for (u32 b = 0; b < 8; ++b)
+        if (p[off + b] != 0xFF)
+          return 2;
+    return 1;
+  case plume::RenderFormat::BC3_UNORM:
+  case plume::RenderFormat::BC3_UNORM_SRGB:
+    for (size_t off = 0; off + 16 <= size; off += 16)
+      if (p[off] != 0xFF || p[off + 1] != 0xFF)
+        return 2;
+    return 1;
+  default:
+    return 0;
+  }
+}
+
 GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
                                 const BCSubresourceUpload *uploads,
                                 u32 upload_count) {
@@ -105,6 +147,8 @@ GuestTexture *BuildBCMirrorCore(const BCMirrorDesc &d,
 
   std::vector<ConstantAllocation> allocs(upload_count);
   for (u32 i = 0; i < upload_count; ++i) {
+    if (uploads[i].subresource == 0 && uploads[i].array_index == 0)
+      t->alphaOpaque = ScanBCAlpha(d.format, uploads[i].data, uploads[i].size);
     allocs[i] = UploadHostBytes(uploads[i].data,
                                 static_cast<u32>(uploads[i].size), 0x200);
     if (!allocs[i].memory) {

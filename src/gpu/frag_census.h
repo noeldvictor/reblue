@@ -22,7 +22,12 @@ namespace bd::gpu {
 void FragCensusFrameBegin(plume::RenderDevice *device,
                           plume::RenderCommandList *cmd, u32 slot);
 // Around one draw. Begin returns whether a query was opened; End closes it.
-bool FragCensusBegin(plume::RenderCommandList *cmd, u64 ps_hash);
+// flags: bit 0 blended, bit 1 every bound texture opaque, bit 2 depth write.
+bool FragCensusBegin(plume::RenderCommandList *cmd, u64 ps_hash, u32 visual_va,
+                     u32 render_view, u32 flags);
+inline u32 FragCensusFlags(bool blended, bool tex_opaque, bool zwrite) {
+  return (blended ? 1u : 0u) | (tex_opaque ? 2u : 0u) | (zwrite ? 4u : 0u);
+}
 void FragCensusEnd(plume::RenderCommandList *cmd);
 // After the slot's fence: reads the counts, folds them per pixel shader, and
 // prints the top shaders every few hundred frames.

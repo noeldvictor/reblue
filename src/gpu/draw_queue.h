@@ -90,6 +90,16 @@ struct QueuedDraw {
   float depth = 0.0f;
   u32 sequence = 0;
   bool blended = false;
+  // The scene node's visual and the guest's render view at push, for the
+  // fragment census (gpu/frag_census.cpp) to name where fragments come from.
+  // 0 / 0xFF for a draw outside any node (effects, UI, post).
+  u32 visual_va = 0;
+  u32 render_view = 0xFFu;
+  // Every bound asset texture has alpha one everywhere (GuestTexture::
+  // alphaOpaque), and the pipeline writes depth: with source-over blending
+  // the draw is opaque in effect.
+  bool tex_opaque = false;
+  bool zwrite = false;
   // Depth prepass. When set, the flush first emits this draw with
   // `prepass_pipeline` (colour writes off, depth as recorded) and then again
   // with `color_pipeline` (depth writes off, LEQUAL) in submission order. The
