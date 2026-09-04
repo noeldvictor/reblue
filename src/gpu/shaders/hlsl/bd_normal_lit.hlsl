@@ -39,6 +39,7 @@
 #define ShadowTexture_SamplerDescriptorIndex BD_SHARED_U(216)
 #define g_vCameraPos g_PSC[1]
 #define g_vColorK g_PSC[2]
+#define g_MaterialTier BD_SHARED_U(348)
 #define g_vFogColor1 g_PSC[34]
 #define g_vFogColor2 g_PSC[37]
 #define g_vFogDir1 g_PSC[32]
@@ -322,7 +323,18 @@ void main(
 	r9.xyz = r9.zyx * r3.xxx;
 	if (g_bNMap)
 	{
-		r3.xyz = tfetch2D(NormalTexture_Texture2DDescriptorIndex, NormalTexture_SamplerDescriptorIndex, r1.zw, float2(0, 0)).xyz;
+		// Tier bit 1: past eight texels a pixel the normal map's detail is the
+		// average of its mip, near a flat tangent-space normal (at two texels a
+		// pixel the cliffs visibly flattened, 2026-09-04); the fetch is skipped
+		// and (1, 0.5, 0.5) stands in for it (r10 = r3.yzx * 2 - 1 = +Z).
+		// The footprint is the UV derivative against a 1024 map (the world
+		// textures' size, host_mips.cpp); ALU only, the ALUs sit at 21%.
+		float2 nmap_d = max(abs(ddx(r1.zw)), abs(ddy(r1.zw)));
+		bool nmap_far = (g_MaterialTier & 1u) != 0u && max(nmap_d.x, nmap_d.y) > (8.0 / 1024.0);
+		[branch] if (nmap_far)
+			r3.xyz = float3(1.0, 0.5, 0.5);
+		else
+			r3.xyz = tfetch2D(NormalTexture_Texture2DDescriptorIndex, NormalTexture_SamplerDescriptorIndex, r1.zw, float2(0, 0)).xyz;
 		r10.xyz = r3.yzx * c251.xxx + c251.zzz;
 		r3.xy = r8.xx * r4.zy;
 		r11.xyzw = r8.yyzz * r4.xzyx;
@@ -439,6 +451,21 @@ void main(
 		float2 shadow_dim = float2(getTexture2DDimensions(shadow_tex));
 		float shadow_o = 0.65 * c252.z; // c252.z is (1/1024) * g_ShadowPcfScale
 		r7.y = 0.0;
+		// Tier bit 2: where the shadow map is minified (its texel under a
+		// screen pixel) the four-gather penumbra is narrower than a pixel and
+		// one bilinear gather at the centre reads the same; three fetches
+		// fewer on the far ground.
+		float2 shadow_d = max(abs(ddx(shadow_uv)), abs(ddy(shadow_uv))) * shadow_dim;
+		bool shadow_far = (g_MaterialTier & 2u) != 0u && max(shadow_d.x, shadow_d.y) > 1.0;
+		[branch] if (shadow_far)
+		{
+			float4 shadow_taps = shadow_tex.GatherRed(g_SamplerDescriptorHeap[ShadowTexture_SamplerDescriptorIndex], BD_UV(shadow_uv));
+			float4 shadow_lit = select(shadow_taps > shadow_ref.xxxx, float4(1.0, 1.0, 1.0, 1.0), float4(0.0, 0.0, 0.0, 0.0));
+			float2 shadow_f = frac(shadow_uv * shadow_dim - 0.5);
+			r7.y = lerp(lerp(shadow_lit.w, shadow_lit.z, shadow_f.x), lerp(shadow_lit.x, shadow_lit.y, shadow_f.x), shadow_f.y);
+		}
+		else
+		{
 		[unroll] for (int shadow_i = 0; shadow_i < 4; ++shadow_i)
 		{
 			float2 tap_uv = shadow_uv + float2((shadow_i & 1) ? shadow_o : -shadow_o, (shadow_i & 2) ? shadow_o : -shadow_o);
@@ -446,6 +473,7 @@ void main(
 			float4 shadow_lit = select(shadow_taps > shadow_ref.xxxx, float4(1.0, 1.0, 1.0, 1.0), float4(0.0, 0.0, 0.0, 0.0));
 			float2 shadow_f = frac(tap_uv * shadow_dim - 0.5);
 			r7.y += 0.25 * lerp(lerp(shadow_lit.w, shadow_lit.z, shadow_f.x), lerp(shadow_lit.x, shadow_lit.y, shadow_f.x), shadow_f.y);
+		}
 		}
 		if (any(shadow_uv < 0.0) || any(shadow_uv > 1.0))
 			r7.y = c252.x;

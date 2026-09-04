@@ -909,6 +909,18 @@ REXCVAR_DEFINE_BOOL(bd_host_draw_fast, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_record_declared, true, kCvarGroup,
                     "Instance records carry only the registers the vertex "
                     "shader declares.");
+// The host lit material's distance tier: the normal map fetch is skipped
+// where the map is already minified past two texels a pixel (its detail is
+// averaged away there) and the four-gather shadow kernel becomes one gather
+// where the shadow map is minified (the penumbra is under a pixel). Fetches,
+// which the Quest's scene pass is bound by, not visible detail (2026-09-04).
+REXCVAR_DEFINE_BOOL(bd_material_tier, true, kCvarGroup,
+                    "Host lit material drops fetches where the footprint says "
+                    "they are invisible (bd_material_tier_bits).");
+REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
+                     "1 = normal map skipped past eight texels a pixel, 2 = one "
+                     "shadow gather where the map is minified.")
+    .range(0, 3);
 REXCVAR_DEFINE_BOOL(bd_lod, true, kCvarGroup,
                     "Coarse index lists for the shadow and reflection views "
                     "(the grids below); off draws every view at full detail.");

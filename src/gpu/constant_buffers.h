@@ -55,7 +55,12 @@ struct SharedConstants {
   float blitHalfPixelOffsetX{}; // c21.x, byte 336
   float blitHalfPixelOffsetY{}; // c21.y, byte 340
   float stereoConvergence{};    // c21.z, byte 344
-  u32 _pad_c21_w{};             // c21.w, byte 348
+  // The host material's tier bits (bd_material_tier, gpu/shaders/hlsl/
+  // bd_normal_lit.hlsl g_MaterialTier): 1 = the normal map is skipped where
+  // its footprint is past two texels a pixel, 2 = the shadow takes one gather
+  // where the map is minified. The Quest's scene pass is bound by texture
+  // fetches (2026-09-03); these drop fetches where they cannot be seen.
+  u32 materialTier{};           // c21.w, byte 348
 };
 static_assert(sizeof(SharedConstants) == 352);
 

@@ -48,6 +48,8 @@
 REXCVAR_DECLARE(bool, bd_constants_gpu_upload);
 REXCVAR_DECLARE(bool, bd_record_mask);
 REXCVAR_DECLARE(bool, bd_record_declared);
+REXCVAR_DECLARE(bool, bd_material_tier);
+REXCVAR_DECLARE(i32, bd_material_tier_bits);
 REXCVAR_DECLARE(i32, bd_record_mask_mode);
 REXCVAR_DECLARE(bool, bd_record_mask_high);
 
@@ -1207,6 +1209,8 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       vs.vertex_declaration ? vs.vertex_declaration->sintTexcoords : 0u;
 
   s.shared.shadowPcfScale = s.shadowPcfScale;
+  s.shared.materialTier =
+      REXCVAR_GET(bd_material_tier) ? u32(REXCVAR_GET(bd_material_tier_bits)) : 0u;
   // Multiview stereo, read by every recompiled vertex shader. Zero unless
   // bd_stereo is on, which makes the per-eye skew a no-op rather than something
   // the shader has to branch around.

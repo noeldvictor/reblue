@@ -580,7 +580,18 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    The other kernels (barrier, dir, spot, toon, caustics) differ per shader in registers
    and constant slots and are under 1% of the field's fragments; `tools`-less generator
    in the session scratchpad, `make_lit.py`, transplants only byte-identical blocks.
-   `research/20260903_1230_the-host-shadow-kernel-...md`. The tail of the frame is host-owned now:
+   `research/20260903_1230_the-host-shadow-kernel-...md`. **The distance tier
+   (2026-09-04, `bd_material_tier`, `bd_material_tier_bits` = 2)**: where the shadow
+   map is minified (its texel over a screen pixel, which is the far ground at a 1024
+   map) the four-gather kernel is one gather, since the penumbra is then under a pixel
+   - three fetches fewer a fragment on the ground that covers the frame. Bit 1 skips
+   the normal-map fetch past eight texels a pixel and stands a flat tangent normal in
+   its place; it is off by default because it reads 2.2% of pixels against a 1.2%
+   camera-motion floor (at two texels a pixel it flattened the cliffs outright, 16%).
+   Verification is per-frame A/B pairs (`bd_ab_period = 1`) against a control run with
+   the bits at zero, which is the only way to separate the change from the autoplay
+   camera's motion between two frames. **The fetch saving itself is unmeasured**: the
+   desktop is not fetch-bound and no Quest run is allowed yet. The tail of the frame is host-owned now:
    composite | blit | 2D | blit | 2D | present, zero seeds, zero conversions; the two 2D
    passes each sample the image they draw over (an input-attachment self-dependency would
    fold them into one pass; later).
