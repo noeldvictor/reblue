@@ -22,6 +22,7 @@
 REXCVAR_DECLARE(i32, bd_max_render_height);
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
 REXCVAR_DECLARE(bool, bd_mv_half_width);
+REXCVAR_DECLARE(bool, bd_mv_no_squeeze);
 
 namespace bd::gpu {
 
@@ -75,8 +76,21 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
     // six eager resolves a frame against two (2026-09-03, 09:26). The frame
     // is still projected and fitted at the full aspect (RenderAspect), the
     // same anamorphic squeeze side-by-side's half-width viewports carry.
-    if (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width))
+    if (REXCVAR_GET(bd_stereo_multiview) && REXCVAR_GET(bd_mv_half_width)) {
       fit_w = std::max<u32>(8u, (fit_w / 2u) & ~7u);
+      // The squeeze above is side-by-side's: two half-width eyes pack into one
+      // full-width panel and the compositor un-squeezes each half onto a whole
+      // eye. On the layered path each array layer *is* an eye, so nothing
+      // un-squeezes it but the present's own aspect fit - which does it by
+      // throwing away the vertical factor of two, measured at 2.01 source
+      // pixels a destination pixel (2026-09-04). Halving the height too keeps
+      // the target's aspect equal to RenderAspect, so the present maps 1:1 and
+      // the discarded half is never shaded.
+      if (REXCVAR_GET(bd_mv_no_squeeze)) {
+        fit_h = std::max<u32>(8u, (fit_h / 2u) & ~7u);
+        g_latched_full_w = fit_w; // no squeeze: RenderAspect is the target's
+      }
+    }
     latched_w = fit_w;
     latched_h = fit_h;
   }

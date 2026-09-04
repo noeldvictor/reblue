@@ -71,6 +71,31 @@ and improves the image. Option 1 is the one to take if the Quest frame needs the
 more than it needs the edges. Both are a change to what the player sees, so neither is being
 shipped without a decision.
 
+## Option 1, built and measured (14:10)
+
+`bd_mv_no_squeeze`, default off: under `bd_stereo_multiview` + `bd_mv_half_width` the
+height is halved with the width and `g_latched_full_w` follows the halved width, so the
+target's aspect equals `RenderAspect` and the present maps 1:1.
+
+| | squeeze (today) | no squeeze |
+| --- | --- | --- |
+| present | source 960x1080 -> rect 960x536, **2.01** source pixels a destination pixel | source 960x536 -> rect 960x536, **1.00** |
+| scene view fragments a frame | 5.65 M | 2.99 M |
+| scene view pixels (both layers) | 2.074 M | 1.029 M |
+| overdraw | 2.72 | 2.90 |
+
+The two runs are different scenes - autoplay does not land twice in the same place, and the
+second had 848 draws against 698 - so the fragment totals are not a clean A/B. What survives
+that: the fragments scale with the target's area while the overdraw stays in the same place,
+which is what "the discarded half is never shaded" predicts. The frame totals (12.8 M and
+12.4 M) do **not** halve, because the shadow and reflection views keep their own sizes and
+the denser second scene raised them.
+
+The delivered content is 960x536 either way and the proportions match - the two captures put
+side by side show the same derrick with the same shape, no squeeze or stretch. What is lost
+is the accidental 2x vertical supersample the old downsample performed; thin rigging lines
+are marginally harder. That is the whole of the trade.
+
 ## The instrument
 
 `[present] source WxH layers L -> back WxH, rect WxH+X,Y (aspect A); N source pixels a

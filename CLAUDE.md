@@ -137,7 +137,12 @@ presented into 688x360. Side-by-side reads 1.00 at the present pass, so this is 
 alone. **Not fixable in the present pass** - removing the fit there stretches the frame 2:1
 (tried and reverted, 2026-09-04). The fix is the size the guest is told to render at, and
 every version of it changes what the player sees, so it is the owner's call:
-`research/20260904_1330_half-the-multiview-frame-...md` lists the three.
+`research/20260904_1330_half-the-multiview-frame-...md` lists the three. **Option 1 is
+built and measured** (`bd_mv_no_squeeze`, default off): the present ratio goes 2.01 -> 1.00
+and the scene view's fragments 5.65 M -> 2.99 M as its pixels go 2.074 M -> 1.029 M, with
+the overdraw unchanged (2.72 against 2.90 in a denser scene) and the delivered 960x536
+content identical in proportion. The cost is the accidental 2x vertical supersample the old
+downsample performed.
 
 
 **THE SCENE PASS IS BOUND BY FRAGMENTS x TEXTURE FETCHES (2026-09-03, 09:50).** Nine device

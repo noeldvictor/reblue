@@ -934,6 +934,13 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
 // the order. This is bd_draw_instancing_reorder_blended's replacement: that
 // one moved blended draws freely and put the clear colour through the ground
 // at the village rock (2026-09-03).
+// Drop the anamorphic squeeze on the layered multiview path, so the guest
+// renders the size the present actually delivers instead of twice it. Off
+// until the owner picks between this and the two other ways to spend the
+// difference (research/20260904_1330_...md): it changes what the player sees.
+REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
+                    "Multiview half width halves the height too, so the "
+                    "present maps 1:1 instead of discarding half the frame.");
 REXCVAR_DEFINE_BOOL(bd_pool_census, false, kCvarGroup,
                     "Log the surfaces the guest still acquires from the pool, "
                     "by shape, every 300 frames.");
