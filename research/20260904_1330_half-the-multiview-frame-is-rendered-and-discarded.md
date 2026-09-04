@@ -135,6 +135,35 @@ Two bugs it exposed, both real and both caught before defaulting it on:
   latched frame instead. The same heuristic is presumably fragile under a small
   `bd_render_scale` on the other paths; not changed there, not investigated.
 
+## Option 2 is already built, and it is free (2026-09-05, 01:30)
+
+The three options above were written as though option 2 needed building. It does not -
+`bd_xr_eye_sized` with `bd_xr_render_scale` *is* option 2, and the scale is the dial that
+makes it budget-neutral. The arithmetic for a Quest eye of 1440x1584:
+
+| | renders a frame | delivers a frame |
+| --- | --- | --- |
+| today (half width + the fit) | 688x720 = **495k** | 688x360 = **248k** |
+| eye-sized at scale 0.65 | 936x520 = **487k** | 936x520 = **487k** |
+
+Verified under `tools/xrsim` against a Quest-shaped eye (`XRSIM_WIDTH=1440
+XRSIM_HEIGHT_PX=1584`):
+
+```
+[output] eye-sized frame: runtime 1440x1584 an eye x0.65 -> content 936x520 at aspect 1.800
+[xr] layered swapchain at the runtime's per-eye rect: 936x1030 x2
+[present] source 936x520 layers 2 -> back 936x1030, rect 936x520+0,255; 1.00 source pixels
+```
+
+Both layers correct, proportions right, stereo intact at 6.66% difference between them.
+
+So at scale 0.65 the Quest would shade **the same number of fragments it shades today and
+deliver twice the pixels**. Not a trade: the delivered image is strictly larger for an
+unchanged budget, because the factor of two currently thrown away at the present is spent on
+the image instead. Framing this as "a change to what the player sees, so it needs a decision"
+was wrong - it is a change for the better at no cost, and the only reason it is still off is
+that it cannot be seen in a headset from here.
+
 ## The instrument
 
 `[present] source WxH layers L -> back WxH, rect WxH+X,Y (aspect A); N source pixels a

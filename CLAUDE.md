@@ -227,8 +227,13 @@ presented into 688x360. Side-by-side reads 1.00 at the present pass, so this is 
 alone. **Not fixable in the present pass** - removing the fit there stretches the frame 2:1
 (tried and reverted, 2026-09-04). The fix is the size the guest is told to render at, and
 every version of it changes what the player sees, so it is the owner's call:
-`research/20260904_1330_half-the-multiview-frame-...md` lists the three. **Option 1 is
-built and measured** (`bd_mv_no_squeeze`, default off): the present ratio goes 2.01 -> 1.00
+`research/20260904_1330_half-the-multiview-frame-...md` lists the three. **`bd_xr_eye_sized` at `bd_xr_render_scale = 0.65` is the free version and is verified
+(2026-09-05)**: on a Quest eye of 1440x1584 it renders 936x520 = 487k pixels against today's
+688x720 = 495k, and delivers 936x520 against today's 688x360 - the same shading budget for
+twice the delivered image, because the factor of two now discarded at the present is spent on
+the image instead. Checked under xrsim with a Quest-shaped eye: present ratio 1.00, both
+layers correct, stereo intact. It is off only because it cannot be seen in a headset from
+here. **Option 1 is also built and measured** (`bd_mv_no_squeeze`, default off): the present ratio goes 2.01 -> 1.00
 and the scene view's fragments 5.65 M -> 2.99 M as its pixels go 2.074 M -> 1.029 M, with
 the overdraw unchanged (2.72 against 2.90 in a denser scene) and the delivered 960x536
 content identical in proportion. The cost is the accidental 2x vertical supersample the old
