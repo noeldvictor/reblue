@@ -34,4 +34,10 @@ f64 ShadowFitZoom();
 // clip = P * v) and the frame it was seen in; false before any.
 bool ShadowFitCamera(float out[16], u32 &frame);
 
+// The fitted light matrix the shadow pass last drew with (its c32-35 after
+// the fit, rows as the registers lie, clip = L * v, orthographic), and the
+// frame: the shadow walk culls casters whose sphere misses the map's clip
+// square, since nothing outside it can reach the map (2026-09-04).
+bool ShadowFitLightClip(float out[16], u32 &frame);
+
 } // namespace bd::gpu

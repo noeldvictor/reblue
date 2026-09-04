@@ -114,6 +114,8 @@ struct State {
   bool fix_tried = false;
   u32 fix_frame = 0;
   f64 zoom = 1.0;
+  Mat4 fitted_light{};
+  u32 fitted_frame = 0;
   u32 diag_told = 0;
   u32 diag_frame = 0;
 };
@@ -231,8 +233,12 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
   // frame's camera, and applied to every draw's light matrix.
   const Mat4 light = ReadRegs(regs, 32);
   if (st.fix_tried && st.fix_frame == frame) {
-    if (st.fix_valid && REXCVAR_GET(bd_shadow_fit))
-      WriteRegs(regs, 32, Mul(st.clip_fix, light));
+    if (st.fix_valid && REXCVAR_GET(bd_shadow_fit)) {
+      const Mat4 fitted = Mul(st.clip_fix, light);
+      WriteRegs(regs, 32, fitted);
+      st.fitted_light = fitted;
+      st.fitted_frame = frame;
+    }
     return;
   }
   st.fix_tried = true;
@@ -299,7 +305,19 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
   st.clip_fix = fix;
   st.fix_valid = true;
   st.zoom = half;
-  WriteRegs(regs, 32, Mul(fix, light));
+  const Mat4 fitted = Mul(fix, light);
+  WriteRegs(regs, 32, fitted);
+  st.fitted_light = fitted;
+  st.fitted_frame = frame;
+}
+
+bool ShadowFitLightClip(float out[16], u32 &frame) {
+  auto &st = state_();
+  if (st.fitted_frame == 0)
+    return false;
+  std::memcpy(out, st.fitted_light.m, sizeof(st.fitted_light.m));
+  frame = st.fitted_frame;
+  return true;
 }
 
 f64 ShadowFitZoom() { return state_().zoom; }

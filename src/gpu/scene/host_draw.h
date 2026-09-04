@@ -96,6 +96,9 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before);
 // on every replayed frame - the ground light at the village rock came and
 // went with the refresh cadence).
 bool HostDrawHasDrawTemplate(const NodeTag &tag);
+// The scene camera's eye in world space, from the scene pass's camera block
+// (VS c1) as its interpreted draws last wrote it; false before any.
+bool HostSceneEye(float out[3]);
 // 0 no list record, 1 fresh (replayable), 2 stale (the interpreter runs).
 u32 HostListBuildStatus(const NodeTag &tag);
 bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base);

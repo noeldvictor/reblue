@@ -53,14 +53,21 @@
 #include "gpu/device.h"
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/host_draw.h"
+#include "gpu/shadow_fit.h"
+#include <cmath>
 
 REXCVAR_DECLARE(bool, bd_host_walk);
 REXCVAR_DECLARE(bool, bd_host_cull);
 REXCVAR_DECLARE(bool, bd_host_cull_diag);
+REXCVAR_DECLARE(f64, bd_shadow_cull_distance);
+REXCVAR_DECLARE(f64, bd_reflection_cull_distance);
 REXCVAR_DECLARE(bool, bd_occlusion_cull);
 namespace {
 u32 g_cull_walks = 0, g_cull_host_walks = 0, g_cull_tested = 0,
     g_cull_disagreed = 0;
+u32 g_view_dist_culled = 0;
+u32 g_light_culled = 0;
 } // namespace
 REXCVAR_DECLARE(bool, bd_reflections);
 REXCVAR_DECLARE(bool, bd_walk_skip_stubs);
@@ -154,16 +161,54 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   ++g_cull_walks;
   if (host_cull)
     ++g_cull_host_walks;
+  // The shadow and reflection views by distance from the scene camera: a
+  // caster beyond the fitted map's reach cannot touch the map, and the
+  // reflection (128x72 on the Quest) needs nothing past the scene's own
+  // cull. The walk's centre is world space (the palette holds world
+  // matrices), the eye is the scene pass's c1. A field frame rendered 81k
+  // triangles into the shadow map and 49k into the reflection against 79k
+  // in the scene (research/20260904_0400, before this).
+  const u32 view_id = bd::mem::try_load<u32>(kRenderViewIdVa);
+  float eye[3] = {0, 0, 0};
+  const f64 extra_cull =
+      view_id == 1 ? REXCVAR_GET(bd_shadow_cull_distance)
+                   : (view_id == 0 ? REXCVAR_GET(bd_reflection_cull_distance) : 0.0);
+  const bool have_eye = extra_cull > 0.0 && bd::gpu::scene::HostSceneEye(eye);
+  // The shadow walk against the fitted light frustum: the map's clip square
+  // is [-1, 1] in x and y under the fitted light matrix (orthographic, the
+  // previous frame's fit - the walk runs before this frame's first shadow
+  // draw computes it), and a caster whose sphere misses the square cannot
+  // reach the map. The sphere's clip radius is the world radius times the
+  // longer of the two rows' scales.
+  float light_clip[16];
+  u32 light_frame = 0;
+  const bool have_light = view_id == 1 &&
+                          REXCVAR_GET(bd_shadow_cull_distance) > 0.0 &&
+                          bd::gpu::ShadowFitLightClip(light_clip, light_frame);
+  float light_scale = 0.0f;
+  if (have_light) {
+    const float sx = std::sqrt(light_clip[0] * light_clip[0] +
+                               light_clip[1] * light_clip[1] +
+                               light_clip[2] * light_clip[2]);
+    const float sy = std::sqrt(light_clip[4] * light_clip[4] +
+                               light_clip[5] * light_clip[5] +
+                               light_clip[6] * light_clip[6]);
+    light_scale = std::max(sx, sy);
+  }
   {
     static u32 last_frame = 0;
     const u32 f = bd::gpu::FrameStatFrameCount();
     if (f - last_frame >= 300) {
       if (last_frame)
         BD_INFO("[cull] per frame: walks {:.1f}, host-tested walks {:.1f}, nodes "
-                "tested {:.1f}, disagreements {:.2f}",
+                "tested {:.1f}, disagreements {:.2f}, shadow/reflection nodes "
+                "beyond their view's distance {:.1f}, casters outside the "
+                "fitted light square {:.1f}",
                 g_cull_walks / 300.0, g_cull_host_walks / 300.0,
-                g_cull_tested / 300.0, g_cull_disagreed / 300.0);
+                g_cull_tested / 300.0, g_cull_disagreed / 300.0,
+                g_view_dist_culled / 300.0, g_light_culled / 300.0);
       g_cull_walks = g_cull_host_walks = g_cull_tested = g_cull_disagreed = 0;
+      g_view_dist_culled = g_light_culled = 0;
       last_frame = f;
     }
   }
@@ -215,6 +260,25 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
             out[k] = m[12 + k] + c[0] * m[k] + c[1] * m[4 + k] + c[2] * m[8 + k];
           const float radius = radius_scale * LoadF32(mesh + offsetof(GuestMesh, radius));
           bool visible = false;
+          if (have_eye) {
+            const float dx = out[0] - eye[0], dy = out[1] - eye[1], dz = out[2] - eye[2];
+            const f64 d = std::sqrt(f64(dx) * dx + f64(dy) * dy + f64(dz) * dz) - radius;
+            if (d > extra_cull) {
+              ++g_view_dist_culled;
+              goto children;
+            }
+          }
+          if (have_light) {
+            const float cx = light_clip[0] * out[0] + light_clip[1] * out[1] +
+                             light_clip[2] * out[2] + light_clip[3];
+            const float cy = light_clip[4] * out[0] + light_clip[5] * out[1] +
+                             light_clip[6] * out[2] + light_clip[7];
+            const float rc = radius * light_scale * 1.1f; // a margin: the fit is a frame old
+            if (std::fabs(cx) - rc > 1.0f || std::fabs(cy) - rc > 1.0f) {
+              ++g_light_culled;
+              goto children;
+            }
+          }
           if (host_cull) {
             // Host floats end to end: the centre never goes through guest
             // scratch, and the census hooks take it as floats. The bias

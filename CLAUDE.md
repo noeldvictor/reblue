@@ -670,7 +670,15 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    shared block is the first cook question. Order for the cook: far LODs for the tree-walk
    visuals beyond ~350, the coarsest LOD for shadow casters, a coarse LOD for the
    reflection view, merged buffers for the 29-mesh ground visuals. The ledger line now
-   carries each draw's view distance for this.
+   carries each draw's view distance for this. **First slice (05:00): the shadow and
+   reflection walks culled on the host** - by distance from the scene camera
+   (`bd_shadow_cull_distance` 500 = the fit's reach, `bd_reflection_cull_distance` 350)
+   and, for the shadow walk, against the fitted light matrix's clip square
+   (`ShadowFitLightClip`, the previous frame's fit with a 10% margin): 1,886 nodes a
+   frame fail the distance, 517 casters the square. The reflection view dropped 127 ->
+   90 draws and 49k -> 37k triangles; the shadow pass only 338 -> 313 draws and 81k ->
+   77k triangles - its casters are the visible world at full detail, so the shadow
+   lever is coarse caster meshes from the cook, not culling. Image unchanged.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.
 

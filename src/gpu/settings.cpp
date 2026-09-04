@@ -878,6 +878,16 @@ REXCVAR_DEFINE_BOOL(bd_draw_pull, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_cull_diag, false, kCvarGroup,
                     "Run the guest's visibility test beside the host's and "
                     "log disagreements.");
+// The shadow and reflection walks culled by distance from the scene camera
+// (gpu/scene/host_walk.cpp): the shadow's default is the fitted map's reach.
+REXCVAR_DEFINE_DOUBLE(bd_shadow_cull_distance, 500.0, kCvarGroup,
+                      "Shadow casters beyond this distance from the camera "
+                      "are not drawn (0 = off).")
+    .range(0.0, 100000.0);
+REXCVAR_DEFINE_DOUBLE(bd_reflection_cull_distance, 350.0, kCvarGroup,
+                      "Reflection-view nodes beyond this distance from the "
+                      "camera are not drawn (0 = off).")
+    .range(0.0, 100000.0);
 REXCVAR_DEFINE_BOOL(bd_host_cull, true, kCvarGroup,
                     "Host frustum test for the scene walk's default view "
                     "path, from the guest's own plane table.");

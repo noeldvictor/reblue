@@ -1265,6 +1265,16 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
 
 REX_EXTERN(sub_8227DB50);
 
+bool HostSceneEye(float out[3]) {
+  auto &st = store();
+  std::lock_guard lock(st.mutex);
+  const PassRegs &pr = st.pass_regs[3];
+  if (pr.vs_frame[1] == 0)
+    return false;
+  std::memcpy(out, pr.vs[1], 12);
+  return true;
+}
+
 bool HostDrawHasDrawTemplate(const NodeTag &tag) {
   if (!tag.valid)
     return false;
