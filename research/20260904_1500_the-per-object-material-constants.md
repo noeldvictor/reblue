@@ -252,6 +252,27 @@ place:
 Either way the answer is in the interpreter's material branches, not in memory, and no
 further searching will help: everything a draw can reach has now been scanned.
 
+## Correction (19:10): every search above was reading garbage
+
+`bd::mem::try_load<T>` reads through `be<T>` and **already converts**. All the searches in
+this note were written as `__builtin_bswap32(try_load<u32>(...))`, which double-swaps, so
+every needle was compared against byte-reversed nonsense. The searches were not evidence of
+anything.
+
+The tell arrived by accident: a probe printed the traverse context's first word as
+`20ab2c28` beside the host's visual `282cab20` - the same value byte-reversed. That reads as
+"two different objects" and is actually "one object, read wrongly", which is worse, because
+the first reading would have sent the next attempt somewhere useless.
+
+Corrected and re-run. The context's first word is now `282cab20`, equal to the host's
+`visual_va`, which confirms `r23 == ctx[0] == visual` as `guest_scene.h` says. And with
+correct reads the search still finds nothing: not in the visual, mesh, `mesh[0]`,
+`mesh + 0x10` or the traverse context, to 16 KB, and `visual + 5040` is zero.
+
+So the conclusion survives its evidence being rebuilt - but it had to be rebuilt, and the
+note above stood for half an hour on a swap bug. `try_at` hands back raw guest bytes and
+needs a manual swap; `try_load` does not. Mixing them is silent.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.

@@ -1309,8 +1309,7 @@ void HostDrawCommit(const NodeTag &tag) {
               interesting = true;
           if (!interesting)
             continue;
-          const u32 bases[5] = {tag.visual_va,
-                                tag.mesh_va,
+          const u32 bases[5] = {tag.visual_va, tag.mesh_va,
                                 bd::mem::try_load<u32>(tag.mesh_va),
                                 bd::mem::try_load<u32>(tag.mesh_va + 0x10),
                                 tag.ctx_va};
@@ -1318,19 +1317,15 @@ void HostDrawCommit(const NodeTag &tag) {
                                   "ctx"};
           std::string found;
           for (u32 bi = 0; bi < 5 && found.empty(); ++bi) {
-            // bases 2 and 3 are guest pointers read big-endian; the rest are
-            // host-side addresses already.
-            const u32 b0 = (bi == 2 || bi == 3) ? __builtin_bswap32(bases[bi])
-                                                : bases[bi];
+            const u32 b0 = bases[bi]; // try_load already converted them
             if (!b0)
               continue;
             for (u32 off = 0; off + 16 <= 4096 && found.empty(); off += 4) {
               bool all = true;
               for (u32 i = 0; i < 4 && all; ++i) {
                 const u32 w = bd::mem::try_load<u32>(b0 + off + i * 4);
-                const u32 sw = __builtin_bswap32(w);
                 float f;
-                std::memcpy(&f, &sw, 4);
+                std::memcpy(&f, &w, 4);
                 all = std::fabs(f - want[i]) <= 1e-6f * (1.0f + std::fabs(want[i]));
               }
               if (all)
@@ -1340,17 +1335,25 @@ void HostDrawCommit(const NodeTag &tag) {
           // Read out of the interpreter (reblue_recomp.40.cpp): it loads the
           // material float4 from r23 + 4932 + 108, where r23 is ctx[0], the
           // visual. So visual + 5040 should hold this sub-draw's colour.
+          // r23 is ctx[0]. If the host's visual_va is not that object, the
+          // per-visual register cache is keyed on the wrong thing - which
+          // would be the whole explanation for sibling materials rotating
+          // through one slot.
+          // try_load reads through be<T> and already converts; the extra
+          // bswap here was double-swapping and every search below compared
+          // against garbage (2026-09-04).
+          const u32 ctx0 = bd::mem::try_load<u32>(tag.ctx_va);
           float vm[4] = {};
           for (u32 i = 0; i < 4; ++i) {
-            const u32 w = bd::mem::try_load<u32>(tag.visual_va + 5040 + i * 4);
-            const u32 sw = __builtin_bswap32(w);
-            std::memcpy(&vm[i], &sw, 4);
+            const u32 w = bd::mem::try_load<u32>(ctx0 + 5040 + i * 4);
+            std::memcpy(&vm[i], &w, 4);
           }
           ++shown;
           BD_INFO("[material] tree ps c{} ({:.3f} {:.3f} {:.3f} {:.3f}) "
-                  "visual+5040 ({:.3f} {:.3f} {:.3f} {:.3f}){}{}",
-                  r.reg, want[0], want[1], want[2], want[3], vm[0], vm[1],
-                  vm[2], vm[3],
+                  "ctx0 {:08x} vs visual {:08x}, ctx0+5040 "
+                  "({:.3f} {:.3f} {:.3f} {:.3f}){}{}",
+                  r.reg, want[0], want[1], want[2], want[3], ctx0,
+                  tag.visual_va, vm[0], vm[1], vm[2], vm[3],
                   (std::fabs(vm[0] - want[0]) < 1e-5f &&
                    std::fabs(vm[1] - want[1]) < 1e-5f)
                       ? "  <== MATCH"
@@ -1670,9 +1673,8 @@ bool HostDrawReplay(const NodeTag &tag) {
                 const u32 a = bd::mem::try_load<u32>(
                     tag.visual_va + kVisualMaterialColor + i * 4);
                 const u32 b = bd::mem::try_load<u32>(tag.visual_va + 0xBBC + i * 4);
-                const u32 sa = __builtin_bswap32(a), sb = __builtin_bswap32(b);
-                std::memcpy(&mc[i], &sa, 4);
-                std::memcpy(&src[i], &sb, 4);
+                std::memcpy(&mc[i], &a, 4);
+                std::memcpy(&src[i], &b, 4);
               }
               // Where a list draw's own material lives is still open. The
               // render-list loop (sub_8227F360) uploads PS c0..c13 in one
@@ -1701,9 +1703,8 @@ bool HostDrawReplay(const NodeTag &tag) {
                               tpl[3] != 0.0f); // all-zero matches any hole
                   for (u32 i = 0; i < 4 && all; ++i) {
                     const u32 b = bd::mem::try_load<u32>(entry + off + i * 4);
-                    const u32 sb = __builtin_bswap32(b);
                     float f;
-                    std::memcpy(&f, &sb, 4);
+                    std::memcpy(&f, &b, 4);
                     // The template's value, not the fresh one: fresh is a
                     // sibling mesh's material, the template is this node's own.
                     all = std::fabs(f - tpl[i]) <= 1e-6f * (1.0f + std::fabs(tpl[i]));
