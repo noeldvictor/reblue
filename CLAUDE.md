@@ -232,8 +232,12 @@ every version of it changes what the player sees, so it is the owner's call:
 688x720 = 495k, and delivers 936x520 against today's 688x360 - the same shading budget for
 twice the delivered image, because the factor of two now discarded at the present is spent on
 the image instead. Checked under xrsim with a Quest-shaped eye: present ratio 1.00, both
-layers correct, stereo intact. It is off only because it cannot be seen in a headset from
-here. **Option 1 is also built and measured** (`bd_mv_no_squeeze`, default off): the present ratio goes 2.01 -> 1.00
+layers correct, stereo intact. **On by default since 2026-09-05, multiview only** - side-by-side keeps its squeeze, because
+two eyes pack into one panel there and the eye-sized frame is not meaningful for it.
+Verified after defaulting: multiview reads `content 936x520`, layer `936x1030`, present
+`1.00 source pixels a destination pixel`; side-by-side logs no eye-sized line and still
+submits its two `384x432` half-panel views; the flat desktop path is untouched at 5.20 ms
+CPU. The one thing it has not had is a headset. **Option 1 is also built and measured** (`bd_mv_no_squeeze`, default off): the present ratio goes 2.01 -> 1.00
 and the scene view's fragments 5.65 M -> 2.99 M as its pixels go 2.074 M -> 1.029 M, with
 the overdraw unchanged (2.72 against 2.90 in a denser scene) and the delivered 960x536
 content identical in proportion. The cost is the accidental 2x vertical supersample the old

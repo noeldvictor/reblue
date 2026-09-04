@@ -49,7 +49,12 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
   // the guest's first surfaces all exist before the XR session does. Refusing
   // to answer until the session appeared left the app with no render target at
   // all and it died before writing a log.
-  if (REXCVAR_GET(bd_xr_eye_sized) && !eye_latched) {
+  // Multiview only. Under bd_stereo the two eyes pack into one panel and the
+  // half-width squeeze is what makes that work, so the eye-sized frame is not
+  // meaningful there and that path is deliberately left as it was - it has not
+  // been verified against this and does not need it.
+  if (REXCVAR_GET(bd_xr_eye_sized) && REXCVAR_GET(bd_stereo_multiview) &&
+      !eye_latched) {
     auto &session = bd::xr::Session::Get();
     const u32 eye_w = session.RecommendedWidth();
     const u32 eye_h = session.RecommendedHeight();

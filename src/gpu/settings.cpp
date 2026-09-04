@@ -958,10 +958,16 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
 // so the present maps the content 1:1 into its letterboxed place. Off until
 // the owner picks a budget - at scale 1.0 a Quest eye is 1440x1584, which is
 // far more shading than the frame does today.
-REXCVAR_DEFINE_BOOL(bd_xr_eye_sized, false, kCvarGroup,
+// On since 2026-09-05, multiview only. It is not a trade: on a Quest eye of
+// 1440x1584 at scale 0.65 the frame renders 936x520 = 487k pixels against the
+// half-width path's 688x720 = 495k, and delivers all 487k where that path
+// delivers 688x360 = 248k. The same shading budget for twice the image,
+// because the factor of two the present used to discard is spent on the image.
+// Side-by-side keeps its squeeze: two eyes pack into one panel there.
+REXCVAR_DEFINE_BOOL(bd_xr_eye_sized, true, kCvarGroup,
                     "Render size from the runtime's per-eye rect, not the "
-                    "desktop window.");
-REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 1.0, kCvarGroup,
+                    "desktop window (multiview only).");
+REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 0.65, kCvarGroup,
                       "Fraction of the runtime's per-eye rect to render, "
                       "under bd_xr_eye_sized.")
     .range(0.05, 2.0);
