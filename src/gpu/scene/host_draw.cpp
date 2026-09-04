@@ -264,6 +264,8 @@ struct Store {
   size_t identity_total = 0;
   u32 cap_invalid = 0, cap_not_replayable = 0, replayed_empty = 0;
   std::unordered_map<u64, u32> cap_reason; // key -> 1 no snapshot, 2 not replayable
+  u32 stale_vs[256] = {};
+  u32 stale_ps[256] = {};
   u32 drift_vs[256] = {};
   u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
@@ -784,6 +786,25 @@ void Tally(Store &st, bool replayed, bool from_list) {
         }
         if (!top.empty())
           BD_INFO("[node] drift by register a frame:{}", top);
+        {
+          std::string st_top;
+          for (int pass = 0; pass < 2; ++pass) {
+            const u32 *a = pass ? st.stale_ps : st.stale_vs;
+            std::vector<std::pair<u32, u32>> rows;
+            for (u32 i = 0; i < 256; ++i)
+              if (a[i])
+                rows.push_back({a[i], i});
+            std::sort(rows.rbegin(), rows.rend());
+            for (size_t i = 0; i < rows.size() && i < 6; ++i)
+              st_top += fmt::format(" {}c{}x{}", pass ? "ps" : "vs",
+                                    rows[i].second,
+                                    rows[i].first / std::max(1u, st.acc_frames));
+          }
+          if (!st_top.empty())
+            BD_INFO("[node] fresh-value bails by register a frame:{}", st_top);
+          std::memset(st.stale_vs, 0, sizeof(st.stale_vs));
+          std::memset(st.stale_ps, 0, sizeof(st.stale_ps));
+        }
         BD_INFO("[node] no-template: {} distinct nodes over the window, {} "
                 "refusals a frame",
                 st.none_keys.size(), st.acc_none / std::max(1u, st.acc_frames));
@@ -1756,13 +1777,20 @@ bool HostDrawReplay(const NodeTag &tag) {
     // against 1,354, because the check was also catching genuine material
     // animation that the 16-frame refresh would otherwise let sit stale
     // (2026-09-04). Both ways of removing it were measured and reverted.
+    // The registers a render-list draw takes from its own entry: a sibling's
+    // value says nothing about them, so neither the drift test nor the
+    // fresh-value test applies.
+    const bool entry_regs =
+        tag.from_list && REXCVAR_GET(bd_material_from_entry);
+    auto from_entry = [&](const RegDelta &r, bool vertex) {
+      return !vertex && entry_regs && (r.reg == 3u || r.reg == 4u);
+    };
     auto drifted = [&](const RegDelta &r, bool vertex) {
       if (!r.stable || !v)
         return false;
       // ps c3/c4 of a list draw come from its entry now, so a mismatch
       // against a sibling says nothing about the template.
-      if (!vertex && tag.from_list && REXCVAR_GET(bd_material_from_entry) &&
-          (r.reg == 3 || r.reg == 4))
+      if (from_entry(r, vertex))
         return false;
       const u32 *fresh = vertex ? v->vs[r.reg] : v->ps[r.reg];
       const u32 seen = vertex ? v->vs_frame[r.reg] : v->ps_frame[r.reg];
@@ -1785,6 +1813,10 @@ bool HostDrawReplay(const NodeTag &tag) {
           continue; // the pass camera: composed below
         if (!r.stable && (!v || v->vs_frame[r.reg] != frame)) {
           ++st.stale_bail;
+          // Which registers keep a node interpreting for want of a fresh
+          // value. Naming the drifting ones led straight to their source.
+          if (r.reg < 256)
+            ++st.stale_vs[r.reg];
           return false;
         }
         if (drifted(r, true)) {
@@ -1798,8 +1830,12 @@ bool HostDrawReplay(const NodeTag &tag) {
       for (const RegDelta &r : d.ps_delta) {
         if (r.reg < kPassPsRegs)
           continue;
+        if (from_entry(r, false))
+          continue; // the entry carries this draw's own value
         if (!r.stable && (!v || v->ps_frame[r.reg] != frame)) {
           ++st.stale_bail;
+          if (r.reg < 256)
+            ++st.stale_ps[r.reg];
           return false;
         }
         if (drifted(r, false)) {
@@ -2153,6 +2189,10 @@ bool HostDrawReplay(const NodeTag &tag) {
     // the per-object material colours, which is what all the template drift
     // was (2026-09-04).
     if (tag.from_list && REXCVAR_GET(bd_material_from_entry)) {
+      // c3 and c4 are the object's diffuse and specular. c9
+      // (g_vShadowEpsilon) is also in the entry and was tried here on
+      // 2026-09-05: it changes nothing, because the c9 refusals are *tree*
+      // draws, which have no entry - the drift refusals are the list ones.
       const u32 entry = tag.matrix_va - 16;
       for (u32 reg = 3; reg <= 4; ++reg) {
         u32 v[4];

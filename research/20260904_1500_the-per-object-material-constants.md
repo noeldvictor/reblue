@@ -579,6 +579,28 @@ obvious extension is not available. Two notes for whoever picks this up:
   wrong change here, not a contradiction. Four of the five withdrawals in this file measured
   better on their headline number.
 
+## Correction and a division (2026-09-05, 02:40)
+
+Two things about the section above.
+
+**The diagnostic did not survive its own revert.** The commit that withdrew the pass-register
+change said "the diagnostic stays"; it did not - the file was reverted whole and only the
+comment was re-added, so the next run printed no `fresh-value bails` line at all. Restored
+now. A claim about what a commit contains is as checkable as any other and this one was not
+checked.
+
+**And the two refusal classes split cleanly by draw type.** The entry-sourced fix was
+extended to c9 on the reasoning that the entry holds c0..c13, and it changed nothing:
+
+- **drift refusals are render-list draws** - they have an entry, which is why reading c3/c4
+  from it worked.
+- **fresh-value refusals are tree draws** - `ps c9` fourteen times a frame, and a tree draw
+  has no entry to read, so the exemption never fires.
+
+That is the same wall the tree-draw material hit: a per-draw value with no per-draw source.
+The c9 extension is reverted for adding a read per list draw with nothing to show for it,
+with the division recorded in the code so the next attempt does not repeat the reasoning.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
