@@ -124,6 +124,18 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**THE GUEST'S FRAME ASSEMBLY IS 3% OF THE DRAW THREAD (2026-09-05, 00:10).** A profile
+after the day's work, 7,256 samples: `bdCameraRender` 58, `bdSceneSubmitRenderList` 48 and
+`bdFrameSubmitAndDebugHUD` 92 come to **about 3%**, and `bdMatrixSet` (112) with `bdSinCos`
+(102) another 3% that is the game's own maths rather than the render path. The host's
+per-draw work is larger: replay 214, guest address translation 208, the per-visual capture
+179 (up from 110 - more nodes capture now that the volatile-and-empty stalemate is fixed),
+shared constants 126, constant hashing 181 between `MaskedHash` and XXH3. `sub_8272BE80`
+(280) is the IO thread and not the frame at all. **So moving the frame assembly off the
+guest is an architecture and control argument, not a measured CPU win** - it is worth doing
+for ownership, and nobody should expect milliseconds from it. The levers that remain on this
+thread are the host's own per-draw costs.
+
 **EFFECTS AND UI ARE UNMEASURED (2026-09-04, 23:20).** A frame issues about 753 draws of
 which 611 are node draws, so **roughly 140 a frame are effects, particles and UI** - and the
 fragment census does not see any of them. It counts inside the draw queue's emit, and every
