@@ -1589,12 +1589,43 @@ bool HostDrawReplay(const NodeTag &tag) {
               // entry + 468 + N*16 (garbage; that came from r30 = r31 + 388
               // further up the loop, which is a different r30). Read the loop
               // properly rather than guess a third (2026-09-04).
+              // Search rather than guess: scan the entry for the float4 the
+              // interpreter is about to upload. If the loop's own buffer is
+              // inside the entry, the value is there and this reports the
+              // offset; if nothing matches, it is not in the entry at all.
+              std::string found;
+              // Two places a material could live: the per-frame render-list
+              // entry, and the visual that owns the mesh. Search both.
+              const u32 bases[2] = {tag.from_list ? tag.matrix_va - 16 : 0,
+                                    tag.visual_va};
+              const char *names[2] = {"entry", "visual"};
+              for (u32 bi = 0; bi < 2 && found.empty(); ++bi) {
+                const u32 entry = bases[bi];
+                if (!entry)
+                  continue;
+                for (u32 off = 0; off + 16 <= 8192 && found.empty(); off += 4) {
+                  bool all = (tpl[0] != 0.0f || tpl[1] != 0.0f || tpl[2] != 0.0f ||
+                              tpl[3] != 0.0f); // all-zero matches any hole
+                  for (u32 i = 0; i < 4 && all; ++i) {
+                    const u32 b = bd::mem::try_load<u32>(entry + off + i * 4);
+                    const u32 sb = __builtin_bswap32(b);
+                    float f;
+                    std::memcpy(&f, &sb, 4);
+                    // The template's value, not the fresh one: fresh is a
+                    // sibling mesh's material, the template is this node's own.
+                    all = std::fabs(f - tpl[i]) <= 1e-6f * (1.0f + std::fabs(tpl[i]));
+                  }
+                  if (all)
+                    found = fmt::format(" FOUND at {}+{}", names[bi], off);
+                }
+              }
+              if (found.empty())
+                found = " not in entry or visual +0..8192";
               BD_INFO("[material] ps c{} drift{}: template ({:.3f} {:.3f} {:.3f} "
-                      "{:.3f}) fresh ({:.3f} {:.3f} {:.3f} {:.3f}) "
-                      "visual+D4C ({:.3f} {:.3f} {:.3f} {:.3f})",
+                      "{:.3f}) fresh ({:.3f} {:.3f} {:.3f} {:.3f}){}",
                       r.reg, tag.from_list ? " (list)" : " (tree)", tpl[0],
                       tpl[1], tpl[2], tpl[3], now[0], now[1], now[2], now[3],
-                      mc[0], mc[1], mc[2], mc[3]);
+                      found);
             }
           }
           it->second.captured_frame = 0;

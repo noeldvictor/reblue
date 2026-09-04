@@ -124,12 +124,43 @@ Finding it means reading `sub_8227F360` around its upload rather than probing of
 it is found, a list draw's material is readable directly and those 29 interpreter runs a
 frame become host-issued without any inference from siblings.
 
+## Where the material actually comes from (16:40)
+
+The offset guessing was replaced by a search: scan a structure for the float4 the node's own
+run captured, and report where it is. Two corrections were needed to make the search mean
+anything - the needle must be the **template's** value, since "fresh" is a sibling mesh's
+material, and an all-zero needle matches any hole so it is skipped.
+
+With that, the answer is a clean negative:
+
+| searched | result |
+| --- | --- |
+| render-list entry + 0..8192 | not there |
+| visual + 0..8192 | not there |
+
+So a sub-draw's diffuse and specular are in neither the per-frame entry nor the visual. That
+leaves the place `bdSceneNodeDrawSingle` is documented to read: **the mesh's own token
+stream**, which the interpreter walks for stream, declaration, index buffer, texture, shader
+and material-colour selection.
+
+That is the useful result, and it is what makes the cook possible rather than merely
+desirable. The token stream is a fixed asset, not per-frame state: decoded once per mesh
+offline it yields a material record the host can compose c3 and c4 from directly, with no
+interpreter, no sibling inference and nothing to drift. It also explains the rotation seen
+earlier - the values never changed over time, the host was simply reading whichever sibling
+mesh ran last.
+
+The next step is concrete: decode the material-colour tokens out of the mesh stream, which
+is a read of the interpreter around its material selection rather than another probe.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
 - `bd_material_diag` - what a drifting material constant holds, beside the guest's
   per-draw material colour, so the source can be identified.
 - `bd_material_census` - distinct sub-draw materials by content, which sizes the cook.
+- The search in `bd_material_diag`: given a value, find it in a guest structure, or say it
+  is not there. Two structures were ruled out with it in one run each.
 
 Sources: `src/gpu/scene/host_draw.cpp` (`drifted`, the visual register publish, the drift
 counters), `src/gpu/shaders/hlsl/bd_normal_lit.hlsl` (the constant names),
