@@ -100,6 +100,30 @@ instead of by content.
 (The census deadlocked on its first run by taking the store's mutex inside the capture path,
 which already holds it. Non-recursive; the app froze on frame one and wrote a 330-line log.)
 
+## Where the material comes from: narrowed, not found (16:10)
+
+`bd_material_diag` labels each drift line list or tree, and **every one is a render-list
+draw**. So the whole of the drift problem lives in the deferred path, not the tree walk.
+
+The render-list loop uploads the pixel material constants itself, in one call:
+
+```
+D3DDevice_SetPixelShaderConstantFN(device, start = 0, data = r30 + 80, count = 14)
+```
+
+That is PS c0..c13 per entry, so a list draw's own diffuse and specular are at that buffer
++ 48 and + 64. Two guesses at where the buffer is were tried and are wrong, and are recorded
+in the code so a third is not made blindly:
+
+| guess | result |
+| --- | --- |
+| `entry + 80 + N*16` | all zeros |
+| `entry + 468 + N*16` (from `r30 = r31 + 388` further up the loop) | garbage; a different r30 |
+
+Finding it means reading `sub_8227F360` around its upload rather than probing offsets. Once
+it is found, a list draw's material is readable directly and those 29 interpreter runs a
+frame become host-issued without any inference from siblings.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.

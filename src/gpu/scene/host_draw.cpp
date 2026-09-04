@@ -1569,7 +1569,7 @@ bool HostDrawReplay(const NodeTag &tag) {
           // check (2026-09-04).
           if (REXCVAR_GET(bd_material_diag)) {
             static u32 shown = 0;
-            if (shown++ < 6) {
+            if (shown++ < 10) {
               const float *tpl = reinterpret_cast<const float *>(r.value);
               const float *now = reinterpret_cast<const float *>(v->ps[r.reg]);
               float mc[4] = {}, src[4] = {};
@@ -1581,13 +1581,20 @@ bool HostDrawReplay(const NodeTag &tag) {
                 std::memcpy(&mc[i], &sa, 4);
                 std::memcpy(&src[i], &sb, 4);
               }
-              BD_INFO("[material] ps c{} drift: template ({:.3f} {:.3f} {:.3f} "
+              // Where a list draw's own material lives is still open. The
+              // render-list loop (sub_8227F360) uploads PS c0..c13 in one
+              // SetPixelShaderConstantFN(device, 0, r30 + 80, 14), so the
+              // register sits at that buffer + N*16 - but r30 is not the
+              // entry. Tried and wrong: entry + 80 + N*16 (all zeros) and
+              // entry + 468 + N*16 (garbage; that came from r30 = r31 + 388
+              // further up the loop, which is a different r30). Read the loop
+              // properly rather than guess a third (2026-09-04).
+              BD_INFO("[material] ps c{} drift{}: template ({:.3f} {:.3f} {:.3f} "
                       "{:.3f}) fresh ({:.3f} {:.3f} {:.3f} {:.3f}) "
-                      "visual+D4C ({:.3f} {:.3f} {:.3f} {:.3f}) "
-                      "visual+BBC ({:.3f} {:.3f} {:.3f} {:.3f})",
-                      r.reg, tpl[0], tpl[1], tpl[2], tpl[3], now[0], now[1],
-                      now[2], now[3], mc[0], mc[1], mc[2], mc[3], src[0],
-                      src[1], src[2], src[3]);
+                      "visual+D4C ({:.3f} {:.3f} {:.3f} {:.3f})",
+                      r.reg, tag.from_list ? " (list)" : " (tree)", tpl[0],
+                      tpl[1], tpl[2], tpl[3], now[0], now[1], now[2], now[3],
+                      mc[0], mc[1], mc[2], mc[3]);
             }
           }
           it->second.captured_frame = 0;
