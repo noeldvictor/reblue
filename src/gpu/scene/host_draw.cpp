@@ -220,7 +220,12 @@ struct Store {
   u32 why_pass = 0;       // replays refused: the pass's camera not seen yet
   u32 stale_buffer = 0;   // replays refused: a stream's buffer is gone
   u32 moved_buffer = 0;   // replayed streams whose plume buffer had moved
-  u32 why_drift = 0;      // templates recaptured: a stable register moved
+  u32 why_drift = 0;
+  // Which registers a template is recaptured for: a "stable" register that
+  // moves every frame is a misclassification, and each one costs an
+  // interpreter run (2026-09-04).
+  u32 drift_vs[256] = {};
+  u32 drift_ps[256] = {};      // templates recaptured: a stable register moved
   std::unordered_map<u64, NodeTemplate> templates;
   std::unordered_map<u64, u32> never; // keys that cannot replay: frame noted
   std::unordered_map<u64, VisualRegs> visuals;
@@ -722,6 +727,26 @@ void Tally(Store &st, bool replayed, bool from_list) {
                 "buffer gone, the template recaptures), {} replayed streams "
                 "re-resolved to a moved plume buffer",
                 st.stale_buffer, st.moved_buffer);
+      {
+        // The registers behind the drift, named: each is a "stable" value that
+        // moved, and each costs an interpreter run for that node.
+        std::string top;
+        for (int pass = 0; pass < 2; ++pass) {
+          const u32 *a = pass ? st.drift_ps : st.drift_vs;
+          std::vector<std::pair<u32, u32>> rows;
+          for (u32 i = 0; i < 256; ++i)
+            if (a[i])
+              rows.push_back({a[i], i});
+          std::sort(rows.rbegin(), rows.rend());
+          for (size_t i = 0; i < rows.size() && i < 6; ++i)
+            top += fmt::format(" {}c{}x{}", pass ? "ps" : "vs", rows[i].second,
+                               rows[i].first / std::max(1u, st.acc_frames));
+        }
+        if (!top.empty())
+          BD_INFO("[node] drift by register a frame:{}", top);
+        std::memset(st.drift_vs, 0, sizeof(st.drift_vs));
+        std::memset(st.drift_ps, 0, sizeof(st.drift_ps));
+      }
       st.why_pass = st.why_drift = st.stale_buffer = st.moved_buffer = 0;
       st.acc_replayed = st.acc_interpreted = st.acc_frames = st.acc_stale = 0;
       st.acc_none = st.acc_refresh = st.acc_volatile = st.acc_never = 0;
@@ -1441,6 +1466,15 @@ bool HostDrawReplay(const NodeTag &tag) {
     };
     const PassRegs *pr = tag.render_view < 16 ? &st.pass_regs[tag.render_view]
                                               : nullptr;
+    // Drift recaptures the template, and must: reclassifying the drifting
+    // register as moving and taking the visual's value instead was tried on
+    // 2026-09-04 and is wrong. It lifted host-issued draws from 483 to 511 of
+    // 579 and the replay verifier immediately named the price - ps c4 wrong on
+    // 44,924 draws and c3 on 19,627, the exact two registers it reclassified.
+    // They are per-node values, not per-visual, so the visual's last
+    // interpreted node does not hold this node's. The way to host-issue those
+    // draws is for the host to know what c3 and c4 mean, which is the material
+    // cook, not a copy from a neighbour.
     for (const SubDraw &d : t->draws) {
       for (const RegDelta &r : d.vs_delta) {
         if (r.reg < kPassVsRegs)
@@ -1451,6 +1485,8 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
         if (drifted(r, true)) {
           ++st.why_drift;
+          if (r.reg < 256)
+            ++st.drift_vs[r.reg];
           it->second.captured_frame = 0;
           return false;
         }
@@ -1464,6 +1500,8 @@ bool HostDrawReplay(const NodeTag &tag) {
         }
         if (drifted(r, false)) {
           ++st.why_drift;
+          if (r.reg < 256)
+            ++st.drift_ps[r.reg];
           it->second.captured_frame = 0;
           return false;
         }
