@@ -153,7 +153,14 @@ is what the loop's upload arithmetic said all along. `bd_material_from_entry` (d
 reads c3/c4 from there instead of a sibling's: **host-issued draws 483 -> 497 of 579**, drift
 29 -> 15, and the verifier prices it as *more* accurate than the path it replaces (ps c4
 wrong 1,351 -> 1,030), with 0 jumps over 120 frames. The 15 left are tree draws, whose
-material is `visual + 3404` times the modulator at the staging struct's `+396`.
+material is `visual + 3404` times the modulator at the staging struct's `+396` - the formula
+is reproduced in `bd_material_from_visual`, default off, because at replay time the
+modulator belongs to whichever node the interpreter ran last (ps c3 wrong on 11 draws
+against 1). **And with materials no longer inferred from siblings the templates stopped
+needing frequent recapture**: `bd_host_draw_refresh` is 64, up from 16, which takes
+host-issued draws to **517 of 578** and the verifier's ps c4 error to 25 against 1,030. The
+cost is bool staleness, 7,305 wrong against 5,083, since a node's bool bits sit frozen four
+times longer; 120 consecutive captures show no artefact.
 `research/20260904_1500_the-per-object-material-constants.md`.
 
 **HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**

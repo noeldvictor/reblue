@@ -493,7 +493,14 @@ REXCVAR_DEFINE_INT32(bd_record_mask_mode, 1, kCvarGroup,
     .range(1, 10);
 REXCVAR_DEFINE_BOOL(bd_host_draw_records, true, kCvarGroup,
                     "Let host-issued node draws use instance records.");
-REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 16, kCvarGroup,
+// 64 since 2026-09-04, up from 16. Once a render-list draw's material came
+// from its own entry rather than a sibling's, the templates stopped needing
+// frequent recapture: the refresh refusals go 18 -> 4 a frame, host-issued
+// draws 497 -> 516 of 578, and the replay verifier reads ps c4 wrong on 25
+// draws against 1,030. The cost is bool staleness, which the same verifier
+// puts at 7,305 wrong against 5,083 - a node's bool bits sit frozen four
+// times longer. 120 consecutive captures show no artefact either way.
+REXCVAR_DEFINE_INT32(bd_host_draw_refresh, 64, kCvarGroup,
                      "Frames a host node draw template is used before the "
                      "interpreter refreshes it.");
 
