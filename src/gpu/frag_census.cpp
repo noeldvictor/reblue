@@ -77,6 +77,7 @@ struct Census {
   // Blended, depth-writing draws whose textures are all opaque: opaque in
   // effect, the candidates for front-to-back order.
   u64 per_view_promotable[17] = {};
+  u64 per_view_slot0[17] = {}; // blended, depth write, slot 0 the only partial texture
   std::unordered_map<PathKey, u32, PathKeyHash> per_path; // draws per path
   u64 total = 0;
   u32 frames = 0;
@@ -175,6 +176,8 @@ void FragCensusCollect(u32 slot) {
     const u32 flags = u32((st.owners[i] >> 8) & 0xFF);
     if ((flags & 7u) == 7u)
       c.per_view_promotable[view < 17 ? view : 16] += results[i];
+    if ((flags & 0xDu) == 0xDu)
+      c.per_view_slot0[view < 17 ? view : 16] += results[i];
   }
   c.draws_counted += st.used;
   ++c.frames;
@@ -213,12 +216,14 @@ void FragCensusCollect(u32 slot) {
     if (!c.per_view[v])
       continue;
     BD_INFO("[frag]   view {}: {:.2f} M a frame ({:.1f}%), {:.2f} M of them "
-            "blended, {:.2f} M blended with depth write over opaque textures",
+            "blended, {:.2f} M blended with depth write over opaque textures, "
+            "{:.2f} M with slot 0 the only partial-alpha texture",
             v == 16 ? std::string("none") : std::to_string(v),
             c.per_view[v] / frames / 1.0e6,
             c.total ? 100.0 * static_cast<double>(c.per_view[v]) / c.total : 0.0,
             c.per_view_blended[v] / frames / 1.0e6,
-            c.per_view_promotable[v] / frames / 1.0e6);
+            c.per_view_promotable[v] / frames / 1.0e6,
+            c.per_view_slot0[v] / frames / 1.0e6);
   }
   {
     std::vector<std::pair<u64, Census::Owner>> owners(c.per_owner.begin(),
@@ -265,6 +270,7 @@ void FragCensusCollect(u32 slot) {
   c.per_owner.clear();
   std::fill(std::begin(c.per_view), std::end(c.per_view), 0ull);
   std::fill(std::begin(c.per_view_promotable), std::end(c.per_view_promotable), 0ull);
+  std::fill(std::begin(c.per_view_slot0), std::end(c.per_view_slot0), 0ull);
   std::fill(std::begin(c.per_view_blended), std::end(c.per_view_blended), 0ull);
   c.total = 0;
   c.frames = 0;

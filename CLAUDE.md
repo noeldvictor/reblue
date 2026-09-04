@@ -688,6 +688,15 @@ between two `1920x1080` present passes; `pass ended by barriers` lines name the 
    without it; the grid doubles until it passes). Shadow view 77k -> 59k triangles,
    reflection 37k -> 23k; a per-frame on/off capture pair differs only at the bushes
    and one-pixel shadow edges; desktop CPU and GPU flat within the run.
+   **Scene view (07:30)**: `bd_lod_scene_distance` 300 / `bd_lod_scene_grid` 32 give
+   direct nodes past the distance the same lists (the walk's published view distance,
+   not the matrix translation - terrain matrices are identity); 79.5k -> 73.7k
+   triangles, render-list entries and skinned nodes stay full. **The overdraw, measured**:
+   the census keyed per visual and view (`[frag]` report) reads 3.2 fragments a pixel
+   in the scene view; the `bd_debug_blend_off` + `bd_draw_sort` probe (everything
+   opaque, front to back) takes it to 2.7, so hidden overdraw is a sixth of the cost;
+   the rest is the game's visible layering and quad overshade. No draw is opaque at
+   the texture level (`GuestTexture::alphaOpaque`, read off the BC blocks at upload).
    `research/20260904_0600_coarse-casters-...md`.
 
 Each step: build, `bd_xr_autoplay` desktop run, capture, look.

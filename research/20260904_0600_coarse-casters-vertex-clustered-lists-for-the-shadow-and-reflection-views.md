@@ -64,6 +64,33 @@ Within-run A/B over 100 s (period 120): `other_ms` 5.34 off / 5.43 on, `gpu_tota
 5.62 / 5.54. Flat on the desktop, as expected: the lists are for the Quest's vertex work
 and the shadow pass's primitive setup, not for a 1080p desktop GPU.
 
+## Addendum, 07:30: the scene view's distance LOD
+
+`bd_lod_scene_distance` (300) and `bd_lod_scene_grid` (32, halved past twice the distance):
+a direct node's replayed draw in the scene view takes the clustered list when the view
+distance the walk published for the node is past the threshold. The node matrix's
+translation is useless for this (terrain pieces carry identity matrices, the geometry is
+in world space), so the walk's sphere-through-matrix distance is the source; render-list
+entries have no published distance and stay full, as do skinned nodes. Village frame: 26
+of 321 scene draws take a list, 79,492 -> 73,736 triangles (-7%). The per-frame on/off
+pair differs in 1.4% of pixels: the far huts' outlines, the wind-blown bushes, the shadow
+edges. The render-list entries (the majority of the far triangles) need the entry's own
+depth for this to reach the 63%.
+
+## Addendum, 07:30: what the overdraw is
+
+The census keyed per visual and per view (this commit's `[frag]` report) reads 6.6 M
+scene fragments on a 2.07 M pixel desktop frame, 3.2 a pixel, with four ground and rock
+visuals and the sky dome as the owners. A probe that draws every blended depth-writing
+draw opaque and sorts the queue front to back (`bd_debug_blend_off` + `bd_draw_sort`)
+takes the scene view to 5.6 M: hidden overdraw that early depth rejection can remove is
+a sixth of the fragments, not half. The rest is the game's visible layering (ground
+pieces, detail patches and rocks over each other, all alpha one where they overlap in the
+pixel history) and quad overshade from dense small triangles. No draw qualifies for
+promotion at the texture level (`GuestTexture::alphaOpaque`): every ground and rock
+texture carries partial alpha somewhere. RenderDoc's pixel history was not a usable
+counter here: it listed only the clear for most pixels of a plain-draw capture.
+
 ## What is next for this
 
 - The cook (stage 3) moves the build offline and keeps a proper decimator (edge collapse

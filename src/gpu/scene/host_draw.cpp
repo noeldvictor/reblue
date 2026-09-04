@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <string>
@@ -53,6 +54,7 @@
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "engine/guest_census.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
@@ -75,6 +77,8 @@ REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 REXCVAR_DECLARE(bool, bd_lod);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
+REXCVAR_DECLARE(f64, bd_lod_scene_distance);
+REXCVAR_DECLARE(i32, bd_lod_scene_grid);
 
 namespace bd::gpu::scene {
 
@@ -1563,7 +1567,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   // The shadow and reflection views draw coarse lists over the same
   // vertices (mesh_lod.h). Not under the verifier: it compares against the
   // interpreter's own draw.
-  const i32 lod_grid = (verify_requested || !REXCVAR_GET(bd_lod)) ? 0
+  i32 lod_grid = (verify_requested || !REXCVAR_GET(bd_lod)) ? 0
                        : tag.render_view == 1 ? REXCVAR_GET(bd_lod_shadow_grid)
                        : tag.render_view == 0 ? REXCVAR_GET(bd_lod_reflection_grid)
                                               : 0;
@@ -1592,6 +1596,22 @@ bool HostDrawReplay(const NodeTag &tag) {
       world_rows[r * 4 + 1] = m[1 * 4 + r];
       world_rows[r * 4 + 2] = m[2 * 4 + r];
       world_rows[r * 4 + 3] = m[3 * 4 + r];
+    }
+    // The scene view's distance LOD, from the view distance the walk
+    // published for this node (the sphere centre through the node matrix; a
+    // terrain piece's matrix is identity and its translation says nothing).
+    // Render-list entries have no published distance yet and skinned nodes
+    // keep full detail (a character's silhouette is the point of it).
+    if (lod_grid == 0 && tag.render_view == 3 && !tag.from_list &&
+        t->bone_slots.empty() && REXCVAR_GET(bd_lod) && !verify_requested &&
+        REXCVAR_GET(bd_lod_scene_distance) > 0.0) {
+      const float dist =
+          std::sqrt(float(bd::engine::LastNodeViewDistanceSq()));
+      const float d0 = float(REXCVAR_GET(bd_lod_scene_distance));
+      if (dist > 2.0f * d0)
+        lod_grid = std::max(4, REXCVAR_GET(bd_lod_scene_grid) / 2);
+      else if (dist > d0)
+        lod_grid = REXCVAR_GET(bd_lod_scene_grid);
     }
   }
 

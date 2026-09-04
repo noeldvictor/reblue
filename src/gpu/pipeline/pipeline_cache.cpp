@@ -27,6 +27,7 @@ REXCVAR_DECLARE(bool, bd_debug_depth_always);
 REXCVAR_DECLARE(bool, bd_debug_no_stencil_bias);
 REXCVAR_DECLARE(bool, bd_debug_no_depth_write);
 REXCVAR_DECLARE(bool, bd_cutout_opaque);
+REXCVAR_DECLARE(bool, bd_debug_blend_off);
 #include "gpu/shaders/shader_constants.h"
 namespace bd::gpu {
 
@@ -54,9 +55,10 @@ void SanitizePipelineState(PipelineState &state) {
     state.zWriteEnable = false;
   // Alpha-tested, depth-writing, source-over blending -> opaque cutout. See
   // bd_cutout_opaque.
-  if (REXCVAR_GET(bd_cutout_opaque) && state.alphaBlendEnable &&
-      state.zWriteEnable && state.zEnable &&
-      (state.specConstants & kSpecConstantAlphaTest) != 0 &&
+  if ((REXCVAR_GET(bd_cutout_opaque) || REXCVAR_GET(bd_debug_blend_off)) &&
+      state.alphaBlendEnable && state.zWriteEnable && state.zEnable &&
+      ((state.specConstants & kSpecConstantAlphaTest) != 0 ||
+       REXCVAR_GET(bd_debug_blend_off)) &&
       state.srcBlend == plume::RenderBlend::SRC_ALPHA &&
       state.destBlend == plume::RenderBlend::INV_SRC_ALPHA) {
     state.alphaBlendEnable = false;

@@ -99,6 +99,7 @@ struct QueuedDraw {
   // alphaOpaque), and the pipeline writes depth: with source-over blending
   // the draw is opaque in effect.
   bool tex_opaque = false;
+  bool tex_slot0_only = false; // slot 0 is the only partial-alpha texture bound
   bool zwrite = false;
   // Depth prepass. When set, the flush first emits this draw with
   // `prepass_pipeline` (colour writes off, depth as recorded) and then again

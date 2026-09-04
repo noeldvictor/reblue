@@ -25,8 +25,10 @@ void FragCensusFrameBegin(plume::RenderDevice *device,
 // flags: bit 0 blended, bit 1 every bound texture opaque, bit 2 depth write.
 bool FragCensusBegin(plume::RenderCommandList *cmd, u64 ps_hash, u32 visual_va,
                      u32 render_view, u32 flags);
-inline u32 FragCensusFlags(bool blended, bool tex_opaque, bool zwrite) {
-  return (blended ? 1u : 0u) | (tex_opaque ? 2u : 0u) | (zwrite ? 4u : 0u);
+inline u32 FragCensusFlags(bool blended, bool tex_opaque, bool zwrite,
+                           bool slot0_only = false) {
+  return (blended ? 1u : 0u) | (tex_opaque ? 2u : 0u) | (zwrite ? 4u : 0u) |
+         (slot0_only ? 8u : 0u);
 }
 void FragCensusEnd(plume::RenderCommandList *cmd);
 // After the slot's fence: reads the counts, folds them per pixel shader, and

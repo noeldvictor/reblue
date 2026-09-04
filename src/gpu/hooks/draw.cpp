@@ -64,6 +64,7 @@ REXCVAR_DECLARE(bool, bd_mv_half_width);
 REXCVAR_DECLARE(i32, bd_dump_post_draws);
 REXCVAR_DECLARE(bool, bd_draw_defer_each);
 REXCVAR_DECLARE(bool, bd_draw_ledger);
+REXCVAR_DECLARE(bool, bd_debug_blend_off);
 REXCVAR_DECLARE(bool, bd_draw_instancing_reorder_blended);
 REXCVAR_DECLARE(i32, bd_node_diag_mesh);
 REXCVAR_DECLARE(bool, bd_tail_identity_skip);
@@ -563,6 +564,13 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
     // in the framebuffer, so it keeps submission order when the queue sorts.
     q.blended = !(s.pipelineState.srcBlend == plume::RenderBlend::ONE &&
                   s.pipelineState.destBlend == plume::RenderBlend::ZERO);
+    // The blend-off probe (pipeline_cache.cpp) made this draw's pipeline
+    // opaque; the queue must see it as opaque too, or nothing is sorted.
+    if (REXCVAR_GET(bd_debug_blend_off) && s.pipelineState.alphaBlendEnable &&
+        s.pipelineState.zWriteEnable && s.pipelineState.zEnable &&
+        s.pipelineState.srcBlend == plume::RenderBlend::SRC_ALPHA &&
+        s.pipelineState.destBlend == plume::RenderBlend::INV_SRC_ALPHA)
+      q.blended = false;
     // Order-independent: depth-tested LESS/LEQUAL, no stencil, and either
     // opaque or (bd_draw_instancing_reorder_blended) blended with depth
     // writes on - which in this scene is nearly every draw, because the
@@ -590,16 +598,23 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       q.visual_va = tag.valid ? tag.visual_va : 0u;
       q.render_view = tag.valid ? tag.render_view : 0xFFu;
       q.zwrite = s.pipelineState.zWriteEnable;
-      bool any = false, opaque = true;
-      for (u32 k = 0; k < 16 && opaque; ++k) {
+      bool any = false, opaque = true, others_opaque = true;
+      for (u32 k = 0; k < 16; ++k) {
         const bd::gpu::GuestTexture *t = s.textures[k];
         if (!t || t->type != bd::gpu::ResourceType::Texture)
           continue;
         any = true;
-        if (t->alphaOpaque != 1)
+        if (t->alphaOpaque != 1) {
           opaque = false;
+          if (k != 0)
+            others_opaque = false;
+        }
       }
       q.tex_opaque = any && opaque;
+      // Slot 0 (the colour texture) the only partial-alpha one bound: a
+      // per-triangle footprint test against that texture could promote the
+      // draw (the census counts these as the reachable candidates).
+      q.tex_slot0_only = any && !opaque && others_opaque;
     }
     q.recorded_rt = s.render_target;
     q.framebuffer = s.pending_framebuffer;

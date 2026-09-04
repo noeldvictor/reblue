@@ -727,6 +727,12 @@ REXCVAR_DEFINE_INT32(bd_dump_post_draws, 0, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_cutout_opaque, false, kCvarGroup,
                     "Draw alpha-tested, depth-writing, alpha-blended "
                     "geometry as opaque cutouts.");
+// Probe: every source-over, depth-writing blended draw becomes opaque, so the
+// queue's front-to-back sort and early depth rejection apply to the whole
+// scene. Breaks the alpha skirts; the fragment census under it is the lower
+// bound the interior/skirt split can reach (2026-09-04).
+REXCVAR_DEFINE_BOOL(bd_debug_blend_off, false, kCvarGroup,
+                    "Probe: blended depth-writing draws drawn opaque.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_depth_write, false, kCvarGroup,
                     "Probe: disable depth writes in every pipeline.");
 REXCVAR_DEFINE_BOOL(bd_debug_no_stencil_bias, false, kCvarGroup,
@@ -899,6 +905,17 @@ REXCVAR_DEFINE_INT32(bd_lod_shadow_grid, 24, kCvarGroup,
                    "Shadow casters draw a vertex-clustered list at this grid "
                    "(0 = full detail).")
     .range(0, 256);
+// The scene view's own distance LOD: a node farther than the distance draws
+// the grid list, twice as far the grid halved. The census of 2026-09-04 put
+// 63% of the scene's triangles beyond 350 units.
+REXCVAR_DEFINE_DOUBLE(bd_lod_scene_distance, 300.0, kCvarGroup,
+                      "Scene nodes beyond this distance draw a clustered list "
+                      "(0 = off).")
+    .range(0.0, 100000.0);
+REXCVAR_DEFINE_INT32(bd_lod_scene_grid, 32, kCvarGroup,
+                     "Grid for scene nodes past bd_lod_scene_distance; halved "
+                     "past twice the distance.")
+    .range(4, 256);
 REXCVAR_DEFINE_INT32(bd_lod_reflection_grid, 16, kCvarGroup,
                    "Reflection-view meshes draw a vertex-clustered list at "
                    "this grid (0 = full detail).")
