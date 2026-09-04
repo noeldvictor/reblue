@@ -613,6 +613,11 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
       q.visual_va = tag.valid ? tag.visual_va : 0u;
       q.render_view = tag.valid ? tag.render_view : 0xFFu;
       q.zwrite = s.pipelineState.zWriteEnable;
+      // Every queued draw carries a node tag - 2.2 million pushes, none
+      // without - and the tag is cleared after each node, so the guest's
+      // effects, particles and UI never reach the queue at all. The counter
+      // that established this is removed rather than left on a per-draw hot
+      // path (2026-09-04).
       if (!bd::gpu::scene::LastNodeSphere(q.sphere))
         q.sphere[3] = 0.0f;
       q.vs_reg_mask = (s.pipelineState.vertexShader &&

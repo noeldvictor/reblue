@@ -135,8 +135,14 @@ sees 16 more draws and two more shaders a frame, contributing **essentially no f
 the "outside any node" bucket stays at zero. So either the effects and UI are fragment-cheap
 and the per-draw ABI is a CPU problem rather than a GPU one, or they reach the GPU by a
 route neither the queue nor the immediate emit covers (the UP/`BeginVertices` path is the
-obvious candidate). The census counts 494 of the frame's ~753 draws, so 259 are still
-unaccounted for and that gap is the thing to close before anything is built here.
+obvious candidate). The gap between the census's 494 and the frame's ~753 is **batching, not blindness**: one
+`drawIndexedIndirect` covers a whole group and takes one query. And the queue itself settles
+where the effects went - **2.2 million pushes, every one carrying a node tag and none
+without**, with the tag cleared after each node. So the guest's effects, particles and UI
+never reach the draw queue: the host post chain drops most of them and the rest go out
+immediately, where the census now counts them at essentially zero fragments. **The per-draw
+ABI's remaining users are a CPU cost, not a GPU one** - porting them will not move the frame's
+shading, and that is worth knowing before the work is scoped.
 
 **WHAT IS LEFT OF THE GUEST IN A FRAME (2026-09-04, 15:00).** 579 node draws, 450-484
 host-issued, 95-129 still through the 1,935-instruction interpreter (refused: 18 fresh
