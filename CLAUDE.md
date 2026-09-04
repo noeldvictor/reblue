@@ -124,6 +124,22 @@ Everything in this table was seen on a Quest 2 (Adreno 650) unless marked deskto
 
 ## What is true now, measured. Quest 2, 2026-08-31 to 2026-09-03.
 
+**WHAT IS LEFT OF THE GUEST IN A FRAME (2026-09-04, 15:00).** 579 node draws, 450-484
+host-issued, 95-129 still through the 1,935-instruction interpreter (refused: 18 fresh
+values, 18 no template, 4-19 refresh, 1 never, 29 drift), plus effects, particles and UI
+which never leave the per-draw ABI, plus the guest's own frame assembly
+(`bdRenderViewSubmit`, `bdCameraRender`, `bdFrameSubmitAndDebugHUD`) and its 17 surface
+allocations. **The 29 drift refusals are two registers**: ps c4 and c3, which the recompiled
+shader names `g_vObjectSpecular` and `g_vObjectDiffuse` - per sub-draw material colours,
+rotating through the host's per-visual cache because a visual's meshes have different
+materials. **Two ways of removing them were built and reverted**, priced by the replay
+verifier: reclassifying them as moving costs ps c4 wrong on 44,924 draws, and skipping the
+drift check for per-sub-draw registers costs 5,718, against a baseline of 1,351. The check
+is spurious *and* load-bearing - it also catches genuine material animation the 16-frame
+refresh would let sit stale. The host has to know where a sub-draw's material comes from
+instead of watching the interpreter set it, which is the cook.
+`research/20260904_1500_the-per-object-material-constants.md`.
+
 **HALF THE MULTIVIEW FRAME IS RENDERED AND THROWN AWAY AT PRESENT (2026-09-04, 13:30).**
 Measured under xrsim, not derived: `[present] source 960x1080 layers 2 -> back 960x1080,
 rect 960x536+0,272; 2.01 source pixels a destination pixel`. `Output::LatchedFit` halves

@@ -76,6 +76,7 @@ REXCVAR_DECLARE(bool, bd_host_draw_verify);
 REXCVAR_DECLARE(i32, bd_host_draw_verify_every);
 REXCVAR_DECLARE(bool, bd_lod);
 REXCVAR_DECLARE(bool, bd_host_draw_fast);
+REXCVAR_DECLARE(bool, bd_material_diag);
 REXCVAR_DECLARE(i32, bd_lod_shadow_grid);
 REXCVAR_DECLARE(i32, bd_lod_reflection_grid);
 REXCVAR_DECLARE(f64, bd_lod_scene_distance);
@@ -175,6 +176,12 @@ struct NodeTemplate {
 struct VisualRegs {
   u32 vs_frame[256] = {};
   u32 ps_frame[256] = {};
+  // A register two sub-draws of this visual wrote differently: per sub-draw
+  // material state, not a visual-wide value. Tracked but deliberately NOT used
+  // to suppress the drift check - see the note below and
+  // research/20260904_1500_the-per-object-material-constants.md.
+  bool vs_pernode[256] = {};
+  bool ps_pernode[256] = {};
   u32 fetch_frame[32] = {};
   u32 vs[256][4] = {};
   u32 ps[256][4] = {};
@@ -1199,10 +1206,16 @@ void HostDrawCommit(const NodeTag &tag) {
     VisualRegs &v = st.visuals[VisualKeyOf(tag)];
     for (const SubDraw &d : p.draws) {
       for (const RegDelta &r : d.vs_delta) {
+        if (v.vs_frame[r.reg] == frame &&
+            std::memcmp(v.vs[r.reg], r.value, 16) != 0)
+          v.vs_pernode[r.reg] = true; // two writers, two values, one frame
         v.vs_frame[r.reg] = frame;
         std::memcpy(v.vs[r.reg], r.value, 16);
       }
       for (const RegDelta &r : d.ps_delta) {
+        if (v.ps_frame[r.reg] == frame &&
+            std::memcmp(v.ps[r.reg], r.value, 16) != 0)
+          v.ps_pernode[r.reg] = true;
         v.ps_frame[r.reg] = frame;
         std::memcpy(v.ps[r.reg], r.value, 16);
       }
@@ -1457,6 +1470,15 @@ bool HostDrawReplay(const NodeTag &tag) {
     // this frame: the template is out of date (a screen-size constant after
     // a resolution change read 480x270 against 320x180 for 492 draws in the
     // verifier), so it is recaptured on the next sighting.
+    // Why the drift check stays on ps c3/c4 even though it fires spuriously:
+    // those are g_vObjectDiffuse and g_vObjectSpecular, per sub-draw material
+    // colours, so the visual's copy belongs to whichever mesh was interpreted
+    // last and a difference says nothing about *this* node. Suppressing the
+    // check for them takes drift 29 -> 0 a frame and host-issued draws 450 ->
+    // 474 - and the replay verifier prices it at ps c4 wrong on 5,718 draws
+    // against 1,354, because the check was also catching genuine material
+    // animation that the 16-frame refresh would otherwise let sit stale
+    // (2026-09-04). Both ways of removing it were measured and reverted.
     auto drifted = [&](const RegDelta &r, bool vertex) {
       if (!r.stable || !v)
         return false;
@@ -1502,6 +1524,35 @@ bool HostDrawReplay(const NodeTag &tag) {
           ++st.why_drift;
           if (r.reg < 256)
             ++st.drift_ps[r.reg];
+          // What the drifting value is a function of. ps c3 is
+          // g_vObjectDiffuse and c4 g_vObjectSpecular (the recompiled
+          // shader's own names), which the guest copies per draw from
+          // visual+0xBBC into visual+0xD4C - so if the host is to compute
+          // them instead of watching the interpreter, this is the source to
+          // check (2026-09-04).
+          if (REXCVAR_GET(bd_material_diag)) {
+            static u32 shown = 0;
+            if (shown++ < 6) {
+              const float *tpl = reinterpret_cast<const float *>(r.value);
+              const float *now = reinterpret_cast<const float *>(v->ps[r.reg]);
+              float mc[4] = {}, src[4] = {};
+              for (u32 i = 0; i < 4; ++i) {
+                const u32 a = bd::mem::try_load<u32>(
+                    tag.visual_va + kVisualMaterialColor + i * 4);
+                const u32 b = bd::mem::try_load<u32>(tag.visual_va + 0xBBC + i * 4);
+                const u32 sa = __builtin_bswap32(a), sb = __builtin_bswap32(b);
+                std::memcpy(&mc[i], &sa, 4);
+                std::memcpy(&src[i], &sb, 4);
+              }
+              BD_INFO("[material] ps c{} drift: template ({:.3f} {:.3f} {:.3f} "
+                      "{:.3f}) fresh ({:.3f} {:.3f} {:.3f} {:.3f}) "
+                      "visual+D4C ({:.3f} {:.3f} {:.3f} {:.3f}) "
+                      "visual+BBC ({:.3f} {:.3f} {:.3f} {:.3f})",
+                      r.reg, tpl[0], tpl[1], tpl[2], tpl[3], now[0], now[1],
+                      now[2], now[3], mc[0], mc[1], mc[2], mc[3], src[0],
+                      src[1], src[2], src[3]);
+            }
+          }
           it->second.captured_frame = 0;
           return false;
         }

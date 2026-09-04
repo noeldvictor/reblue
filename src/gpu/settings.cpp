@@ -954,6 +954,9 @@ REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 1.0, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_mv_no_squeeze, false, kCvarGroup,
                     "Multiview half width halves the height too, so the "
                     "present maps 1:1 instead of discarding half the frame.");
+REXCVAR_DEFINE_BOOL(bd_material_diag, false, kCvarGroup,
+                    "Log what a drifting per-object material constant is a "
+                    "function of, for the material cook.");
 REXCVAR_DEFINE_BOOL(bd_pool_census, false, kCvarGroup,
                     "Log the surfaces the guest still acquires from the pool, "
                     "by shape, every 300 frames.");
