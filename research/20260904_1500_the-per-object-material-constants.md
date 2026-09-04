@@ -195,6 +195,42 @@ not in the entry, not in the visual, not in the mesh, shared across meshes - the
 fully pinned: a table of materials somewhere reachable only through the token stream, indexed
 per sub-draw, with 121 distinct entries behind 579 draws a frame.
 
+## The chain, traced (18:10)
+
+Read out of the recompilation rather than searched for, and it ends the guesswork about
+where these constants live.
+
+**A global staging struct at 0x82DE80D8** (formed everywhere as `lis 0x82DF0000` then
+`addi -32552`) holds the shader constants the renderer is about to upload:
+
+| offset | contents |
+| --- | --- |
+| +0 | vertex constants c0..c4 |
+| +80 | **pixel constants c0..c13** - so c3 is +128 and c4 is +144 |
+| +304 | vertex bool constants |
+| +372 / +376 / +380 | dirty flags for the vertex, pixel and bool blocks |
+| +408 | a write counter |
+
+`sub_821981E0` is the flush: called once by `bdSceneNodeDrawSingle`, it uploads each block
+whose dirty flag is set - `SetPixelShaderConstantFN(device, 0, struct + 80, 14)`. Fifteen
+functions form this pointer, and the interesting ones are the interpreter itself and the
+`sub_82173960` / `sub_821739B0` / `sub_821739F0` family it calls.
+
+The interpreter writes the diffuse at `struct + 128` and sets the pixel dirty flag, and the
+values come **from its own stack frame** (`r1 + 336`, `r1 + 340`, and a third in `f13`). So
+the chain is:
+
+```
+mesh token stream -> (decode, upstream in the interpreter) -> interpreter stack
+                  -> staging struct +128 -> flush -> PS c3
+```
+
+What that settles: the host cannot shortcut this by reading a structure, because the value
+only exists in the staging struct *after* the interpreter has run for that node - which is
+the staleness the whole problem started with. The cook has to do the decode the interpreter
+does, from the token stream to the colour, and the remaining unknown is one hop: what writes
+`r1 + 336`/`+340` upstream.
+
 ## Instruments this added
 
 - `[node] drift by register a frame: psc4x23 psc3x6` - which registers cost recaptures.
