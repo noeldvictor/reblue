@@ -30,8 +30,19 @@ struct NativeMaterialProperties {
   bool operator==(const NativeMaterialProperties &) const = default;
 };
 
+// Selection is separate from enable: disabling reflection leaves the last
+// image bound. Table indices are model import recipes, not persistent asset IDs.
+enum class ReflectionTextureSource : uint8_t { PassDefault, Table, Unknown };
+struct NativeReflectionRecipe {
+  ReflectionTextureSource source = ReflectionTextureSource::PassDefault;
+  uint8_t table_index = 0;
+  bool enabled = false;
+  bool operator==(const NativeReflectionRecipe &) const = default;
+};
+
 struct NativeMaterialRange {
   NativeMaterialProperties material;
+  NativeReflectionRecipe reflection;
   // Unknown until a bone-index command; an explicit empty binding is unskinned.
   std::optional<NativeSkinBinding> skin;
   uint32_t index_count = 0;

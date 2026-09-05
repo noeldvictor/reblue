@@ -10,6 +10,7 @@
 using namespace bd::gpu::scene;
 void TestMaterialAssets();
 void TestNativeSkinBindings();
+void TestNativeReflectionRecipes();
 void Check(bool good) {
   if (!good)
     throw std::runtime_error("native material check failed");
@@ -78,6 +79,7 @@ int main(int argc, char **argv) {
   Check(ranges[0].material.specular_colour == std::array<float, 3>{1, 1, 1});
   TestMaterialAssets();
   TestNativeSkinBindings();
+  TestNativeReflectionRecipes();
   const uint16_t controls[]{0xe003, 0x1000, 1, 0, 0xe005, 0x1000, 1, 3, 0xff};
   Check(DecodeMeshMaterials(controls, ranges));
   Check(ranges.size() == 2 && ranges[0].control_record == 3 && ranges[1].control_record == 5);

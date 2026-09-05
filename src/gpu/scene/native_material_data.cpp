@@ -41,6 +41,7 @@ bool DecodeMeshMaterials(std::span<const uint16_t> commands,
     return false;
   std::vector<NativeMaterialRange> ranges;
   NativeMaterialRange current;
+  int last_reflection_command = -1;
   constexpr float byte_scale = 1.0f / 255.0f;
   for (size_t cursor = 0; cursor < commands.size();) {
     const uint16_t command = commands[cursor++];
@@ -66,6 +67,25 @@ bool DecodeMeshMaterials(std::span<const uint16_t> commands,
       current.index_record = command & 0x0fff;
     } else if (kind == 0xe000) {
       current.control_record = command & 0x0fff;
+    } else if (kind == 0x6000 && ((command >> 8) & 15) == 5) {
+      // Ordinary material texture overrides have additional visual/animation
+      // policy. Do not pretend their slot-5 result is the pass default.
+      current.reflection.source = ReflectionTextureSource::Unknown;
+      current.reflection.table_index = 0;
+    } else if ((command & 0xff00) == 0x0600) {
+      const uint8_t value = command & 0xff;
+      // loc_82281264 elides the whole repeated command, even after another
+      // texture command changed the binding. 255 changes only the enable bit.
+      if (last_reflection_command != value) {
+        current.reflection.enabled = value != 255;
+        if (value != 255) {
+          current.reflection.source = value == 254
+              ? ReflectionTextureSource::PassDefault
+              : ReflectionTextureSource::Table;
+          current.reflection.table_index = value == 254 ? 0 : value;
+        }
+        last_reflection_command = value;
+      }
     } else if ((command & 0xff00) == 0x0200) {
       current.skin = DecodeNativeSkinBinding(commands.subspan(cursor, size_t(operands)));
       if (!current.skin)
