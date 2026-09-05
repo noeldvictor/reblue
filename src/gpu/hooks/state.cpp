@@ -29,6 +29,7 @@
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_alpha_bridge.h"
 #include "gpu/scene/native_blend_bridge.h"
 #include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
@@ -165,9 +166,8 @@ void D3DDevice_SetRenderTarget_hook(
               surface ? surface->height : 0u, surface ? surface->layers : 0u,
               s.pipelineState.multiview);
   }
-  // Alpha test mode tied to sample count.
-  bd::gpu::Video::SetAlphaTestMode(
-      (s.pipelineState.specConstants & bd::gpu::kSpecConstantAlphaTest) != 0);
+  // Alpha cutout/coverage is composed from native intent at draw time, with
+  // this target's sample count; never infer intent from a replayed pipeline.
 
   bd::gpu::Video::SetDefaultViewport(pDevice, surface);
 }
@@ -415,13 +415,6 @@ REBLUE_CONSTANT_DIRTY_HOOK(Visual__DrawSortedQueues,
 
 #undef REBLUE_CONSTANT_DIRTY_HOOK
 
-// bdSetRenderState. BD's chokepoint for every D3DRS write: the per-D3DRS guest
-// setters have no direct xrefs, so all state reaches them through this vtable
-// dispatch, keyed by the render state's byte offset (its index * 4).
-constexpr u32 kRsAlphaTestEnable = 24 * 4;
-constexpr u32 kRsAlphaRef = 25 * 4;
-constexpr float kAlphaRefScale = 1.0f / 256.0f; // ALPHAREF is 0..255
-
 } // namespace
 
 REX_HOOK(D3DDevice_SetViewport, D3DDevice_SetViewport_hook);
@@ -438,18 +431,8 @@ REX_HOOK(D3DDevice_SetIndices, D3DDevice_SetIndices_hook);
 // Raw, on the inherited context: a typed REX_IMPORT re-roots the guest stack
 // at ThreadState's r1 and overwrites the frames live underneath it.
 REX_HOOK_RAW(bdSetRenderState) {
-  const u32 offset = ctx.r3.u32;
-  const u32 value = ctx.r4.u32;
-  // Raster/depth/stencil now produce native intent below. Alpha test still
-  // feeds SharedConstants: it is fixed-function ROP
-  // on X360, and the recompiled PS clips on kSpecConstantAlphaTest instead.
-  if (offset == kRsAlphaTestEnable) {
-    bd::gpu::Video::SetAlphaTestMode(value != 0);
-  } else if (offset == kRsAlphaRef) {
-    bd::gpu::Video::SetAlphaThreshold(static_cast<float>(value) *
-                                      kAlphaRefScale);
-  }
-  if (!bd::gpu::scene::UpdateBlendImport(ctx, base))
+  if (!bd::gpu::scene::UpdateAlphaImport(ctx, base) &&
+      !bd::gpu::scene::UpdateBlendImport(ctx, base))
     bd::gpu::scene::UpdateRasterImport(ctx, base);
 }
 
@@ -460,4 +443,5 @@ REX_HOOK_RAW(bdEngineInit) {
   __imp__bdEngineInit(ctx, base);
   bd::gpu::scene::ResetRasterImport();
   bd::gpu::scene::ResetBlendImport();
+  bd::gpu::scene::ResetAlphaImport();
 }

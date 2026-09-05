@@ -51,6 +51,6 @@ void main(BD_PE_PS_PARAMS)
 	// blur, and unclamped FP16 lets BriMulti-scaled masks (up to ~59 on wc01)
 	// blur into giant white blobs.
 	oC0.xyz = min(oC0.xyz, 1.0);
-	[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)	{		clip(oC0.w - g_AlphaThreshold);
+	[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)	{		clip(BD_AlphaPass(BD_AlphaMode(g_SpecConstants()), oC0.w, g_AlphaThreshold) ? 1.0 : -1.0);
 	}	return;
 }

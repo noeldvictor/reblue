@@ -46,7 +46,7 @@ void Report() {
       "checked {} wrong {}; native draws {} checked {} update checks {} "
       "drift {} legacy draws {}; imports {} unmapped {}; coverage "
       "enable {} separate {} RGB {} {} {} alpha {} {} {}; "
-      "engine cache/getter, alpha-test, constant and material adapters remain",
+      "engine cache/getter, constant and material adapters remain",
       stats.produced, stats.unchanged, stats.compatibility, stats.refused,
       stats.checked, stats.wrong, stats.draws, stats.draw_checks,
       stats.update_checks, stats.drift, stats.legacy_draws, stats.imports,

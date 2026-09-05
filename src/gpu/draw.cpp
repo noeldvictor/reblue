@@ -23,6 +23,7 @@
 #include "gpu/constant_buffers.h"
 #include "gpu/vertex_pull.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_alpha_bridge.h"
 #include "gpu/scene/native_blend_bridge.h"
 #include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
@@ -51,6 +52,7 @@ void ApplyNativeRenderState(VideoState &s, u32 device_guest) {
   PipelineState &ps = s.pipelineState;
   scene::ApplyBlendState(scene::CurrentBlendIntent(device_guest), ps, dirty);
   scene::ApplyRasterState(scene::CurrentRasterIntent(), ps, dirty);
+  Video::ApplyAlphaIntent(scene::CurrentAlphaIntent());
   // Existing diagnostic switches remain explicit; native intent itself is not
   // mutated by a temporary per-draw override.
   if (ps.zWriteEnable && ps.alphaBlendEnable &&

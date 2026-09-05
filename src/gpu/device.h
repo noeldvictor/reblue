@@ -35,6 +35,7 @@ class Window;
 namespace bd::gpu {
 
 namespace scene { struct NativeTextureGpuStore; struct NativeTextureBinding; }
+namespace scene { struct AlphaState; }
 
 class Video {
 public:
@@ -258,14 +259,13 @@ public:
   // format come back, the head forgets it. Called by the pool on reuse.
   static void UnaliasSurface(GuestTexture *surface);
 
-  // ALPHAREF feeds the SharedConstants cbuffer. Set by bdSetRenderState (arg
-  // 100), and read when SharedConstants is rebuilt.
+  // Current shader cutoff binding. Native alpha intent supplies ordinary
+  // draws; retained replay recipes temporarily override/restore this value.
   static void SetAlphaThreshold(float value);
   static float AlphaThreshold();
 
-  // Alpha-to-coverage is gated on multi-sample RTs. Called when the bound RT or
-  // its sample count changes.
-  static void SetAlphaTestMode(bool enable);
+  // Compose live alpha policy for the current target, before ordinary draws.
+  static void ApplyAlphaIntent(const scene::AlphaState &intent);
 
   // Replaces the X360 guest SDK default viewport handling (D3D__SetSurfaceInfo
   // INT32_MAX sentinel chain): sets host viewport to the full surface extent

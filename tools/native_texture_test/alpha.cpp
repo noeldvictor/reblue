@@ -26,7 +26,7 @@ int main() {
                         std::nextafter(cutoff, 1.0f), 1.0f, inf, nan}) {
       const bool reference[]{
           false, value<cutoff, value == cutoff, value <= cutoff, value> cutoff,
-          value != cutoff, value >= cutoff, true};
+          !std::isnan(value) && value != cutoff, value >= cutoff, true};
       assert(AlphaPass(state, value) == reference[function]);
       assert(BD_AlphaPass(uint32_t(state.compare), value, cutoff) ==
              reference[function]);
@@ -57,6 +57,10 @@ int main() {
     ApplyAlphaState(state, pipeline, dirty, false);
     assert(!(pipeline.specConstants & SPEC_CONSTANT_ALPHA_COMPARE_MASK));
     assert(dirty); // Other producers' marks are preserved.
+  }
+  for (uint32_t mode = 0; mode < 8; ++mode) {
+    assert(BD_AlphaPass(mode, 0.5f, nan) == (mode == BD_ALPHA_ALWAYS));
+    assert(BD_AlphaPass(mode, nan, nan) == (mode == BD_ALPHA_ALWAYS));
   }
   assert(DecodeAlphaImport({{1, 255, 6, 0}}).threshold == 1.0f);
   assert(DecodeAlphaImport({{1, 0, 6, 0}}).threshold == 0.0f);

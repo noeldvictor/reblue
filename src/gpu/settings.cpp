@@ -492,6 +492,10 @@ REXCVAR_DEFINE_BOOL(bd_native_blend, true, kCvarGroup,
                    "Host blend production and native draw intent");
 REXCVAR_DEFINE_BOOL(bd_native_blend_verify, false, kCvarGroup,
                    "Compare native blend publication and track unobserved device writes");
+REXCVAR_DEFINE_BOOL(bd_native_alpha, true, kCvarGroup,
+                   "Host alpha-test/reference/function/coverage production and live draw policy");
+REXCVAR_DEFINE_BOOL(bd_native_alpha_verify, false, kCvarGroup,
+                   "Compare native alpha publication and track unobserved engine cache writes");
 REXCVAR_DEFINE_BOOL(bd_native_transforms, true, kCvarGroup,
                     "Compose and publish object/pass transforms on the host.");
 REXCVAR_DEFINE_BOOL(bd_native_transforms_verify, false, kCvarGroup,

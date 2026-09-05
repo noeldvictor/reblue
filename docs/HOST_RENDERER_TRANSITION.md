@@ -148,7 +148,7 @@ The normal flat sequence has 0/119 jumps and no cyan patches. Normal desktop
 multiview still has 10/119 jumps at the 64-frame cadence, blurred/banded eyes
 and an inconclusive stereo-depth result; it does not qualify VR correctness.
 See `research/20260904_2238_native-raster-intent.md` for tests and captures.
-Getter/cache/register shadows remain explicit engine adapters. Alpha, sampler,
+Getter/cache/register shadows remain explicit engine adapters. Sampler,
 other-state and material/pass producers, CCW stencil behavior, replay recipes and native
 scene/pass assets remain unconverted. Field captures do not exercise stencil
 operation/mask setters. This is not full frame or both-eye qualification.
@@ -168,9 +168,25 @@ The source trace did not substantiate the earlier claim of inline device blend
 writers outside the SDK setters; unrelated matching object offsets are not D3D
 device writes. Verification still explicitly checks for untracked writers.
 See `research/20260904_2302_native-blend-intent.md`. This is not a complete native
-material/pass producer: getter/cache shadows, blend constants, alpha testing,
+material/pass producer: getter/cache shadows, blend constants,
 other-state execution and retained replay recipes remain. Separate-alpha and
 operation setters have standalone coverage but no field GPU exercise so far.
+
+Alpha cutout/coverage intent is now host-owned too (`native_alpha*`), with four
+host setters and live ordinary-draw composition instead of retained pipeline
+intent. `bd_native_alpha` defaults on; verification defaults off. The shared
+C++/HLSL predicate supports all eight compare modes through specialization, and
+the reference uses the SDK's exact 1/255 scale, correcting the former 1/256 hook.
+CPU tests and regenerated SPIR-V verify the comparison contract, including
+explicit ordered-NaN behavior. Publication comparison recorded 7196829 setter
+checks and 7108657 draw-intent checks with zero mismatches/drift/compatibility
+calls. The final normal flat path records 2274942 native updates without alpha
+comparison/compatibility calls, 0/119 frame jumps and no cyan patches.
+See `research/20260904_2327_native-alpha-policy.md`. Engine getter/cache shadows,
+native material/pass producers, replay recipes and the shader-register ABI remain.
+The field exercises only GE and no alpha-to-coverage requests; other comparison
+GPU paths, multisample coverage output and custom coverage offsets are not
+qualified. This does not establish full frame or both-eye correctness.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free

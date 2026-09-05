@@ -67,8 +67,9 @@ Quest-ready release.
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
 | Object/pass transforms | Host world/view/projection publication and view-projection composition, direct native camera/XR view input; enabled by default | Engine object/camera sources, inherited matrix cache, complete native scene/pass data and shader-ABI removal |
-| Raster state | Native depth, cull/fill, colour-write and stencil intent; host setter execution and no normal per-draw raster-cache translation | Alpha/sampler and other-state producers, engine getter shadows, complete material/pass recipes and unexercised stencil GPU paths |
+| Raster state | Native depth, cull/fill, colour-write and stencil intent; host setter execution and no normal per-draw raster-cache translation | Sampler and other-state producers, engine getter shadows, complete material/pass recipes and unexercised stencil GPU paths |
 | Blend state | Native RGB/alpha blend intent and eight host setters; no normal per-draw Xenos blend-register import | Native material/pass producers, removal of getter shadows, blend constants and separate-alpha/operation GPU coverage |
+| Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
@@ -110,8 +111,12 @@ also moves 15 raster setters and ordinary draw-time raster intent to the host;
 other-state execution and engine getter shadows remain explicitly tracked.
 The [native blend checkpoint](research/20260904_2302_native-blend-intent.md)
 replaces eight blend setters and removes the normal draw-time blend-register
-import; blend constants, alpha testing and independent material/pass sources
+import; blend constants and independent material/pass sources
 remain work in progress.
+The [native alpha checkpoint](research/20260904_2327_native-alpha-policy.md)
+moves four more setters and ordinary-draw cutout/coverage intent to the host,
+with tested shared shader comparisons and the corrected reference scale.
+Engine getter shadows, retained replay recipes and broader GPU coverage remain.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 

@@ -808,6 +808,6 @@ void main(
 	}
 	oC0.xyzw = max(r1.zyxw, r1.zyxw);
 	[branch] if (g_SpecConstants() & SPEC_CONSTANT_CEL)		oC0.xyz = BD_CelBand(oC0.xyz);
-	[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)	{		clip(oC0.w - g_AlphaThreshold);
+	[branch] if (g_SpecConstants() & SPEC_CONSTANT_ALPHA_TEST)	{		clip(BD_AlphaPass(BD_AlphaMode(g_SpecConstants()), oC0.w, g_AlphaThreshold) ? 1.0 : -1.0);
 	}	return;
 }

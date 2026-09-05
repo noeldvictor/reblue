@@ -18,6 +18,7 @@
 #include <plume_render_interface.h>
 
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_alpha.h"
 #include "gpu/shaders/shader_constants.h"
 
 REXCVAR_DECLARE(bool, bd_debug_no_alpha_test);
@@ -25,8 +26,8 @@ REXCVAR_DECLARE(i32, bd_debug_fill_scale);
 
 namespace bd::gpu {
 
-// ALPHAREF mirror for SharedConstants. Set by the bdSetRenderState hook (arg
-// 100), and read when SharedConstants is rebuilt.
+// Shader cutoff binding. Live native alpha intent supplies ordinary draws;
+// retained replay recipes temporarily override and restore this binding.
 namespace {
 std::atomic<u32> g_alpha_threshold_bits{0};
 } // namespace
@@ -188,29 +189,13 @@ float Video::AlphaThreshold() {
   return value;
 }
 
-void Video::SetAlphaTestMode(bool enable) {
+void Video::ApplyAlphaIntent(const scene::AlphaState &intent) {
   auto &s = state();
-
-  u32 specConstants = s.pipelineState.specConstants & ~kSpecConstantAlphaTest;
-  // MEASUREMENT ONLY. Renders wrongly on purpose: cutout foliage and edges
-  // become opaque quads.
-  //
-  // 86 of 141 pixel shaders carry an OpKill, because Xenos alpha test is
-  // emitted as a spec-constant-guarded clip() inside the shader. A discard
-  // disables Adreno's low-resolution Z, which would explain why front-to-back
-  // sorting measured exactly zero on a frame that is provably fragment-bound.
-  //
-  // If turning the spec constant off drops gpu_total, the driver does
-  // specialise the branch away and building real per-variant modules is worth
-  // it. If it changes nothing, the OpKill in the module is enough on its own
-  // and spec constants cannot fix this - the shaders have to be split.
-  if (enable && !REXCVAR_GET(bd_debug_no_alpha_test))
-    specConstants |= kSpecConstantAlphaTest;
-
-  SetDirtyValue<bool>(s.dirtyStates.pipelineState,
-                      s.pipelineState.enableAlphaToCoverage, false);
-  SetDirtyValue<u32>(s.dirtyStates.pipelineState, s.pipelineState.specConstants,
-                     specConstants);
+  scene::ApplyAlphaState(intent, s.pipelineState, s.dirtyStates.pipelineState,
+                         s.pipelineState.sampleCount !=
+                             plume::RenderSampleCount::COUNT_1,
+                         REXCVAR_GET(bd_debug_no_alpha_test));
+  SetAlphaThreshold(intent.threshold);
 }
 
 void Video::SetDefaultViewport(D3DDevice *device, GuestTexture *surface) {
