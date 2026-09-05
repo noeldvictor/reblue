@@ -182,6 +182,11 @@ explicit ordered-NaN behavior. Publication comparison recorded 7196829 setter
 checks and 7108657 draw-intent checks with zero mismatches/drift/compatibility
 calls. The final normal flat path records 2274942 native updates without alpha
 comparison/compatibility calls, 0/119 frame jumps and no cyan patches.
+Normal desktop multiview records 13662279 native alpha updates without
+comparison/compatibility calls, but the final-eye sequence still has 5/119 jumps
+in one flicker cluster, blurred/banded eyes and inconclusive stereo depth. This
+window does not establish recurrence or improvement over earlier two-cluster
+captures. Actual eyes are 936x1030, not the requested 1440x1584 target.
 See `research/20260904_2327_native-alpha-policy.md`. Engine getter/cache shadows,
 native material/pass producers, replay recipes and the shader-register ABI remain.
 The field exercises only GE and no alpha-to-coverage requests; other comparison

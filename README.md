@@ -117,6 +117,8 @@ The [native alpha checkpoint](research/20260904_2327_native-alpha-policy.md)
 moves four more setters and ordinary-draw cutout/coverage intent to the host,
 with tested shared shader comparisons and the corrected reference scale.
 Engine getter shadows, retained replay recipes and broader GPU coverage remain.
+Its final desktop multiview sequence still shows flicker/banding and an
+inconclusive stereo-depth result; the alpha conversion does not qualify VR.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 

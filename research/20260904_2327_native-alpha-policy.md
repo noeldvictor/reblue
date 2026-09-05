@@ -117,6 +117,39 @@ scenery and changing shadows. This is the final ordered-NE binary, though the
 field still only exercises GE. The run log has none of the error/failure/storage
 messages checked above. This short field slice is not later-scene qualification.
 
+## Final desktop multiview path
+
+Used the repository vrsim workflow, PID 24668, 23:36:48-23:38:40 EDT,
+`reblue_680.log`. All 13 settings took effect: the five original capture settings
+with minimum draws 450, plus VR on, legacy stereo off, multiview/layered textures
+on, scene-array capture off, XR mirror off, camera mode 2 and diorama height 0.
+Alpha comparison remained off. Process-local `XR_RUNTIME_JSON` selected the
+existing absolute-path xrsim manifest; `XRSIM_WIDTH=1440`, `XRSIM_HEIGHT_PX=1584`,
+`XRSIM_HEIGHT=0`. No registry or device settings changed.
+
+The runtime advertised 1440x1584 per eye, but the actual final layered swapchain
+and captures were 936x1030 per eye, stacked 936x2060. This is not qualification
+at the target resolution. `out/verification/native_alpha_vr` contains 120 final
+eye captures, frames 20898-21017. There are **5/119 jumps above 6%**, at sequence
+56, 57, 59, 60 and 62 (18.14-33.55% changed pixels). This window contains one
+cluster, not the two in the previous blend window; fewer flagged pairs do not
+establish a fix or a measured improvement. This window alone cannot establish
+the previously observed 64-frame recurrence.
+
+Inspected both eyes in `stereo.png` and actual sequences 0, 55, 56, 62 and 119:
+the blurred, horizontally banded scene briefly becomes much clearer at 56,
+then returns to its broken appearance. Large black bars remain. Stereo check
+exited 2, **INCONCLUSIVE**, with only the 44% band matched at -1 pixel. No cyan
+patches were detected. This remains a visual failure, not a VR correctness pass.
+
+Final alpha counters: 13662279 native updates, 14660871 ordinary draw-intent
+applications, 6384664 enabled GE intents, one import, zero verification,
+compatibility, legacy or refused calls, and no coverage requests. No logged
+error/critical, Vulkan failure, overflow, exhaustion or retirement-race matches.
+The renderer was stopped and all temporary overrides removed; the original
+five-setting flat profile was restored. The vrsim skill's sequence and both-eye
+inspection requirements prevented treating clean publication counters as a pass.
+
 ## Remaining ownership and coverage
 
 Engine cache/getter shadows, pass/material producers, remaining other-state and
