@@ -9,6 +9,7 @@
 #include "gpu/lens_flare.h"
 #include "gpu/post_adjustments.h"
 #include "gpu/post_scanline.h"
+#include "gpu/post_grade.h"
 #include "gpu/scene/native_transform_bridge.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/device.h"
@@ -29,6 +30,7 @@ REX_EXTERN(__imp__sub_8221E298);
 REX_EXTERN(__imp__sub_822187D8);
 REX_EXTERN(__imp__sub_82218E88);
 REX_EXTERN(__imp__sub_82219008);
+REX_EXTERN(__imp__sub_82219960);
 REXCVAR_DECLARE(bool, bd_native_post);
 REXCVAR_DECLARE(bool, bd_native_post_verify);
 REXCVAR_DECLARE(bool, bd_native_dof);
@@ -38,6 +40,7 @@ REXCVAR_DECLARE(bool, bd_native_lensflare_preview);
 REXCVAR_DECLARE(int32_t, bd_native_post_adjustment_preview);
 REXCVAR_DECLARE(bool, bd_native_scanline_preview);
 REXCVAR_DECLARE(bool, bd_ntsc_filter);
+REXCVAR_DECLARE(int32_t, bd_native_grade_preview);
 
 namespace bd::gpu {
 namespace {
@@ -45,6 +48,7 @@ constexpr uint32_t kThread = (uint32_t(-32035) << 16) - 26664;
 constexpr uint32_t kDepth = (uint32_t(-32136) << 16) + 14888 + 16;
 constexpr uint32_t kLensSource = (uint32_t(-32137) << 16) + 30160;
 constexpr uint32_t kLensAttenuation = (uint32_t(-32137) << 16) + 12124;
+constexpr uint32_t kPostOwner = (uint32_t(-32137) << 16) + 31212;
 struct Stats {
   uint64_t native = 0, original = 0, comparisons = 0, wrong = 0;
   uint64_t settings = 0, memory = 0, effects = 0, inputs = 0;
@@ -53,6 +57,7 @@ struct Stats {
   uint64_t flare_refusals = 0;
   uint64_t fisheye_frames = 0, reverse_frames = 0, adjustment_checks = 0;
   uint64_t scanline_frames = 0, scanline_checks = 0, scanline_noisy_frames = 0;
+  uint64_t grade_scopes = 0, grade_frames = 0, grain_frames = 0, grade_checks = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -78,6 +83,10 @@ void Report() {
           "no compatibility tail or state setters on the native path",
           stats.scanline_frames, stats.scanline_noisy_frames, stats.scanline_checks,
           REXCVAR_GET(bd_native_scanline_preview));
+  BD_INFO("[native-post] native grading scopes {} active {} grain {} parameter checks {}; preview {}; "
+          "no packed texture-list binding or gameplay RNG on the native path",
+          stats.grade_scopes, stats.grade_frames, stats.grain_frames, stats.grade_checks,
+          REXCVAR_GET(bd_native_grade_preview));
   stats.frame = frame;
 }
 bool Words(uint64_t address, uint64_t bytes) {
@@ -104,6 +113,9 @@ GuestTexture *Texture(uint32_t container) {
 struct PostEffects {
   PostAdjustments adjustments;
   ScanlineParameters scanline;
+  GradeParameters grade;
+  bool grade_scope = false;
+  GuestTexture *grain_image = nullptr;
   LensFlareParameters flare;
   std::array<GuestTexture *, 4> flare_images{};
 };
@@ -173,16 +185,66 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   const auto flag = [&](uint32_t offset) {
     return bd::mem::load<uint8_t>(owner + offset + bank) == 1;
   };
-  // These filters can alter the scene between DoF and bloom, or consume the
-  // original composite's retained entry array. Keep their entire old scope
-  // counted until each producer and its inputs are converted; never skip it.
-  for (const auto offset : {16u, 48u, 56u, 80u}) {
+  // The intervening filter still alters the scene between DoF and bloom.
+  for (const auto offset : {16u}) {
     if (flag(offset)) {
       if (stats.effects < 8)
         BD_INFO("[native-post] compatibility effect flag {} bank {}", offset, bank);
       ++stats.effects;
       return false;
     }
+  }
+  tail.grade_scope = bd::mem::load<uint8_t>(owner + 48 + bank) != 0 ||
+      bd::mem::load<uint8_t>(owner + 56 + bank) != 0 ||
+      bd::mem::load<uint8_t>(owner + 80 + bank) != 0;
+  auto &grade = tail.grade;
+  if (tail.grade_scope) {
+    // bdGetDoubleBufferPtr ignores its object argument and reads the shared
+    // post owner. Resolve those authored flags explicitly, not via a callback.
+    if (!Words(kPostOwner, 4)) { ++stats.memory; return false; }
+    const auto flags_owner = bd::mem::load<uint32_t>(kPostOwner);
+    if (!Words(flags_owner, 84)) { ++stats.memory; return false; }
+    grade.discolor_strength = bd::mem::load<float>(owner + 7132 + 652 + bank * 4);
+    grade.grain_strength = bd::mem::load<float>(owner + 7792 + 652 + bank * 4);
+    grade.discolor = GradeStrengthEnabled(bd::mem::load<uint8_t>(flags_owner + 48 + bank),
+                                         grade.discolor_strength);
+    grade.grain = GradeStrengthEnabled(bd::mem::load<uint8_t>(flags_owner + 56 + bank),
+                                      grade.grain_strength);
+    grade.correction = bd::mem::load<uint8_t>(flags_owner + 80 + bank) != 0;
+    const uint32_t color = owner + 10844;
+    const auto rgb = [&](uint32_t offset) {
+      return GradeColor{bd::mem::load<float>(color + offset),
+          bd::mem::load<float>(color + offset + 4), bd::mem::load<float>(color + offset + 8)};
+    };
+    grade.gain = rgb(644 + bank * 12);
+    grade.bias = rgb(672 + bank * 12);
+    grade.target = rgb(700 + bank * 16);
+    grade.gamma = bd::mem::load<float>(color + 620 + bank * 4);
+    grade.saturation = bd::mem::load<float>(color + 632 + bank * 4);
+    grade.blend = bd::mem::load<float>(color + 712 + bank * 16);
+    AnimateGradeGrain(grade, FrameStatFrameCount(),
+        bd::mem::load<uint32_t>(owner + 7792 + 664 + bank * 4) != 0);
+  }
+  const auto grade_preview = REXCVAR_GET(bd_native_grade_preview);
+  if (grade_preview != 0) {
+    if (grade_preview < 1 || grade_preview > 3 || REXCVAR_GET(bd_native_post_verify))
+      throw std::runtime_error("Native grade preview is 1..3 and cannot qualify authored parameters");
+    grade.discolor = grade.correction = true;
+    grade.grain = grade_preview >= 2;
+    grade.discolor_strength = .6f;
+    grade.grain_strength = .15f;
+    grade.gain = {1.1f, .95f, .8f};
+    grade.bias = {.02f, .01f, 0};
+    grade.target = {.1f, .15f, .2f};
+    grade.gamma = 1.1f;
+    grade.saturation = .7f;
+    grade.blend = .1f;
+    AnimateGradeGrain(grade, FrameStatFrameCount(), grade_preview == 3);
+  }
+  if (grade.grain) {
+    tail.grain_image = ResolveGuestTexture(bd::mem::load<uint32_t>(
+        owner + 7792 + 672 + grade.grain_image * 32));
+    if (!tail.grain_image) { ++stats.inputs; return false; }
   }
   if (!ReadLensFlare(owner + 8660, bank, flag(32), tail)) {
     ++stats.inputs;
@@ -251,7 +313,7 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
 }
 void VerifyAdjustmentPublication(uint32_t owner, uint32_t descriptor_offset,
                                   uint32_t register_offset,
-                                  const std::array<float, 2> &expected, uint32_t lanes,
+                                  const std::array<float, 4> &expected, uint32_t lanes,
                                   uint32_t first_lane = 0) {
   const auto descriptor = bd::mem::load<uint32_t>(owner + descriptor_offset);
   if (!Words(descriptor, 16)) throw std::runtime_error("Missing adjustment descriptor");
@@ -304,6 +366,34 @@ REX_HOOK_RAW(sub_82219008) {
     VerifyAdjustmentPublication(owner, 656, 664, {lens_comparison->scanline.strength, 0}, 1, 2);
     ++stats.scanline_checks;
     adjustment_comparison_mask |= 4;
+  }
+}
+
+REX_HOOK_RAW(sub_82219960) {
+  const auto owner = ctx.r3.u32;
+  __imp__sub_82219960(ctx, base);
+  if (lens_comparison && owner == adjustment_comparison_owner + 11648) {
+    if (!lens_comparison->grade_scope || (adjustment_comparison_mask & 8))
+      throw std::runtime_error("Unexpected original packed-grade producer");
+    const auto &g = lens_comparison->grade;
+    VerifyAdjustmentPublication(owner, 632, 640, {g.discolor_strength}, 1);
+    VerifyAdjustmentPublication(owner, 652, 660, {g.grain_strength}, 1);
+    VerifyAdjustmentPublication(owner, 672, 680, {g.gain.r, g.gain.g, g.gain.b, g.gamma}, 4);
+    VerifyAdjustmentPublication(owner, 692, 700, {g.bias.r, g.bias.g, g.bias.b, g.saturation}, 4);
+    VerifyAdjustmentPublication(owner, 712, 720, {g.target.r, g.target.g, g.target.b, g.blend}, 4);
+    const std::array<bool, 3> enabled{g.discolor, g.grain, g.correction};
+    for (uint32_t i = 0; i < enabled.size(); ++i) {
+      const auto descriptor = bd::mem::load<uint32_t>(owner + 744 + i * 16);
+      if (!Words(descriptor, 16)) throw std::runtime_error("Missing grade flag descriptor");
+      const uint64_t address = uint64_t(bd::mem::load<uint32_t>(descriptor + 12)) +
+          uint64_t(bd::mem::load<uint32_t>(owner + 752 + i * 16)) * 4;
+      if (!Words(address, 4) || (bd::mem::load<uint32_t>(uint32_t(address)) != 0) != enabled[i]) {
+        ++stats.wrong;
+        throw std::runtime_error("Native grade activation mismatch");
+      }
+    }
+    ++stats.grade_checks;
+    adjustment_comparison_mask |= 8;
   }
 }
 
@@ -388,7 +478,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
         throw std::runtime_error("Original lens-flare sprite count differs");
       const auto expected_adjustments = (tail.adjustments.fisheye_enabled ? 1u : 0u) |
                                         (tail.adjustments.reverse_enabled ? 2u : 0u) |
-                                        (tail.scanline.enabled ? 4u : 0u);
+                                        (tail.scanline.enabled ? 4u : 0u) |
+                                        (tail.grade_scope ? 8u : 0u);
       if (adjustment_comparison_mask != expected_adjustments)
         throw std::runtime_error("Original adjustment producer count differs");
       lens_comparison = nullptr;
@@ -404,7 +495,7 @@ REX_HOOK_RAW(sub_8221B1D8) {
                             0x1A2201BF, 1) : nullptr;
     if (target) {
       if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images,
-                         tail.adjustments, tail.scanline)) {
+                         tail.adjustments, tail.scanline, tail.grade, tail.grain_image)) {
         if (has_dof)
           PublishDofProducerProperties(owner + 3440);
         if (!Video::PublishSceneOutput(target, scene, 1.0f))
@@ -417,6 +508,9 @@ REX_HOOK_RAW(sub_8221B1D8) {
         stats.reverse_frames += tail.adjustments.reverse_enabled;
         stats.scanline_frames += tail.scanline.enabled;
         stats.scanline_noisy_frames += tail.scanline.enabled && tail.scanline.phase != 0;
+        stats.grade_scopes += tail.grade_scope;
+        stats.grade_frames += tail.grade.Active();
+        stats.grain_frames += tail.grade.grain;
         ++stats.native;
         Report();
         return;

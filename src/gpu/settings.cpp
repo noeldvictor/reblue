@@ -803,6 +803,9 @@ REXCVAR_DEFINE_INT32(bd_native_post_adjustment_preview, 0, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_native_scanline_preview, false, kCvarGroup,
                     "Diagnostic native scanline input; bd_ntsc_filter selects "
                     "noise. Not authored activation or VR comfort qualification.");
+REXCVAR_DEFINE_INT32(bd_native_grade_preview, 0, kCvarGroup,
+                    "Native-only grading preview: 0 authored, 1 warm grading, "
+                    "2 grading with grain, 3 alternate grain. Not authored event qualification.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

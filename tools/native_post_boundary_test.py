@@ -17,6 +17,30 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.adjust = (root / "src/gpu/post_adjustments.h").read_text(encoding="utf-8")
         cls.scanline = (root / "src/gpu/post_scanline.h").read_text(encoding="utf-8")
         cls.scanline_shader = (root / "src/gpu/shaders/hlsl/post_scanline_ps.hlsl").read_text(encoding="utf-8")
+        cls.grade = (root / "src/gpu/post_grade.h").read_text(encoding="utf-8")
+        cls.grade_shader = (root / "src/gpu/shaders/hlsl/post_grade_ps.hlsl").read_text(encoding="utf-8")
+        cls.passes = (root / "src/gpu/post_passes.h").read_text(encoding="utf-8")
+
+    def test_grade_uses_authored_inputs_and_not_packed_draw_state(self):
+        body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        for name in ("7132 + 652", "7792 + 652", "rgb(644 + bank * 12)",
+                     "rgb(672 + bank * 12)", "rgb(700 + bank * 16)", "AnimateGradeGrain("):
+            self.assertIn(name, body)
+        for name in ("__imp__", "sub_82219960(", "sub_82219758(", "D3DDevice_", "psFloatConstants"):
+            self.assertNotIn(name, body)
+        self.assertIn("for (const auto offset : {16u})", body)
+        for name in ("PPCContext", "bd::mem::", "REX_", "plume::"):
+            self.assertNotIn(name, self.grade)
+
+    def test_grade_has_native_layered_source_and_explicit_constants(self):
+        self.assertIn('#include "src/gpu/post_grade.h"', self.grade_shader)
+        self.assertIn("float3(sample_uv, view_id)", self.grade_shader)
+        self.assertIn("float3((uv + phase) * 2.2, 0)", self.grade_shader)
+        self.assertIn("color.a)", self.grade_shader)
+        for name in ("g_PSC", "BOOL_BIT", "g_vCcParams", "ms_tex"):
+            self.assertNotIn(name, self.grade_shader)
+        self.assertIn("PostEffect { Adjust, Scanline, Grade }", self.passes)
+        self.assertIn("plan.count > 1 ? 2 : 1", self.passes)
 
     def test_scanline_has_native_animation_and_no_compatibility_tail(self):
         for name in ("RunTail", "sub_8221E700", "bdSetRenderState", "kState", "ctx.r1"):
@@ -38,9 +62,10 @@ class NativePostBoundaryTest(unittest.TestCase):
         for name in ("235.0", "159.0", "33.0", "87.0"):
             self.assertIn(name, shader)
         body = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]
-        self.assertIn("has_adjustment && scanline.enabled", body)
+        self.assertIn("MakePostPasses(adjustments.Active(), scanline.enabled, grade.Active())", body)
         self.assertLess(body.index("Shader::Adjust"), body.index("Shader::Scanline"))
-        self.assertIn("PostPush{scanline_input->slot, 0, scanline.strength, scanline.phase}", body)
+        self.assertIn("push.param0 = scanline.strength", body)
+        self.assertIn("push.param1 = scanline.phase", body)
 
     def test_adjustments_use_native_input_and_shared_aspect_math(self):
         self.assertIn('#include "src/gpu/post_adjustments.h"', self.adjust_shader)
@@ -56,7 +81,8 @@ class NativePostBoundaryTest(unittest.TestCase):
     def test_adjustment_input_is_private_native_scratch_not_a_seed_copy(self):
         body = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]
         self.assertIn("adjustments.Active()", body)
-        self.assertIn("adjustment_input ? Attachment(adjustment_input) : destination", body)
+        self.assertIn("attachment(plan.composite_output)", body)
+        self.assertIn("std::array<Scratch *, 2> scratch", body)
         self.assertLess(body.index("HostComposite("), body.index("RenderLensFlare("))
         self.assertLess(body.index("RenderLensFlare("), body.index("Shader::Adjust"))
         self.assertNotIn("copyTexture", body)

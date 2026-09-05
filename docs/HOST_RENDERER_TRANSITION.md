@@ -30,6 +30,29 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native colour-grading checkpoint (2026-09-05): discolor, animated grain and
+gamma/saturation/gain/bias/target correction now use native parameters,
+explicit layered images and an 80-byte shader layout. The supported path
+removes the packed producer/submission, texture-list binding, gameplay RNG,
+engine intermediate and emulated resolve. Three post stages share at most
+two scratch images. Existing cooked grain assets are reused, not copied.
+All 27 CTests and 28 source guards pass; 860 original grading/activation and
+scanline-strength comparisons match. Corrected grain/grade flat and combined
+VR previews have 0/31 large changes; normal flat/VR have 0/119 and no cyan,
+with correctly crossed first/last VR depth. Both eyes inspected. Startup
+native/control first/last images match exactly, including their existing
+white background; title artwork is not qualified. Normal VR now has 9,598
+native scopes and three input refusals instead of thousands of packed-effect
+fallbacks. A longer interrupted preview reached 77 input refusals; its late
+window was not captured or qualified. Intervening/dual-mask effects, image/
+property/UI adapters, blur, full-frame and full-game gates remain. No Quest.
+Ten superseded normal raw sets were removed, retaining reports/images and
+protecting baseline/previews/failures; 11.68 GiB actually recovered. The
+historical archive still exceeds the 10 GiB target and needs further review;
+the former "active" totals were not total storage. Profile restored, runs
+stopped. See `research/20260905_1603_native-post-grading.md` for exact binary,
+coverage, deliberate animation changes and cleanup/retention accounting.
+
 Native scanline checkpoint (2026-09-05): the supported post scope now owns its
 final four-tap filter and animation on the host. Native image dimensions,
 frame-index noise shared by both eyes, private scratch and explicit output

@@ -39,6 +39,9 @@
 #include "gpu/lens_flare.h"
 #include "gpu/post_adjustments.h"
 #include "gpu/post_scanline.h"
+#include "gpu/post_grade.h"
+#include "gpu/post_passes.h"
+#include "gpu/sampler_cache.h"
 
 #include <bit>
 #include <cstring>
@@ -73,6 +76,7 @@
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_grade_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
@@ -84,6 +88,7 @@
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_grade_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -115,6 +120,7 @@ enum class Shader : u32 {
   LensFlare = 6,
   Adjust = 7,
   Scanline = 8,
+  Grade = 9,
   Count
 };
 
@@ -220,6 +226,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(post_adjust_ps), "main", kHostShaderFormat);
   c.shaders[u32(Shader::Scanline)] = s.device->createShader(
       REBLUE_SHADER_BLOB(post_scanline_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Grade)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_grade_ps), "main", kHostShaderFormat);
   if (!c.flare_vs) {
     c.failed = true;
     return false;
@@ -740,7 +748,8 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                     const DofParameters &dof, const BloomParameters &bloom,
                     const LensFlareParameters &flare,
                     const std::array<GuestTexture *, 4> &flare_images,
-                    const PostAdjustments &adjustments, const ScanlineParameters &scanline) {
+                    const PostAdjustments &adjustments, const ScanlineParameters &scanline,
+                    const GradeParameters &grade, GuestTexture *grain_image) {
 #if defined(REBLUE_D3D12)
   return false;
 #else
@@ -767,20 +776,32 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
     for (u32 i = 0; i < flare.count; ++i)
       if (flare.sprites[i].texture >= flare_images.size()) return false;
   }
-  // Render directly into the input of the combined adjustment, not a copy of
-  // the final image. This native scratch has no engine handle or resolve link.
-  const bool has_adjustment = adjustments.Active();
-  Scratch *adjustment_input = has_adjustment || scanline.enabled
-      ? GetScratch(s, c, output->width, output->height, output->format, 3, output->layers)
-      : nullptr;
-  if ((has_adjustment || scanline.enabled) && !adjustment_input) return false;
-  Scratch *scanline_input = has_adjustment && scanline.enabled
-      ? GetScratch(s, c, output->width, output->height, output->format, 4, output->layers)
-      : adjustment_input;
-  if (scanline.enabled && !scanline_input) return false;
+  u32 grain_sampler = 0;
+  if (grade.grain) {
+    auto *asset = Content(grain_image);
+    if (asset && asset->texture) BindTextureSRVLocked(s, asset);
+    if (!Readable(asset) || asset == output || asset->layers != 1) return false;
+    plume::RenderSamplerDesc recipe;
+    recipe.minFilter = recipe.magFilter = plume::RenderFilter::LINEAR;
+    recipe.mipmapMode = plume::RenderMipmapMode::LINEAR;
+    recipe.addressU = recipe.addressV = plume::RenderTextureAddressMode::WRAP;
+    recipe.addressW = plume::RenderTextureAddressMode::CLAMP;
+    grain_sampler = ResolveSlotLocked(recipe);
+    if (!grain_sampler) return false; // no silent clamp/linear substitution
+  }
+  // Ordered native passes ping-pong between at most two private images. The
+  // composite writes the first input directly; no full-image seed copies.
+  const auto plan = MakePostPasses(adjustments.Active(), scanline.enabled, grade.Active());
+  std::array<Scratch *, 2> scratch{};
+  for (u32 i = 0; i < plan.scratch_count; ++i) {
+    scratch[i] = GetScratch(s, c, output->width, output->height, output->format, 3 + i, output->layers);
+    if (!scratch[i]) return false;
+  }
   const auto destination = Attachment(s, output);
-  const auto composed = adjustment_input ? Attachment(adjustment_input) : destination;
-  const auto adjusted = scanline.enabled ? Attachment(scanline_input) : destination;
+  const auto attachment = [&](u32 index) {
+    return index == PostPasses::kOutput ? destination : Attachment(scratch[index]);
+  };
+  const auto composed = attachment(plan.composite_output);
   if (!composed.framebuffer || !destination.framebuffer) return false;
   Video::OpenCommandListLocked();
   if (!s.command_list_open || !s.command_list)
@@ -790,40 +811,64 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   HostTargetDropLinks(s, output);
   if (!BuildDofPyramid(s, c, scene, depth, dof) || !c.dof.valid)
     throw std::runtime_error("Native post atlas production failed");
-  if (adjustment_input)
-    Transition(s, adjustment_input->texture.get(), adjustment_input->layout,
-               plume::RenderTextureLayout::COLOR_WRITE);
-  else
-    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+  const auto write_attachment = [&](u32 index) {
+    if (index == PostPasses::kOutput)
+      Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    else
+      Transition(s, scratch[index]->texture.get(), scratch[index]->layout,
+                 plume::RenderTextureLayout::COLOR_WRITE);
+  };
+  write_attachment(plan.composite_output);
   if (!HostComposite(s, c, source, nullptr, composed, bloom))
     throw std::runtime_error("Native post composite failed");
   if (!RenderLensFlare(s, c, composed, flare, flare_images))
     throw std::runtime_error("Native lens-flare submission failed");
-  if (has_adjustment) {
+  for (u32 i = 0; i < plan.count; ++i) {
+    const auto step = plan.steps[i];
+    auto *input = scratch[step.input];
+    const auto target = attachment(step.output);
     s.command_list->setFramebuffer(nullptr);
-    Transition(s, adjustment_input->texture.get(), adjustment_input->layout,
+    Transition(s, input->texture.get(), input->layout,
                plume::RenderTextureLayout::SHADER_READ);
-    if (scanline.enabled)
-      Transition(s, scanline_input->texture.get(), scanline_input->layout,
-                 plume::RenderTextureLayout::COLOR_WRITE);
-    else
-      Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
-    auto *pipeline = Pipeline(s, c, Shader::Adjust, output->format, output->layers > 1);
-    if (!pipeline) throw std::runtime_error("Native post adjustment pipeline failed");
-    Pass(s, pipeline, adjusted.framebuffer, adjusted.width, adjusted.height,
-         PostPush{adjustment_input->slot, std::bit_cast<u32>(adjustments.reverse_pivot),
-                  adjustments.fisheye_enabled ? adjustments.fisheye : 0.0f,
-                  adjustments.reverse_enabled ? adjustments.reverse_strength : 0.0f}, true);
-  }
-  if (scanline.enabled) {
-    s.command_list->setFramebuffer(nullptr);
-    Transition(s, scanline_input->texture.get(), scanline_input->layout,
-               plume::RenderTextureLayout::SHADER_READ);
-    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
-    auto *pipeline = Pipeline(s, c, Shader::Scanline, output->format, output->layers > 1);
-    if (!pipeline) throw std::runtime_error("Native scanline pipeline failed");
-    Pass(s, pipeline, destination.framebuffer, destination.width, destination.height,
-         PostPush{scanline_input->slot, 0, scanline.strength, scanline.phase}, true);
+    write_attachment(step.output);
+    Shader shader = Shader::Adjust;
+    PostPush push{input->slot, 0, 0, 0};
+    if (step.effect == PostEffect::Adjust) {
+      push.src2 = std::bit_cast<u32>(adjustments.reverse_pivot);
+      push.param0 = adjustments.fisheye_enabled ? adjustments.fisheye : 0.0f;
+      push.param1 = adjustments.reverse_enabled ? adjustments.reverse_strength : 0.0f;
+    } else if (step.effect == PostEffect::Scanline) {
+      shader = Shader::Scanline;
+      push.param0 = scanline.strength;
+      push.param1 = scanline.phase;
+    } else {
+      shader = Shader::Grade;
+      if (grade.grain) {
+        auto *noise = Source(s, grain_image);
+        if (!noise) throw std::runtime_error("Native grading grain image failed");
+        push.src2 = noise->descriptorIndex;
+      }
+      struct GradeConstants {
+        float gain_gamma[4], bias_saturation[4], target_blend[4], strength_phase[4];
+        u32 enabled_sampler[4];
+      };
+      static_assert(sizeof(GradeConstants) == 80);
+      const GradeConstants constants{
+          {grade.gain.r, grade.gain.g, grade.gain.b, grade.gamma},
+          {grade.bias.r, grade.bias.g, grade.bias.b, grade.saturation},
+          {grade.target.r, grade.target.g, grade.target.b, grade.blend},
+          {grade.discolor_strength, grade.grain_strength, grade.phase_x, grade.phase_y},
+          {u32(grade.discolor), u32(grade.grain), u32(grade.correction), grain_sampler}};
+      const auto allocation = UploadHostConstants(&constants, sizeof(constants));
+      if (!allocation.memory) throw std::runtime_error("Native grading constants failed");
+      const u32 offsets[3] = {s.constant_dyn_offsets[0], allocation.dynamicOffset,
+                              s.constant_dyn_offsets[2]};
+      s.command_list->setGraphicsDescriptorSetDynamic(s.constant_descriptor_set.get(),
+          kConstantDescriptorSetIndex, offsets, 3);
+    }
+    auto *pipeline = Pipeline(s, c, shader, target.format, target.layers > 1);
+    if (!pipeline) throw std::runtime_error("Native post effect pipeline failed");
+    Pass(s, pipeline, target.framebuffer, target.width, target.height, push, true);
   }
   output->surfaceDrawn = true;
   // The complete source is consumed before publishing the new output alias.
