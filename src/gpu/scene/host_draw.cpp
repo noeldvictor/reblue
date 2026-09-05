@@ -404,9 +404,9 @@ struct ReflectionStats {
   u32 frame = 0;
 };
 thread_local ReflectionStats t_reflection_stats;
-std::optional<ReflectionBinding> ResolveReflectionBinding(
-    const ReflectionTextureImport &inputs, const NativeReflectionRecipe &recipe) {
-  const auto address = SelectReflectionTextureImport(inputs, recipe, ReadReflectionWord);
+// Registry lookup can wait behind an IO thread uploading a native texture.
+// Never call while holding VideoState::mutex: the uploader needs that lock.
+std::optional<ReflectionBinding> ResolveReflectionAddress(std::optional<u32> address) {
   if (!address)
     return {};
   if (!*address) {
@@ -423,6 +423,18 @@ std::optional<ReflectionBinding> ResolveReflectionBinding(
   auto native = CaptureNativeTexture(texture);
   return ReflectionBinding{native, native.primary ? nullptr : texture};
 }
+std::optional<ReflectionBinding> ResolveReflectionBinding(
+    const ReflectionTextureImport &inputs, const NativeReflectionRecipe &recipe) {
+  return ResolveReflectionAddress(
+      SelectReflectionTextureImport(inputs, recipe, ReadReflectionWord));
+}
+
+struct PendingReflectionCheck {
+  size_t draw_index = 0;
+  std::optional<u32> address;
+  ReflectionBinding actual;
+  u32 actual_va = 0;
+};
 
 // The files as they were when the interpreter started on this node, what it
 // has set since, and the draws it has issued.
@@ -432,6 +444,7 @@ struct Pending {
   std::optional<NativeShadowInputs> shadow_inputs;
   std::optional<LightingVector> shadow_sampling;
   std::optional<ReflectionTextureImport> reflection_inputs;
+  std::vector<PendingReflectionCheck> reflection_checks;
   alignas(16) u8 vs[kBlockBytes];
   alignas(16) u8 ps[kBlockBytes];
   u32 fetch[32][6];
@@ -1059,6 +1072,7 @@ void HostDrawSnapshotBefore() {
       p.ps_bools_before[i] = static_cast<u32>(dev0->psBoolConstants[i]);
     }
   p.draws.clear();
+  p.reflection_checks.clear();
   const u32 device_guest = LastGuestDeviceVa();
   const auto *dev = bd::mem::try_at<const D3DDevice>(device_guest);
   if (!dev)
@@ -1497,41 +1511,15 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     d.reflection = ImportNativeReflectionRecipe(tag, d.index_va, d.stream_va[0],
                                                 d.start_index, d.count);
     if (d.reflection) {
-      const auto binding = ResolveReflectionBinding(*p.reflection_inputs, *d.reflection);
-      if (!binding) {
-        ++t_reflection_stats.refused;
-        p.replayable = false;
-      } else {
-        ++t_reflection_stats.checked;
-        t_reflection_stats.pass += d.reflection->source == ReflectionTextureSource::PassDefault;
-        t_reflection_stats.table += d.reflection->source == ReflectionTextureSource::Table;
-        t_reflection_stats.enabled += d.reflection->enabled;
-        const bool texture_matches = binding->native.primary
-            ? binding->native == CaptureNativeTexture(s.textures[5])
-            : binding->texture == s.textures[5];
-        if (!texture_matches || d.reflection->enabled != bool(d.bools[4] & (1u << 4))) {
-          if (++t_reflection_stats.wrong <= 8) {
-            const auto actual_native = CaptureNativeTexture(s.textures[5]);
-            BD_WARN("[native-reflection] source mismatch view {} node {} source {} "
-                    "index {} enabled {}/{} texture matches {}; mesh {:08X} visual {:08X} "
-                    "tech {} range {}/{}; pass before/current {:08X}/{:08X}; "
-                    "native expected/actual {:016X}/{:016X} wrapper expected/actual {:08X}/{:08X} "
-                    "mask {:04X} material begin {:08X}",
-                    tag.render_view, tag.node_index, u32(d.reflection->source),
-                    d.reflection->table_index, d.reflection->enabled,
-                    bool(d.bools[4] & (1u << 4)), texture_matches, tag.mesh_va,
-                    tag.visual_va, tag.tech, d.start_index, d.count,
-                    p.reflection_inputs->pass_default,
-                    bd::mem::try_load<u32>(kReflectionPassDefault),
-                    binding->native.primary ? binding->native.primary->asset->id : 0,
-                    actual_native.primary ? actual_native.primary->asset->id : 0,
-                    binding->texture ? binding->texture->selfVa : 0,
-                    s.textures[5] ? s.textures[5]->selfVa : 0, d.tex_mask,
-                    bd::mem::try_load<u32>(bd::mem::try_load<u32>(tag.visual_va) + 32));
-          }
-          p.replayable = false;
-        }
-      }
+      // DispatchDraw holds VideoState::mutex here. Snapshot the selection
+      // and actual binding now, but defer registry lookup to HostDrawCommit.
+      // Reading the table again there could compare a later draw's selection.
+      const auto native = CaptureNativeTexture(s.textures[5]);
+      p.reflection_checks.push_back({p.draws.size(),
+          SelectReflectionTextureImport(*p.reflection_inputs, *d.reflection,
+                                         ReadReflectionWord),
+          {native, native.primary ? nullptr : s.textures[5]},
+          s.textures[5] ? s.textures[5]->selfVa : 0});
     } else {
       ++t_reflection_stats.unsupported;
     }
@@ -1563,6 +1551,50 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
 }
 
 void HostDrawCommit(const NodeTag &tag) {
+  auto &p = t_pending;
+  // The draw hook has returned and released VideoState::mutex. Resolve the
+  // captured selectors before taking the template-store lock or publishing
+  // any template; a failed source check still refuses the complete node.
+  for (const auto &check : p.reflection_checks) {
+    if (!p.valid || check.draw_index >= p.draws.size()) {
+      ++t_reflection_stats.refused;
+      p.replayable = false;
+      continue;
+    }
+    const auto &d = p.draws[check.draw_index];
+    const auto binding = ResolveReflectionAddress(check.address);
+    if (!binding || !d.reflection) {
+      ++t_reflection_stats.refused;
+      p.replayable = false;
+      continue;
+    }
+    ++t_reflection_stats.checked;
+    t_reflection_stats.pass += d.reflection->source == ReflectionTextureSource::PassDefault;
+    t_reflection_stats.table += d.reflection->source == ReflectionTextureSource::Table;
+    t_reflection_stats.enabled += d.reflection->enabled;
+    const bool texture_matches = binding->native.primary
+        ? binding->native == check.actual.native
+        : binding->texture == check.actual.texture;
+    if (!texture_matches || d.reflection->enabled != bool(d.bools[4] & (1u << 4))) {
+      if (++t_reflection_stats.wrong <= 8)
+        BD_WARN("[native-reflection] source mismatch view {} node {} source {} "
+                "index {} enabled {}/{} texture matches {}; mesh {:08X} visual {:08X} "
+                "tech {} range {}/{}; selected {:08X}; "
+                "native expected/actual {:016X}/{:016X} wrapper expected/actual {:08X}/{:08X} "
+                "mask {:04X} material begin {:08X}",
+                tag.render_view, tag.node_index, u32(d.reflection->source),
+                d.reflection->table_index, d.reflection->enabled,
+                bool(d.bools[4] & (1u << 4)), texture_matches, tag.mesh_va,
+                tag.visual_va, tag.tech, d.start_index, d.count, *check.address,
+                binding->native.primary ? binding->native.primary->asset->id : 0,
+                check.actual.native.primary ? check.actual.native.primary->asset->id : 0,
+                binding->texture ? binding->texture->selfVa : 0,
+                check.actual_va, d.tex_mask,
+                bd::mem::try_load<u32>(bd::mem::try_load<u32>(tag.visual_va) + 32));
+      p.replayable = false;
+    }
+  }
+  p.reflection_checks.clear();
   if (FrameStatFrameCount() - t_reflection_stats.frame >= 300) {
     const auto &r = t_reflection_stats;
     BD_INFO("[native-reflection] checked {} wrong {} unsupported {} refused {}; "
@@ -1602,7 +1634,6 @@ void HostDrawCommit(const NodeTag &tag) {
       VerifyReport(vf);
     }
   }
-  auto &p = t_pending;
   auto &st = store();
   std::lock_guard lock(st.mutex);
   RefreshTemplates(st);

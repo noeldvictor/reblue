@@ -43,6 +43,11 @@ The corrected sampled transition has 490655 matching source checks, 179
 unsupported scene-target callback draws and no slot-5 differences in the
 bounded replay log. Supported GPU coverage here is disabled, pass-default
 reflection selection; table-selected/enabled/dynamic cases remain unqualified.
+The subsequent normal late run deadlocked between capture's texture lookup and
+an IO upload, before producing captures. Source validation now snapshots at
+draw time and resolves outside the video lock before template publication;
+14 CTests and two source-boundary guards pass. A corrected normal rerun remains
+to be qualified. See `research/20260905_0235_reflection-validation-lock-order.md`.
 
 Lighting checkpoint (2026-09-05): the complete lighting setup producer and its
 reset/dimension helper execution now run on the host. Address-free records hold

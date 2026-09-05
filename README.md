@@ -165,6 +165,10 @@ separates material selection from image lifetime and reflection enable. Supporte
 direct draws resolve current bindings before submission; null selections remain
 an explicit compatibility boundary because the existing texture adapter treats
 them as no-ops. This is not full reflection-pass or frame ownership.
+Its first normal late run exposed a registry/upload deadlock despite matching
+source counters. The [lock-order correction](research/20260905_0235_reflection-validation-lock-order.md)
+moves binding validation outside the draw lock; normal-path visual checks remain
+to be completed.
 
 ## Project documentation
 
@@ -369,6 +373,7 @@ cmake -S tools/native_texture_test -B out/native_texture_test -G Ninja
 cmake --build out/native_texture_test
 ctest --test-dir out/native_texture_test --output-on-failure
 python tools/stereo_check_test.py
+python tools/reflection_lock_order_test.py
 ```
 
 Use the configured Clang toolchain (on Windows, supply `CMAKE_CXX_COMPILER` and

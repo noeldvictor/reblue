@@ -158,7 +158,8 @@ the native consumer has no fallback/refusals in its final report.
 
 The isolated `out/verification/native_reflection_transition_verify` contains
 120 1920x1080 captures, frames 10021-10140, 02:20:19.396-02:20:23.195.
-No cyan patches (median 0.003%, max 1.23%). Inspected pairs 1/2 and 43/44:
+Sequence analysis: 114/119 changes over 6%. No cyan patches (median 0.003%,
+max 1.23%). Inspected pairs 1/2 and 43/44:
 characters, terrain and the title graphic are readable during the camera move.
 This is a sampled comparison, not normal-path or full-game qualification.
 
@@ -166,6 +167,10 @@ The final integration additionally validates the **current visual's** callback
 before replay, not only the visual that supplied a shared mesh template. The
 host-only rebuild compiled material/draw objects and linked without rebuilding
 guest objects. Normal-path late-scene and desktop VR checks follow separately.
+The normal late run subsequently exposed a capture-time registry/video lock
+inversion, despite zero source mismatches; see
+`20260905_0235_reflection-validation-lock-order.md` for the thread evidence and
+correction. The earlier source comparison did not establish loading safety.
 
 ### Colour-write follow-up
 

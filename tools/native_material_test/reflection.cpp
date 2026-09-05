@@ -82,6 +82,13 @@ void TestNativeReflectionRecipes() {
   Require(select({Source::PassDefault, 0, false}) == 11);
   Require(select({Source::Table, 1, true}) == 33);
   Require(select({Source::Table, 1, false}) == 33); // disabled still retains selection
+  // Capture fixes the selector at draw time; registry validation occurs after
+  // the draw lock is released and must not re-read a subsequent table value.
+  const auto captured_selection = select({Source::Table, 1, false});
+  memory[2000 + 3 * 28 + 24] = 66;
+  Require(captured_selection == 33);
+  Require(select({Source::Table, 1, false}) == 66);
+  memory[2000 + 3 * 28 + 24] = 33;
   Require(select({Source::Table, 2, true}) == 22); // out of bounds is fallback
   Require(!select({Source::Unknown, 0, true}));
   Require(!select({Source::Table, 0, true})); // unreadable row is not a null texture
