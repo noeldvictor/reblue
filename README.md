@@ -65,7 +65,7 @@ Quest-ready release.
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
-| Deferred work | Host depth ordering, bounded whole-batch planning and corrected entry relocation | Replace captured entry images/depth, engine storage and the remaining guest list consumer |
+| Deferred work | Live host depth from explicit bounds/fixed policies, host ordering, bounded whole-batch planning and corrected entry relocation | Native scene/pass inputs, remaining entry fields, engine storage and the guest list consumer |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
@@ -91,6 +91,10 @@ broken after the upload lifetime fixes.
 The [host deferred-work checkpoint](research/20260904_2055_host-deferred-work.md)
 removes guest allocation/sorting execution from its normal path, with passing
 standalone and short flat checks; the multiview defect remains reproducible.
+The [live depth checkpoint](research/20260904_2122_live-native-deferred-depth.md)
+also replaces initial depth execution and stale replay keys with host calculation
+from current transforms. Its input comparison and normal flat capture pass;
+the multiview defect and incomplete stereo-depth qualification remain.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 

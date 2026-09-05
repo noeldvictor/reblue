@@ -78,12 +78,26 @@ the host (`gpu/scene/deferred_work.h` and the temporary `deferred_list.cpp`
 bridge). Replayed batches refresh world/palette and relocate their material
 self-reference instead of retaining the original pooled pointer. The native
 core has standalone capacity, ordering and relocation tests. This still
-publishes big-endian entry images to the guest draw loop; captured depth,
+publishes big-endian entry images to the guest draw loop; remaining entry fields,
 material/pass records, visual switches and the list consumer remain required
 conversion work. See `research/20260904_2055_host-deferred-work.md`.
 Its short flat check passes, but multiview still shows 10/119 jumps and the
 later scene 79/119 with missing scenery/damaged text. Neither allocation/sort
 conversion nor pointer relocation resolves those visual failures.
+
+`gpu/scene/deferred_depth.h` now produces initial and replay depth on the host
+from explicit bounds/far-extent or fixed policies. Replayed keys use current
+world/view inputs, not old numeric depth. Whole-batch preflight includes depth
+validation, and every entry must agree with its recipe's matrix source.
+`bd_native_deferred_depth` defaults on. The input comparison recorded 20483
+checks with zero mismatches; the final normal-path flat sequence has 0/119
+jumps over 6% and no cyan patches. Multiview still has 10/119 jumps at the
+64-frame cadence, with an inconclusive stereo-depth check. See
+`research/20260904_2122_live-native-deferred-depth.md`.
+The object/view transforms remain engine-produced; bounds/policy discovery is
+not yet native scene-asset loading. Engine storage, other entry fields and the
+guest consumer remain tracked boundaries. The prior later-scene failure has
+not been requalified by this short-run checkpoint.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free
