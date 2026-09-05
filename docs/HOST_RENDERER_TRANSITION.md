@@ -36,11 +36,15 @@ entry/exit and explicit-source output publication. The supported path no
 longer uses the engine's 16-slot allocation list, surface constructors,
 tiling branch or resolve-source guessing. All 21 CTests and five source
 guards pass; the normal desktop run has 65970 matching ownership checks,
-no begin/end fallback and 0/119 large capture jumps or cyan patches.
+no begin/end fallback and 0/119 large capture jumps or cyan patches. Initial
+VR validation exposed one-layer depth outputs; creation now preserves both
+eyes. The corrected full-size final-eye sequence also has 0/119 large jumps,
+no cyan patches and 124147 matching ownership checks without fallback.
 Camera/projection/cache execution, state 308, engine descriptors/getters,
 shared MSAA/scale copies and downstream post/UI tile-chain adapters remain.
-This is not a completed scene producer set or fully native frame. Pixel and
-final-eye qualification beyond the short flat sequence remain work. See
+This is not a completed scene producer set or fully native frame. VR remains
+blurred/letterboxed and depth-inconclusive; later scenery/text are not
+requalified. A corrected-build flat recheck is pending. See
 `research/20260905_0641_native-scene-pass-lifecycle.md`.
 
 Frustum producer checkpoint (2026-09-05): complete six-plane construction

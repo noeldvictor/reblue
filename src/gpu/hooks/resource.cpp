@@ -26,6 +26,7 @@
 #include "gpu/device.h"
 #include "gpu/format.h"
 #include "gpu/host_resource_heap.h"
+#include "gpu/native_image_layers.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/surface_pool.h"
@@ -140,17 +141,14 @@ bd::gpu::GuestTexture *D3DDevice_CreateTexture_hook(u32 width, u32 height,
   // everything upstream is. surface_pool already gives two layers to render
   // targets; this is the same rule for the textures those targets resolve into.
   //
-  // Only render-target-capable 2D textures: ordinary sampled textures, volumes
-  // and cubes are untouched, and the whole thing is inert unless multiview is
-  // on.
-  const bool rt_capable_2d = !is_cube && !is_volume &&
-                             !bd::gpu::IsDepthFormat(plume_format) &&
-                             bd::gpu::IsRenderTargetCapable(plume_format);
-  const u32 texture_layers = (rt_capable_2d &&
-                              REXCVAR_GET(bd_stereo_multiview) &&
-                              REXCVAR_GET(bd_mv_layered_textures))
-                                 ? 2u
-                                 : 1u;
+  // Both colour and depth outputs must retain each eye. Excluding depth here
+  // silently collapsed the scene's two-layer depth into a one-layer output;
+  // explicit native scene publication exposed that mismatch (2026-09-05).
+  // Ordinary sampled formats, volumes and cubes keep their existing layout.
+  const u32 texture_layers = bd::gpu::AttachmentTextureLayers(
+      is_cube, is_volume, bd::gpu::IsRenderTargetCapable(plume_format),
+      bd::gpu::IsDepthFormat(plume_format), REXCVAR_GET(bd_stereo_multiview),
+      REXCVAR_GET(bd_mv_layered_textures));
   desc.arraySize = is_cube ? 6 : texture_layers;
   desc.format = plume_format;
   // BD binds CreateTexture(usage=0) textures as render targets

@@ -122,3 +122,62 @@ and parameter adapters 102311. No error/critical/VK_ERROR or upload-exhaustion
 entries were found. All analysis commands completed successfully. The original
 five-setting profile was not modified. This short sequence does not qualify
 later scenery/text, additional game modes, deeper GPU nesting or final eyes.
+
+## VR guard failure and layer-allocation correction
+
+The first implementation/desktop checkpoint was committed and pushed as
+`98a1800`. Its first final-eye run (process 14140, started 06:46:48, log 726)
+exited at 06:46:51 with `Native scene depth publication failed`, before any
+capture. This run is a failure, not VR qualification. The 15-setting profile
+audited, and the simulator successfully created a 1440x1584-per-eye session.
+
+The strict publication layer check exposed the resource creation boundary:
+`D3DDevice_CreateTexture_hook` explicitly excluded depth formats from layered
+allocation, while `SurfacePool` created a two-layer scene depth attachment.
+The previous output-copy path permitted writing that into a one-layer depth
+texture, so subsequent depth consumers could not access an independent right
+eye. The new entry/exit path correctly refused the mismatch.
+
+The correction allocates both colour-capable and depth-capable 2D output
+textures with two layers when multiview and layered outputs are enabled.
+It acts at creation, without re-backing live images, rewriting in-flight
+descriptors or dropping the strict native output check. Cubes, volumes and
+non-attachment sampled formats keep their existing layout. The shared,
+SDK-independent layer policy has all 64 Boolean combinations tested, including
+depth-only stereo and depth cubes. All 21 CTests and five source guards pass
+again. The host-only rebuild completed at 06:49:37, 47,315,456 bytes, source
+`98a18002e` dirty; no guest translation unit or dependency rebuilt.
+
+The corrected run (process 24916, started 06:50:20, log 727) uses that new
+binary and the same temporary profile. Its normal native path passes the
+depth publication check; final-eye pixel results follow below.
+
+## Corrected final-eye sequence
+
+Process 24916 was stopped at 06:52:20 after 120 final captures, preserved in
+`out/verification/native_scene_layered_vr`: `frame_1788605483_0.raw` through
+`frame_1788605490_119.raw`, 06:51:23-06:51:30. These are stacked 1440x3168
+final eyes, not the intermediate scene array. All 119 pairs stay below 6%;
+all 120 frames have zero measured cyan and zero patches. Actual first/last
+previews show both eyes with stable scenery, but substantial letterboxing and
+blur. Stereo analysis returns INCONCLUSIVE for both: usable bands 44/52%,
+disparities -1/-2 pixels, spread 1. This does not establish stereo depth,
+comfort, full-height scene content or headset performance.
+
+Last scene totals: 16201 begins / 16200 ends, 32400 explicit outputs, 10746
+empty-pass clears, 124147 ownership checks, and zero compatibility, refusal,
+null-output or wrong-ownership entries. Camera-cache calls: 16201; state-308
+adapters: 32402; parameter adapters: 178211. No error/critical/VK_ERROR or
+upload-exhaustion entries. The runtime and final eyes are 1440x1584 per eye,
+but the scene attachment remains 1440x808. This fixes depth-output layer
+allocation, not that separate sizing/framing limitation.
+
+All 15 profile settings audited: original autoplay/perf/delay/count, minimum
+450 draws, native scene passes on, VR on, replay stereo off, multiview and
+layered textures on, scene-array capture and mirror off, camera mode 2,
+diorama height 0, XR render scale 1.0. Process-only environment: absolute
+`out/xrsim-build/reblue_xrsim.json`, absolute 31232-byte runtime DLL,
+`XRSIM_WIDTH=1440`, `XRSIM_HEIGHT_PX=1584`, `XRSIM_HEIGHT=0`. The vrsim guide
+was used; no Quest or Thor was run. Analysis finished before the next renderer
+launched. The original five-setting profile was restored exactly; final flat
+recheck process 25288 started at 06:53:10 with the same corrected binary.

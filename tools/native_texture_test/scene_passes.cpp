@@ -5,6 +5,7 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/native_scene_pass.h"
+#include "gpu/native_image_layers.h"
 #include <stdexcept>
 using namespace bd::gpu::scene;
 namespace {
@@ -13,6 +14,17 @@ void Require(bool value) {
 }
 }
 int main() {
+  for (uint32_t flags = 0; flags < 64; ++flags) {
+    const bool cube = flags & 1, volume = flags & 2;
+    const bool color = flags & 4, depth = flags & 8;
+    const bool multiview = flags & 16, layered = flags & 32;
+    const uint32_t expected = (!cube && !volume && (color || depth) &&
+                               multiview && layered) ? 2u : 1u;
+    Require(bd::gpu::AttachmentTextureLayers(cube, volume, color, depth,
+                                             multiview, layered) == expected);
+  }
+  Require(bd::gpu::AttachmentTextureLayers(false, false, false, true, true, true) == 2);
+  Require(bd::gpu::AttachmentTextureLayers(true, false, false, true, true, true) == 1);
   Require(ScaleSceneExtent({1920, 1080}, 1, 100) == SceneExtent{1920, 1080});
   Require(ScaleSceneExtent({1440, 1584}, 1, 100) == SceneExtent{1440, 1584});
   Require(ScaleSceneExtent({1440, 1440}, 1, 100) == SceneExtent{1440, 1440});
