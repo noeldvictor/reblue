@@ -166,6 +166,9 @@ The owner explicitly requested disk cleanup and space-conscious work on
   Inspect existing evidence before producing more. Documentation-only changes
   do not justify rebuilding or recapturing merely to stamp a new commit hash;
   record the actual tested binary and source revision instead.
+  Run focused, low-storage checks before storage-heavy verification so simple
+  failures do not consume another capture/build budget. Produce only the outputs
+  needed for the current question, without weakening required qualification.
 - Cook or convert assets in bounded batches, reusing unchanged native outputs.
   Avoid extracting the whole game or retaining every intermediate format for a
   small test. Budget overlapping source, temporary and final representations;
@@ -181,6 +184,9 @@ The owner explicitly requested disk cleanup and space-conscious work on
   capture evidence around 10 GiB, with documented exceptions for unresolved
   regressions or required qualification. Historical and superseded sequences
   still count; moving or relabeling a directory does not reclaim its bytes.
+  Include both the automatic `out/build/win-amd64-release/logs/capture/` output
+  and isolated `out/verification/` sets in that inventory, deduplicating shared
+  hard-linked payloads. An unfiled capture still counts against the budget.
   Before a new capture, budget retained unique raw bytes plus the incoming
   sequence and analysis exports. If that exceeds the budget, clean up eligible
   superseded outputs or document the required exception before launching.
@@ -189,6 +195,11 @@ The owner explicitly requested disk cleanup and space-conscious work on
   allowance, and a concrete review/cleanup trigger. An over-budget historical
   archive is not a blanket exemption for new captures. Recheck exceptions at
   the next checkpoint; do not let every checkpoint become a permanent raw archive.
+  If the retained archive is already over budget, reclaim at least the incoming
+  retained raw bytes before another capture. If that cannot be done safely,
+  pause new captures and ask the owner before increasing the archive's unique
+  byte count. A new per-run exception or a new turn does not bypass this gate;
+  continue source work and low-storage checks while capture growth is paused.
   Do not leave repeated long captures enabled during unrelated diagnostics;
   set frame counts and output locations before launch.
   Bound diagnostic dumps and logs too, especially verbose shader/frame dumps.
