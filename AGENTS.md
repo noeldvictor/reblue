@@ -154,6 +154,9 @@ The owner explicitly requested disk cleanup and space-conscious work on
   If free space cannot be measured, resolve that before launching the job. Warn
   below 20 GiB free; below 10 GiB, reclaim space before starting a large job.
   Keep that reserve after the estimated job, not just at its start.
+  Give each large producer an explicit output location, byte or file-count
+  limit, stop condition and retention/cleanup plan. Retries share the original
+  job's cumulative storage budget; failed runs do not reset the allowance.
 - Reuse configured build trees, dependencies and installed game data. Do not
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
@@ -172,10 +175,12 @@ The owner explicitly requested disk cleanup and space-conscious work on
   Start storage investigations with scoped output/cache inventories, not a
   recursive scan of the entire drive or the user's unrelated directories.
 - Bound captures explicitly. A 120-frame RGBA sequence costs about 0.93 GiB
-  at 1920x1080 or 2.04 GiB for stacked 1440x1584 eyes. Keep active raw capture
-  evidence around 10 GiB, with documented exceptions for unresolved regressions
-  or required qualification. Before a new capture, budget retained unique raw
-  bytes plus the incoming sequence and analysis exports. If that exceeds the
+  at 1920x1080 or 2.04 GiB for stacked 1440x1584 eyes. Keep total retained raw
+  capture evidence around 10 GiB, with documented exceptions for unresolved
+  regressions or required qualification. Historical and superseded sequences
+  still count; moving or relabeling a directory does not reclaim its bytes.
+  Before a new capture, budget retained unique raw bytes plus the incoming
+  sequence and analysis exports. If that exceeds the
   budget, identify superseded outputs for safe cleanup or document the required
   exception first; do not let every checkpoint become a permanent raw archive.
   Do not leave repeated long captures enabled during unrelated diagnostics;
@@ -193,10 +198,16 @@ The owner explicitly requested disk cleanup and space-conscious work on
   Give retained large artifacts a reason and a cleanup condition. Avoid keeping
   several copied representations of the same capture; export only the images
   needed for inspection and reports.
+  Once a cleanup condition is met, perform the safe, in-scope cleanup before
+  generating another replacement set; do not only document an ever-growing
+  backlog. Preserve protected evidence and ask if its value is uncertain.
 - Prefer lossless compression when a complete historical sequence is still
   useful. Validate hashes before/after and avoid compression work during GPU
   timing measurements. Hard links isolate a run without duplicating payloads,
   but deleting one link alone may reclaim no space.
+  Budget compression's temporary overlap with the originals; do not start it
+  unless both fit within the reserve. Keep only the validated representation
+  needed for retention, removing originals only when the cleanup rules allow.
 - Cleanup may remove identified, reproducible temporary/verification outputs,
   not game data, discs, saves, profiles, source, dependency checkouts or active
   build trees. Inspect exact targets, references and running processes first.
