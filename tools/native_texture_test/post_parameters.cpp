@@ -1,15 +1,60 @@
 #include "gpu/post_parameters.h"
 #include "gpu/lens_flare.h"
 #include "gpu/lens_flare_uv.h"
+#include "gpu/post_adjustments.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <bit>
 
 int main() {
   using namespace bd::gpu;
+  PostAdjustments adjustments;
+  assert(!adjustments.Active());
+  adjustments.fisheye_enabled = true;
+  assert(adjustments.Active());
+  adjustments.fisheye_enabled = false;
+  adjustments.reverse_enabled = true;
+  assert(adjustments.Active());
+  // Independent scalar transcription of the original shader's literal lanes.
+  // It used fixed 720/1280 in its radius; output geometry now supplies aspect.
+  const auto literal = [](uint32_t bits) { return std::bit_cast<float>(bits); };
+  const auto original_scale = [&](float radius, float strength) {
+    if (strength < 0) {
+      const float distance = radius * literal(0x3FB504E6);
+      return ((distance * distance / radius) * strength) * .5f;
+    }
+    float angle = radius * literal(0x3F350387) + .5f;
+    angle -= std::floor(angle);
+    angle = angle * literal(0x40C90FDB) + literal(0xC0490FDB);
+    return ((-2.0f / radius) * std::sin(angle) * strength) * .1f;
+  };
+  for (float strength : {-2.0f, -.75f, .25f, 1.0f}) {
+    assert(FisheyeOffsetScale(0, strength) == 0);
+    for (float aspect : {.5625f, 1.0f, 1.1f}) {
+      for (int i = 1; i <= 64; ++i) {
+        const float delta = float(i) / 128;
+        const float radius = std::sqrt(delta * delta + delta * delta * aspect * aspect);
+        assert(std::abs(FisheyeOffsetScale(radius, strength) - original_scale(radius, strength)) < 3e-6f);
+      }
+    }
+  }
+  assert(FisheyeOffsetScale(.5f, 0) == 0);
+  assert(FisheyeOffsetScale(.3f, -.75f) < 0);
+  // Equal pixel distances from the center produce equal radial distortion.
+  const float pixel_delta = 100.0f;
+  const float horizontal = pixel_delta / 1440;
+  const float vertical = (pixel_delta / 1584) * (1584.0f / 1440);
+  assert(std::abs(horizontal - vertical) < 1e-7f);
+  for (float color : {0.0f, .25f, .5f, .75f, 1.0f}) {
+    assert(ReverseColor(color, 0, 1) == color);
+    assert(ReverseColor(color, 1, 1) == 1 - color);
+    assert(ReverseColor(color, .5f, 1) == .5f);
+    assert(ReverseColor(color, 1, .5f) == .5f - color);
+  }
   // All ten original fan vertices (center, perimeter, repeated first edge).
   constexpr std::array<std::array<float, 4>, 10> optical_samples{{
       {.5f,.5f,0,1}, {.5f,0,0,0}, {1,0,1,0}, {1,.5f,1,1}, {1,1,1,0},

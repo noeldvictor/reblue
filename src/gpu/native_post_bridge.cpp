@@ -7,6 +7,7 @@
 #include "gpu/post_chain.h"
 #include "gpu/post_parameters.h"
 #include "gpu/lens_flare.h"
+#include "gpu/post_adjustments.h"
 #include "gpu/scene/native_transform_bridge.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/device.h"
@@ -23,16 +24,18 @@
 #include <stdexcept>
 
 REX_EXTERN(__imp__sub_8221B1D8);
-REX_EXTERN(sub_8221E758);
 REX_EXTERN(sub_8221E700);
 REX_EXTERN(bdSetRenderState);
 REX_EXTERN(__imp__sub_8221E298);
+REX_EXTERN(__imp__sub_822187D8);
+REX_EXTERN(__imp__sub_82218E88);
 REXCVAR_DECLARE(bool, bd_native_post);
 REXCVAR_DECLARE(bool, bd_native_post_verify);
 REXCVAR_DECLARE(bool, bd_native_dof);
 REXCVAR_DECLARE(bool, bd_native_dof_verify);
 REXCVAR_DECLARE(bool, bd_host_targets);
 REXCVAR_DECLARE(bool, bd_native_lensflare_preview);
+REXCVAR_DECLARE(int32_t, bd_native_post_adjustment_preview);
 
 namespace bd::gpu {
 namespace {
@@ -48,6 +51,7 @@ struct Stats {
   uint64_t flare_frames = 0, flare_sprites = 0, flare_inactive = 0;
   uint64_t flare_checks = 0;
   uint64_t flare_refusals = 0;
+  uint64_t fisheye_frames = 0, reverse_frames = 0, adjustment_checks = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -67,6 +71,9 @@ void Report() {
           "light/visibility and optical-image adapters remain; preview {}",
           stats.flare_frames, stats.flare_inactive, stats.flare_sprites, stats.flare_checks, stats.flare_refusals,
           REXCVAR_GET(bd_native_lensflare_preview));
+  BD_INFO("[native-post] native fisheye {} reverse {} adjustment parameter checks {}; preview {}",
+          stats.fisheye_frames, stats.reverse_frames, stats.adjustment_checks,
+          REXCVAR_GET(bd_native_post_adjustment_preview));
   stats.frame = frame;
 }
 bool Words(uint64_t address, uint64_t bytes) {
@@ -91,13 +98,15 @@ GuestTexture *Texture(uint32_t container) {
   return HostResourceHeap::FromGuest<GuestTexture>(handle);
 }
 struct Tail {
-  std::array<bool, 3> adjustments{};
+  PostAdjustments adjustments;
+  bool ntsc = false;
   uint32_t saved_state = 0;
   LensFlareParameters flare;
   std::array<GuestTexture *, 4> flare_images{};
 };
 thread_local const Tail *lens_comparison = nullptr;
 thread_local uint32_t lens_comparison_owner = 0, lens_comparison_index = 0;
+thread_local uint32_t adjustment_comparison_owner = 0, adjustment_comparison_mask = 0;
 bool ReadLensFlare(uint32_t owner, uint32_t bank, bool enabled, Tail &tail) {
   const auto refuse = [&](const char *reason, uint32_t detail = 0) {
     if (stats.flare_refusals++ < 8)
@@ -187,7 +196,26 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
       ++stats.memory;
       return false;
     }
-    tail.adjustments[i] = std::abs(bd::mem::load<float>(property + 4 + bank * 4)) > 0.0001f;
+    const bool enabled = std::abs(bd::mem::load<float>(property + 4 + bank * 4)) > 0.0001f;
+    if (i == 0) {
+      tail.adjustments.fisheye_enabled = enabled;
+      if (enabled) tail.adjustments.fisheye = bd::mem::load<float>(owner + 6472 + 652 + bank * 4);
+    } else if (i == 1) {
+      tail.adjustments.reverse_enabled = enabled;
+      if (enabled) {
+        tail.adjustments.reverse_strength = bd::mem::load<float>(owner + 9500 + 620 + bank * 4);
+        tail.adjustments.reverse_pivot = bd::mem::load<float>(owner + 9500 + 632 + bank * 4);
+      }
+    } else tail.ntsc = enabled;
+  }
+  const auto preview = REXCVAR_GET(bd_native_post_adjustment_preview);
+  if (preview != 0) {
+    if (preview != 1 && preview != 2)
+      throw std::runtime_error("Native post adjustment preview must be 0, 1 or 2");
+    if (REXCVAR_GET(bd_native_post_verify))
+      throw std::runtime_error("Synthetic adjustments cannot qualify authored parameters");
+    // Only native inputs change. Do not rewrite authored properties or flags.
+    tail.adjustments = {preview == 1 ? 0.75f : -0.75f, 1.0f, 1.0f, true, true};
   }
   const bool composed = flag(8); // the same buffered bool gates both stages
   // sub_8221B1D8: buffered bool descriptors have their payload at +4;
@@ -211,10 +239,9 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
 }
 void RunTail(PPCContext &ctx, uint8_t *base, uint32_t owner, uint32_t source,
              const Tail &tail) {
-  if (std::none_of(tail.adjustments.begin(), tail.adjustments.end(),
-                   [](bool enabled) { return enabled; })) return;
-  // These whole filter bodies are still compatibility producers. Keep exact
-  // ordering/state and count execution; never call the original bloom scope.
+  if (!tail.ntsc) return;
+  // The scanline/noise filter is still a compatibility producer, after the
+  // native fisheye/reverse pass. Keep its ordering/state and count execution.
   struct CallFrame {
     PPCContext &ctx;
     uint64_t stack;
@@ -228,21 +255,55 @@ void RunTail(PPCContext &ctx, uint8_t *base, uint32_t owner, uint32_t source,
     bdSetRenderState(ctx, base);
     ++stats.state_calls;
   };
-  const auto filter = [&](uint32_t offset, bool two_images) {
-    ctx.r3.u64 = owner + offset;
-    ctx.r4.u64 = source;
-    ctx.r5.u64 = source;
-    if (two_images) sub_8221E700(ctx, base);
-    else sub_8221E758(ctx, base);
-    ++stats.tail_calls;
-  };
   state(0);
-  if (tail.adjustments[0]) filter(6472, false);
-  if (tail.adjustments[1]) filter(9500, true);
-  if (tail.adjustments[2]) filter(10172, true);
+  ctx.r3.u64 = owner + 10172;
+  ctx.r4.u64 = source;
+  ctx.r5.u64 = source;
+  sub_8221E700(ctx, base);
+  ++stats.tail_calls;
   state(tail.saved_state);
 }
+void VerifyAdjustmentPublication(uint32_t owner, uint32_t descriptor_offset,
+                                  uint32_t register_offset,
+                                  const std::array<float, 2> &expected, uint32_t lanes) {
+  const auto descriptor = bd::mem::load<uint32_t>(owner + descriptor_offset);
+  if (!Words(descriptor, 16)) throw std::runtime_error("Missing adjustment descriptor");
+  const uint64_t address = uint64_t(bd::mem::load<uint32_t>(descriptor + 12)) +
+      uint64_t(bd::mem::load<uint32_t>(owner + register_offset)) * 16;
+  if (!Words(address, lanes * 4)) throw std::runtime_error("Missing adjustment publication");
+  for (uint32_t lane = 0; lane < lanes; ++lane) {
+    const auto actual = bd::mem::load<float>(uint32_t(address) + lane * 4);
+    if (actual != expected[lane] && !(std::isnan(actual) && std::isnan(expected[lane]))) {
+      ++stats.wrong;
+      throw std::runtime_error("Native post adjustment parameter mismatch");
+    }
+  }
+  ++stats.adjustment_checks;
+}
 } // namespace
+
+REX_HOOK_RAW(sub_822187D8) {
+  const auto owner = ctx.r3.u32;
+  __imp__sub_822187D8(ctx, base);
+  // This original producer is also used by discolor; scope by exact object.
+  if (lens_comparison && owner == adjustment_comparison_owner + 6472) {
+    if (!lens_comparison->adjustments.fisheye_enabled || (adjustment_comparison_mask & 1))
+      throw std::runtime_error("Unexpected original fisheye producer");
+    VerifyAdjustmentPublication(owner, 632, 640, {lens_comparison->adjustments.fisheye, 0}, 1);
+    adjustment_comparison_mask |= 1;
+  }
+}
+REX_HOOK_RAW(sub_82218E88) {
+  const auto owner = ctx.r3.u32;
+  __imp__sub_82218E88(ctx, base);
+  if (lens_comparison && owner == adjustment_comparison_owner + 9500) {
+    if (!lens_comparison->adjustments.reverse_enabled || (adjustment_comparison_mask & 2))
+      throw std::runtime_error("Unexpected original reverse producer");
+    VerifyAdjustmentPublication(owner, 656, 664,
+        {lens_comparison->adjustments.reverse_strength, lens_comparison->adjustments.reverse_pivot}, 2);
+    adjustment_comparison_mask |= 2;
+  }
+}
 
 REX_HOOK_RAW(sub_8221E298) {
   if (lens_comparison) {
@@ -317,11 +378,17 @@ REX_HOOK_RAW(sub_8221B1D8) {
       lens_comparison = &tail;
       lens_comparison_owner = owner + 8660;
       lens_comparison_index = 0;
+      adjustment_comparison_owner = owner;
+      adjustment_comparison_mask = 0;
       comparison_count = 0;
       ++stats.original;
       __imp__sub_8221B1D8(ctx, base);
       if (lens_comparison_index != tail.flare.count)
         throw std::runtime_error("Original lens-flare sprite count differs");
+      const auto expected_adjustments = (tail.adjustments.fisheye_enabled ? 1u : 0u) |
+                                        (tail.adjustments.reverse_enabled ? 2u : 0u);
+      if (adjustment_comparison_mask != expected_adjustments)
+        throw std::runtime_error("Original adjustment producer count differs");
       lens_comparison = nullptr;
       comparison = nullptr;
       // Report actual bloom/sprite comparisons, not one check per root entry.
@@ -334,7 +401,7 @@ REX_HOOK_RAW(sub_8221B1D8) {
         ? HostTargetAcquire(HostTargetClass::PostColor, scene->width, scene->height,
                             0x1A2201BF, 1) : nullptr;
     if (target) {
-      if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images)) {
+      if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images, tail.adjustments)) {
         if (has_dof)
           PublishDofProducerProperties(owner + 3440);
         if (!Video::PublishSceneOutput(target, scene, 1.0f))
@@ -344,6 +411,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
         stats.flare_frames += tail.flare.count != 0;
         stats.flare_inactive += tail.flare.count == 0;
         stats.flare_sprites += tail.flare.count;
+        stats.fisheye_frames += tail.adjustments.fisheye_enabled;
+        stats.reverse_frames += tail.adjustments.reverse_enabled;
         ++stats.native;
         Report();
         return;

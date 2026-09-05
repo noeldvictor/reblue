@@ -796,6 +796,10 @@ REXCVAR_DEFINE_BOOL(bd_native_post_verify, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_native_lensflare_preview, false, kCvarGroup,
                     "Diagnostic only: synthetic visible lens flare for native "
                     "GPU coverage; not authored occlusion qualification.");
+REXCVAR_DEFINE_INT32(bd_native_post_adjustment_preview, 0, kCvarGroup,
+                    "Diagnostic native-only fisheye and inversion inputs: "
+                    "0 authored, 1 positive distortion, 2 negative distortion. "
+                    "Not authored effect or VR comfort qualification.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

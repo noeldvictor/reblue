@@ -30,6 +30,24 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native optical-adjustment checkpoint (2026-09-05): fisheye and colour inversion
+now execute in one native layered pass, with explicit parameters and native
+attachment records. Composite/flare render directly into private native input
+scratch when needed; these filters no longer call their guest producers,
+texture/depth setters, intermediate target allocation or emulated resolve.
+The shared optical curve uses output aspect ratio instead of a fixed console
+canvas. All 26 CTests and 24 source guards pass. Negative flat and positive
+both-eye previews show coherent distortion/inversion with 0/31 large jumps.
+Normal flat and 1440x1584-per-eye VR sequences have 0/119 large jumps and no
+cyan patches; first/last normal VR depth is correctly crossed. Both eyes were
+inspected, original profile restored, no app jobs remain, and no Quest run
+occurred. Previews are synthetic: authored activation/parameter comparison and
+VR comfort are not qualified. NTSC scanline/noise, intervening/packed filters,
+dual-mask mode, image/property/output adapters and the full-frame/game gate
+remain. Earlier late-scene failures are not superseded. See
+`research/20260905_1504_native-post-adjustments.md` for exact evidence and
+storage accounting (46.15 GiB free; no assets duplicated or outputs deleted).
+
 Native lens-flare checkpoint (2026-09-05): the complete supported flare
 producer and sprite submission now execute as native recipes and a single
 instanced draw into the owned post output. No lens wrapper, per-sprite

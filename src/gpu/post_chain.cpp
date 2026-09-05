@@ -37,7 +37,9 @@
 #include "gpu/post_chain.h"
 #include "gpu/post_parameters.h"
 #include "gpu/lens_flare.h"
+#include "gpu/post_adjustments.h"
 
+#include <bit>
 #include <cstring>
 #include <memory>
 #include <stdexcept>
@@ -68,6 +70,7 @@
 #include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
@@ -77,6 +80,7 @@
 #include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -106,6 +110,7 @@ enum class Shader : u32 {
   Composite = 4,
   Pyramid = 5,
   LensFlare = 6,
+  Adjust = 7,
   Count
 };
 
@@ -207,6 +212,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(lens_flare_ps), "main", kHostShaderFormat);
   c.flare_vs = s.device->createShader(
       REBLUE_SHADER_BLOB(lens_flare_vs), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Adjust)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_adjust_ps), "main", kHostShaderFormat);
   if (!c.flare_vs) {
     c.failed = true;
     return false;
@@ -574,8 +581,25 @@ GuestTexture *BuildBloomMask(VideoState &s, Chain &c, GuestTexture *scene,
 
 // One pass for both composites into an explicit output attachment, using only
 // native values. The compatibility intercept imports its registers separately.
+// Draw producers consume only this explicit native destination, whether the
+// final attachment came through a boundary adapter or is private post scratch.
+struct PostAttachment {
+  plume::RenderTexture *texture;
+  plume::RenderFramebuffer *framebuffer;
+  u32 width, height, layers;
+  plume::RenderFormat format;
+};
+PostAttachment Attachment(VideoState &s, GuestTexture *target) {
+  if (!target) return {};
+  return {target->texture, GetFramebuffer(s, target, nullptr),
+          target->width, target->height, target->layers, target->format};
+}
+PostAttachment Attachment(Scratch *target) {
+  return {target->texture.get(), target->framebuffer.get(),
+          target->width, target->height, target->layers, target->format};
+}
 bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
-                   GuestTexture *bloom, GuestTexture *rt,
+                   GuestTexture *bloom, const PostAttachment &rt,
                    const BloomParameters &parameters) {
 #if defined(REBLUE_D3D12)
   (void)s; (void)c; (void)scene; (void)bloom; (void)rt; (void)parameters;
@@ -592,13 +616,13 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
               "bloom {}, rt {})",
               FrameStatFrameCount(), why, c.dof.valid ? 1 : 0,
               scene ? 1 : 0, bloom ? 1 : 0,
-              rt ? 1 : 0);
+              rt.texture ? 1 : 0);
     return false;
   };
   if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene ||
       (!bloom && !fold))
     return bail("inputs");
-  if (!rt || !rt->texture || rt->layers > 2)
+  if (!rt.texture || !rt.framebuffer || rt.layers > 2)
     return bail("target");
   GuestTexture *depth = Source(s, c.dof.depth);
   if (!depth)
@@ -636,20 +660,20 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   auto alloc = UploadHostConstants(&k, sizeof(k));
   if (!alloc.memory)
     return bail("constants");
-  const bool layered = rt->layers > 1;
-  auto *pipe = Pipeline(s, c, Shader::Composite, rt->format, layered);
+  const bool layered = rt.layers > 1;
+  auto *pipe = Pipeline(s, c, Shader::Composite, rt.format, layered);
   if (!pipe)
     return bail("pipeline");
   if (bloom)
     Transition(s, bloom->texture, bloom->layout, plume::RenderTextureLayout::SHADER_READ);
-  plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr);
+  plume::RenderFramebuffer *fb = rt.framebuffer;
   if (!fb)
     return false;
   const u32 offsets[3] = {s.constant_dyn_offsets[0], alloc.dynamicOffset,
                           s.constant_dyn_offsets[2]};
   s.command_list->setGraphicsDescriptorSetDynamic(
       s.constant_descriptor_set.get(), kConstantDescriptorSetIndex, offsets, 3);
-  Pass(s, pipe, fb, rt->width, rt->height,
+  Pass(s, pipe, fb, rt.width, rt.height,
        PostPush{scene->descriptorIndex,
                 bloom ? bloom->descriptorIndex : 0u,
                 float(REXCVAR_GET(bd_host_post_debug_depth)
@@ -660,13 +684,13 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   if (c.composite_frames++ < 3)
     BD_INFO("[post] composite into {}x{}: dof ({:.3g}, {:.3g}, focus {:.3g}) "
             "w0 {:.3g} w1 {:.3g}",
-            rt->width, rt->height, k.dof[0], k.dof[1], k.dof[2], k.w0[0],
+            rt.width, rt.height, k.dof[0], k.dof[1], k.dof[2], k.w0[0],
             k.w1[0]);
   return true;
 #endif
 }
 
-bool RenderLensFlare(VideoState &s, Chain &c, GuestTexture *output,
+bool RenderLensFlare(VideoState &s, Chain &c, const PostAttachment &output,
                      const LensFlareParameters &parameters,
                      const std::array<GuestTexture *, 4> &images) {
   if (!parameters.count)
@@ -688,8 +712,8 @@ bool RenderLensFlare(VideoState &s, Chain &c, GuestTexture *output,
   for (u32 i = 0; i < parameters.count; ++i)
     sprites[i].texture = Content(images[sprites[i].texture])->descriptorIndex;
   const auto allocation = UploadHostConstants(sprites.data(), sizeof(sprites));
-  auto *pipeline = Pipeline(s, c, Shader::LensFlare, output->format, output->layers > 1);
-  auto *framebuffer = GetFramebuffer(s, output, nullptr);
+  auto *pipeline = Pipeline(s, c, Shader::LensFlare, output.format, output.layers > 1);
+  auto *framebuffer = output.framebuffer;
   if (!allocation.memory || !pipeline || !framebuffer)
     return false;
   const u32 offsets[3] = {allocation.dynamicOffset, s.constant_dyn_offsets[1],
@@ -699,8 +723,8 @@ bool RenderLensFlare(VideoState &s, Chain &c, GuestTexture *output,
       kConstantDescriptorSetIndex, offsets, 3);
   cmd->setFramebuffer(framebuffer);
   cmd->setPipeline(pipeline);
-  cmd->setViewports(plume::RenderViewport(0, 0, float(output->width), float(output->height)));
-  cmd->setScissors(plume::RenderRect(0, 0, i32(output->width), i32(output->height)));
+  cmd->setViewports(plume::RenderViewport(0, 0, float(output.width), float(output.height)));
+  cmd->setScissors(plume::RenderRect(0, 0, i32(output.width), i32(output.height)));
   cmd->drawInstanced(6, parameters.count, 0, 0);
   return true;
 }
@@ -709,7 +733,8 @@ bool RenderLensFlare(VideoState &s, Chain &c, GuestTexture *output,
 bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *output,
                     const DofParameters &dof, const BloomParameters &bloom,
                     const LensFlareParameters &flare,
-                    const std::array<GuestTexture *, 4> &flare_images) {
+                    const std::array<GuestTexture *, 4> &flare_images,
+                    const PostAdjustments &adjustments) {
 #if defined(REBLUE_D3D12)
   return false;
 #else
@@ -736,6 +761,15 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
     for (u32 i = 0; i < flare.count; ++i)
       if (flare.sprites[i].texture >= flare_images.size()) return false;
   }
+  // Render directly into the input of the combined adjustment, not a copy of
+  // the final image. This native scratch has no engine handle or resolve link.
+  Scratch *adjustment_input = adjustments.Active()
+      ? GetScratch(s, c, output->width, output->height, output->format, 3, output->layers)
+      : nullptr;
+  if (adjustments.Active() && !adjustment_input) return false;
+  const auto destination = Attachment(s, output);
+  const auto composed = adjustment_input ? Attachment(adjustment_input) : destination;
+  if (!composed.framebuffer || !destination.framebuffer) return false;
   Video::OpenCommandListLocked();
   if (!s.command_list_open || !s.command_list)
     return false;
@@ -744,11 +778,27 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   HostTargetDropLinks(s, output);
   if (!BuildDofPyramid(s, c, scene, depth, dof) || !c.dof.valid)
     throw std::runtime_error("Native post atlas production failed");
-  Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
-  if (!HostComposite(s, c, source, nullptr, output, bloom))
+  if (adjustment_input)
+    Transition(s, adjustment_input->texture.get(), adjustment_input->layout,
+               plume::RenderTextureLayout::COLOR_WRITE);
+  else
+    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+  if (!HostComposite(s, c, source, nullptr, composed, bloom))
     throw std::runtime_error("Native post composite failed");
-  if (!RenderLensFlare(s, c, output, flare, flare_images))
+  if (!RenderLensFlare(s, c, composed, flare, flare_images))
     throw std::runtime_error("Native lens-flare submission failed");
+  if (adjustment_input) {
+    s.command_list->setFramebuffer(nullptr);
+    Transition(s, adjustment_input->texture.get(), adjustment_input->layout,
+               plume::RenderTextureLayout::SHADER_READ);
+    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    auto *pipeline = Pipeline(s, c, Shader::Adjust, output->format, output->layers > 1);
+    if (!pipeline) throw std::runtime_error("Native post adjustment pipeline failed");
+    Pass(s, pipeline, destination.framebuffer, destination.width, destination.height,
+         PostPush{adjustment_input->slot, std::bit_cast<u32>(adjustments.reverse_pivot),
+                  adjustments.fisheye_enabled ? adjustments.fisheye : 0.0f,
+                  adjustments.reverse_enabled ? adjustments.reverse_strength : 0.0f}, true);
+  }
   output->surfaceDrawn = true;
   // The complete source is consumed before publishing the new output alias.
   DetachSourceSurfaceLocked(s, scene);
@@ -921,7 +971,7 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
       parameters.bloom_weight[lane] = GuestPixelConstant(device_guest, 14, lane);
     }
     VerifyNativePostParameters(parameters);
-    const bool composed = HostComposite(s, c, scene, bloom, s.render_target, parameters);
+    const bool composed = HostComposite(s, c, scene, bloom, Attachment(s, s.render_target), parameters);
     // Nothing reads the scene texture after the composite (a field frame's
     // only materialisation was the surface's reuse next frame), so its
     // resolve links are dropped here: with them, the scaled copy would still

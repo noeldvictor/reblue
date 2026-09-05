@@ -13,6 +13,31 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.scheduler = (root / "src/gpu/native_post_bridge.cpp").read_text(encoding="utf-8")
         cls.flare = (root / "src/gpu/lens_flare.h").read_text(encoding="utf-8")
         cls.flare_shader = (root / "src/gpu/shaders/hlsl/lens_flare_ps.hlsl").read_text(encoding="utf-8")
+        cls.adjust_shader = (root / "src/gpu/shaders/hlsl/post_adjust_ps.hlsl").read_text(encoding="utf-8")
+        cls.adjust = (root / "src/gpu/post_adjustments.h").read_text(encoding="utf-8")
+
+    def test_adjustments_use_native_input_and_shared_aspect_math(self):
+        self.assertIn('#include "src/gpu/post_adjustments.h"', self.adjust_shader)
+        self.assertIn("float(height) / float(width)", self.adjust_shader)
+        self.assertIn("float3(sample_uv, view_id)", self.adjust_shader)
+        self.assertIn("FisheyeOffsetScale(", self.adjust_shader)
+        self.assertIn("ReverseColor(", self.adjust_shader)
+        for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "psFloatConstants"):
+            self.assertNotIn(name, self.adjust)
+        tail = self.scheduler.split("void RunTail(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        self.assertIn("if (!tail.ntsc) return", tail)
+        self.assertNotIn("6472", tail)
+        self.assertNotIn("9500", tail)
+        self.assertNotIn("sub_8221E758", self.scheduler)
+
+    def test_adjustment_input_is_private_native_scratch_not_a_seed_copy(self):
+        body = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]
+        self.assertIn("adjustments.Active()", body)
+        self.assertIn("adjustment_input ? Attachment(adjustment_input) : destination", body)
+        self.assertLess(body.index("HostComposite("), body.index("RenderLensFlare("))
+        self.assertLess(body.index("RenderLensFlare("), body.index("Shader::Adjust"))
+        self.assertNotIn("copyTexture", body)
+        self.assertNotIn("HostTargetAcquire", body)
 
     def test_flare_shader_folds_the_quarter_image_with_tested_mapping(self):
         self.assertIn('#include "src/gpu/lens_flare_uv.h"', self.flare_shader)
@@ -23,11 +48,11 @@ class NativePostBoundaryTest(unittest.TestCase):
     def test_native_flare_is_one_instanced_draw_into_explicit_output(self):
         body = self.post.split("bool RenderLensFlare(", 1)[1].split("} // namespace", 1)[0]
         self.assertIn("drawInstanced(6, parameters.count, 0, 0)", body)
-        self.assertIn("GetFramebuffer(s, output, nullptr)", body)
+        self.assertIn("output.framebuffer", body)
         for name in ("s.render_target", "GuestPixelConstant", "D3DDevice_", "s.textures[", "device_guest"):
             self.assertNotIn(name, body)
         self.assertNotIn("filter(8660", self.scheduler)
-        self.assertIn("std::none_of(tail.adjustments.begin()", self.scheduler)
+        self.assertIn("if (!tail.ntsc) return", self.scheduler)
 
     def test_flare_recipe_has_no_engine_or_register_dependency(self):
         for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "psFloatConstants"):
@@ -44,7 +69,7 @@ class NativePostBoundaryTest(unittest.TestCase):
                      "HostPostIntercept", "ResolveRtToTexture", "TrackResolveSource"):
             self.assertNotIn(name, body)
         self.assertLess(body.index("DrawQueueFlush("), body.index("BuildDofPyramid("))
-        self.assertIn("HostComposite(s, c, source, nullptr, output, bloom)", body)
+        self.assertIn("HostComposite(s, c, source, nullptr, composed, bloom)", body)
         self.assertIn("s.draw_framebuffer_bound = false", body)
 
     def test_composite_consumes_typed_native_parameters(self):
