@@ -66,6 +66,10 @@ bool DecodeMeshMaterials(std::span<const uint16_t> commands,
       current.index_record = command & 0x0fff;
     } else if (kind == 0xe000) {
       current.control_record = command & 0x0fff;
+    } else if ((command & 0xff00) == 0x0200) {
+      current.skin = DecodeNativeSkinBinding(commands.subspan(cursor, size_t(operands)));
+      if (!current.skin)
+        return false;
     } else if ((command & 0xff00) == 0x0100) {
       m.modulate_diffuse = (command & 0xff) == 0;
     } else if ((command & 0xff00) == 0x0400) {

@@ -5,6 +5,7 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #pragma once
+#include "gpu/scene/native_skin.h"
 
 #include <array>
 #include <cstddef>
@@ -31,6 +32,8 @@ struct NativeMaterialProperties {
 
 struct NativeMaterialRange {
   NativeMaterialProperties material;
+  // Unknown until a bone-index command; an explicit empty binding is unskinned.
+  std::optional<NativeSkinBinding> skin;
   uint32_t index_count = 0;
   uint32_t first_index = 0;
   uint16_t index_record = 0xffff;
