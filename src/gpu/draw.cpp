@@ -23,6 +23,7 @@
 #include "gpu/constant_buffers.h"
 #include "gpu/vertex_pull.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
@@ -41,66 +42,18 @@ REXCVAR_DECLARE(i32, bd_debug_max_pso);
 namespace bd::gpu {
 namespace {
 
-// BD g_renderStateCache: DWORD array indexed by D3DRS byte offset, written
-// only by bdSetRenderState.
-constexpr u32 kRenderStateCacheVa = 0x82DBE1A8;
-
-// Guest D3DRENDERSTATETYPE byte offsets. Only the fields
-// ReadDeviceRenderState consumes are modeled.
-struct BdRenderStateCache {
-  u8 pad_0000[40];            // +0x00
-  be_u32 zEnable;             // +0x28 (40)  D3DRS_ZENABLE
-  be_u32 zFunc;               // +0x2C (44)  D3DRS_ZFUNC
-  be_u32 zWriteEnable;        // +0x30 (48)  D3DRS_ZWRITEENABLE
-  be_u32 fillMode;            // +0x34 (52)  D3DRS_FILLMODE
-  be_u32 cullMode;            // +0x38 (56)  D3DRS_CULLMODE
-  u8 pad_003C[48];            // +0x3C
-  be_u32 stencilEnable;       // +0x6C (108) D3DRS_STENCILENABLE
-  be_u32 twoSidedStencilMode; // +0x70 (112) D3DRS_TWOSIDEDSTENCILMODE
-  be_u32 stencilFail;         // +0x74 (116) D3DRS_STENCILFAIL
-  be_u32 stencilZFail;        // +0x78 (120) D3DRS_STENCILZFAIL
-  be_u32 stencilPass;         // +0x7C (124) D3DRS_STENCILPASS
-  be_u32 stencilFunc;         // +0x80 (128) D3DRS_STENCILFUNC
-  be_u32 stencilRef;          // +0x84 (132) D3DRS_STENCILREF
-  // Cache 0 means never-set and must read as the X360 runtime default
-  // 0xFFFFFFFF (BD never writes STENCILMASK/STENCILWRITEMASK).
-  be_u32 stencilMask;      // +0x88 (136) D3DRS_STENCILMASK
-  be_u32 stencilWriteMask; // +0x8C (140) D3DRS_STENCILWRITEMASK
-  u8 pad_0090[212 - 144];  // +0x90
-  be_u32 colorWriteEnable; // +0xD4 (212) D3DRS_COLORWRITEENABLE
-};
-static_assert(offsetof(BdRenderStateCache, zEnable) == 40);
-static_assert(offsetof(BdRenderStateCache, zFunc) == 44);
-static_assert(offsetof(BdRenderStateCache, zWriteEnable) == 48);
-static_assert(offsetof(BdRenderStateCache, fillMode) == 52);
-static_assert(offsetof(BdRenderStateCache, cullMode) == 56);
-static_assert(offsetof(BdRenderStateCache, stencilEnable) == 108);
-static_assert(offsetof(BdRenderStateCache, twoSidedStencilMode) == 112);
-static_assert(offsetof(BdRenderStateCache, stencilFail) == 116);
-static_assert(offsetof(BdRenderStateCache, stencilZFail) == 120);
-static_assert(offsetof(BdRenderStateCache, stencilPass) == 124);
-static_assert(offsetof(BdRenderStateCache, stencilFunc) == 128);
-static_assert(offsetof(BdRenderStateCache, stencilRef) == 132);
-static_assert(offsetof(BdRenderStateCache, stencilMask) == 136);
-static_assert(offsetof(BdRenderStateCache, stencilWriteMask) == 140);
-static_assert(offsetof(BdRenderStateCache, colorWriteEnable) == 212);
-
-// Blend state comes from the Xenos register shadow, where the guest SDK folds
-// AlphaBlendEnable and friends together across many call sites.
-// RB_BLENDCONTROL0: COLOR_SRCBLEND[4:0] COLOR_COMB_FCN[7:5]
-// COLOR_DESTBLEND[12:8] ALPHA_SRCBLEND[20:16] ALPHA_COMB_FCN[23:21]
-// ALPHA_DESTBLEND[28:24], raw D3DBLEND/D3DBLENDOP. RB_COLORCONTROL bit 31 is
-// the alpha master enable.
+// Blend remains a temporary register import because unconverted engine sites
+// write it inline. Raster/depth/stencil intent is produced at the state
+// boundary and copied from host memory; normal draws never read its engine
+// cache.
 void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   const auto *dev = bd::mem::at<const D3DDevice>(device_guest);
   if (!dev)
     return;
   const u32 blend = dev->rbBlendControl0;
   const u32 color_control = dev->rbColorControl;
-
   bool &dirty = s.dirtyStates.pipelineState;
   PipelineState &ps = s.pipelineState;
-
   Video::SetDirtyValue(dirty, ps.alphaBlendEnable,
                        (color_control & 0x80000000u) != 0);
   Video::SetDirtyValue(dirty, ps.srcBlend, ConvertBlendMode(blend & 0x1Fu));
@@ -114,72 +67,19 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   Video::SetDirtyValue(dirty, ps.destBlendAlpha,
                        ConvertBlendMode((blend >> 24) & 0x1Fu));
 
-  // Depth/cull/fill/color-write come from BD's own render state cache, not the
-  // register shadow, whose enable bits BD suppresses behind regs[3046]==0.
-  const auto *rs = bd::mem::at<const BdRenderStateCache>(kRenderStateCacheVa);
-  if (rs) {
-    Video::SetDirtyValue(dirty, ps.zEnable, rs->zEnable != 0u);
-    // bdEngineInit seeds the cache from device getters reblue never fills, so
-    // an unwritten slot reads 0 rather than its runtime default, and ZFUNC 0 is
-    // D3DCMP_NEVER. Take the X360 defaults for the depth pair until it is set.
-    const u32 z_func = rs->zFunc;
-    Video::SetDirtyValue(dirty, ps.zFunc,
-                         z_func ? ConvertCompareFunc(z_func)
-                                : plume::RenderComparisonFunction::LESS_EQUAL);
-    bool z_write = z_func == 0u || rs->zWriteEnable != 0u;
-    // A blended draw that writes depth invalidates a tiler's low-resolution Z
-    // for the remainder of the pass. 64% of a field frame does exactly that,
-    // which is an EDRAM-era habit: on a Xenon there was no LRZ to lose.
-    //
-    // Transparent geometry does not occlude what follows it, so testing depth
-    // without writing it is both the conventional behaviour and the one that
-    // keeps early rejection alive.
-    if (z_write && ps.alphaBlendEnable && REXCVAR_GET(bd_blend_no_depth_write)) {
-      z_write = false;
-      bd::gpu::NoteDepthWriteSuppressed();
-    }
-    Video::SetDirtyValue(dirty, ps.zWriteEnable, z_write);
-
-    // Probe: does the blending on these draws do anything? If the image is
-    // unchanged with it off, the blend was a no-op the tiler was paying for.
-    if (z_write && ps.alphaBlendEnable &&
-        REXCVAR_GET(bd_blend_off_when_opaque)) {
-      Video::SetDirtyValue(dirty, ps.alphaBlendEnable, false);
-      Video::SetDirtyValue(dirty, ps.srcBlend, plume::RenderBlend::ONE);
-      Video::SetDirtyValue(dirty, ps.destBlend, plume::RenderBlend::ZERO);
-    }
-    Video::SetDirtyValue(dirty, ps.cullMode, ConvertCullMode(rs->cullMode));
-    // The debug wireframe toggle (Shift+F3) and the Visual prim recorder both
-    // reach the host only here: they bracket their draws in
-    // bdSetRenderState(D3DRS_FILLMODE) with no other host-visible signal.
-    Video::SetDirtyValue(dirty, ps.fillMode, ConvertFillMode(rs->fillMode));
-    Video::SetDirtyValue(dirty, ps.colorWriteEnable,
-                         rs->colorWriteEnable & 0xFu);
-
-    // BD's door blackout is the sole user (bdCameraRender /
-    // bdSceneNodeDrawFurShells mode-4/5 blocks): a carve pass INCRs a doorway
-    // stencil mask, then the
-    // black pass draws ZFUNC=ALWAYS gated by NOTEQUAL ref 0.
-    auto mask_or_default = [](be_u32 v) -> u8 {
-      return v ? static_cast<u8>(v & 0xFFu) : 0xFFu;
-    };
-    Video::SetDirtyValue(dirty, ps.stencilEnable, rs->stencilEnable != 0u);
-    Video::SetDirtyValue(dirty, ps.stencilTwoSided,
-                         rs->twoSidedStencilMode != 0u);
-    Video::SetDirtyValue(dirty, ps.stencilFail,
-                         ConvertStencilOp(rs->stencilFail));
-    Video::SetDirtyValue(dirty, ps.stencilZFail,
-                         ConvertStencilOp(rs->stencilZFail));
-    Video::SetDirtyValue(dirty, ps.stencilPass,
-                         ConvertStencilOp(rs->stencilPass));
-    Video::SetDirtyValue(dirty, ps.stencilFunc,
-                         ConvertCompareFunc(rs->stencilFunc));
-    Video::SetDirtyValue(dirty, ps.stencilRef,
-                         static_cast<u8>(rs->stencilRef & 0xFFu));
-    Video::SetDirtyValue(dirty, ps.stencilMask,
-                         mask_or_default(rs->stencilMask));
-    Video::SetDirtyValue(dirty, ps.stencilWriteMask,
-                         mask_or_default(rs->stencilWriteMask));
+  scene::ApplyRasterState(scene::CurrentRasterIntent(), ps, dirty);
+  // Existing diagnostic switches remain explicit; native intent itself is not
+  // mutated by a temporary per-draw override.
+  if (ps.zWriteEnable && ps.alphaBlendEnable &&
+      REXCVAR_GET(bd_blend_no_depth_write)) {
+    Video::SetDirtyValue(dirty, ps.zWriteEnable, false);
+    bd::gpu::NoteDepthWriteSuppressed();
+  }
+  if (ps.zWriteEnable && ps.alphaBlendEnable &&
+      REXCVAR_GET(bd_blend_off_when_opaque)) {
+    Video::SetDirtyValue(dirty, ps.alphaBlendEnable, false);
+    Video::SetDirtyValue(dirty, ps.srcBlend, plume::RenderBlend::ONE);
+    Video::SetDirtyValue(dirty, ps.destBlend, plume::RenderBlend::ZERO);
   }
 }
 } // namespace
@@ -296,10 +196,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
                   s.pipelineState.depthStencilFormat, ds_format);
   }
 
-  // RB_DEPTHCONTROL + RB_BLENDCONTROL0 + RB_STENCILREFMASK + the color control
-  // alpha enable bit. BD inlines its render state writes at LTCG-eligible sites
-  // and routes the rest through bdSetRenderState's dispatch table, so the
-  // register shadow merges both.
+  // Live native raster intent plus the still-imported blend register shadow.
+  // Blend's inline engine writers remain a separately tracked boundary.
   ReadDeviceRenderState(s, device_guest);
 
   // Anything missing here means the engine has not wired the pipeline up yet.

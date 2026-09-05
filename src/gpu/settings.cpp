@@ -484,6 +484,10 @@ REXCVAR_DEFINE_BOOL(bd_native_deferred_depth_verify, false, kCvarGroup,
                     "Compare native deferred depth with the original producer before publishing.");
 REXCVAR_DEFINE_BOOL(bd_native_deferred_consumer, true, kCvarGroup,
                     "Schedule and consume deferred surfaces on the host (engine adapters remain).");
+REXCVAR_DEFINE_BOOL(bd_native_raster, true, kCvarGroup,
+                   "Host raster/depth/stencil production and native draw intent");
+REXCVAR_DEFINE_BOOL(bd_native_raster_verify, false, kCvarGroup,
+                   "Compare native raster publication and track unobserved engine cache writes");
 REXCVAR_DEFINE_BOOL(bd_native_transforms, true, kCvarGroup,
                     "Compose and publish object/pass transforms on the host.");
 REXCVAR_DEFINE_BOOL(bd_native_transforms_verify, false, kCvarGroup,

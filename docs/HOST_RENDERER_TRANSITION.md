@@ -138,6 +138,19 @@ shader-register publication ABI remain temporary boundaries. This does not
 replace native scene/pass scheduling or fix/qualify the previously documented
 multiview and later-scene failures.
 
+Raster/depth/stencil intent now lives in named host state (`native_raster*`).
+The normal path replaces 15 `bdSetRenderState` setters and copies live native
+fields at draw time, removing the per-draw engine raster-cache read/conversion.
+`bd_native_raster` defaults on; diagnostic comparison defaults off. The live
+comparison recorded 1491692 setter checks and 3070903 ordinary draw-state
+checks, with zero publication mismatches/cache drift and one bootstrap import.
+See `research/20260904_2238_native-raster-intent.md` for tests and captures.
+Getter/cache/register shadows remain explicit engine adapters; blend still
+imports registers written inline by the engine. Alpha, sampler, other-state
+and material/pass producers, CCW stencil behavior, replay recipes and native
+scene/pass assets remain unconverted. Field captures do not exercise stencil
+operation/mask setters. This is not full frame or both-eye qualification.
+
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free
 content IDs. The SDK-independent mip cooker persists missing chains; subsequent

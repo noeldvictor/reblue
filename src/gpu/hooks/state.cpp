@@ -29,6 +29,7 @@
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
 
 namespace {
@@ -435,13 +436,11 @@ REX_HOOK(D3DDevice_SetStreamSource, D3DDevice_SetStreamSource_hook);
 REX_HOOK(D3DDevice_SetIndices, D3DDevice_SetIndices_hook);
 // Raw, on the inherited context: a typed REX_IMPORT re-roots the guest stack
 // at ThreadState's r1 and overwrites the frames live underneath it.
-REX_EXTERN(__imp__bdSetRenderState);
 REX_HOOK_RAW(bdSetRenderState) {
   const u32 offset = ctx.r3.u32;
   const u32 value = ctx.r4.u32;
-  // Depth/cull/color-write are read from g_renderStateCache at draw time
-  // (ReadDeviceRenderState), which sees LTCG-inlined sites a function
-  // hook can't. Only alpha test feeds SharedConstants: it is fixed-function ROP
+  // Raster/depth/stencil now produce native intent below. Alpha test still
+  // feeds SharedConstants: it is fixed-function ROP
   // on X360, and the recompiled PS clips on kSpecConstantAlphaTest instead.
   if (offset == kRsAlphaTestEnable) {
     bd::gpu::Video::SetAlphaTestMode(value != 0);
@@ -449,5 +448,13 @@ REX_HOOK_RAW(bdSetRenderState) {
     bd::gpu::Video::SetAlphaThreshold(static_cast<float>(value) *
                                       kAlphaRefScale);
   }
-  __imp__bdSetRenderState(ctx, base);
+  bd::gpu::scene::UpdateRasterImport(ctx, base);
+}
+
+// Initialization seeds the render cache via SDK getters rather than the
+// ordinary setter. Invalidate once after it, not by polling cache every draw.
+REX_EXTERN(__imp__bdEngineInit);
+REX_HOOK_RAW(bdEngineInit) {
+  __imp__bdEngineInit(ctx, base);
+  bd::gpu::scene::ResetRasterImport();
 }
