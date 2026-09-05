@@ -30,6 +30,21 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Tracked camera ownership checkpoint (2026-09-05): a native per-view scope
+selects the submitted scene camera and reuses one composed result across
+its consumers. Arbitrary matrix setters no longer treat light cameras and
+2D/post resets as headset cameras. This also stops unrelated view writes
+from advancing anchor smoothing. All 25 CTests and thirteen source guards
+pass. Normal 1440x1584 final-eye VR has 0/119 large changes and correctly
+crossed first/last depth (far -1, near -9, spread 8 pixels); both eyes were
+inspected. The original flat control is also 0/119, with Shu's cast silhouette.
+These results supersede the earlier short-view foreground/depth findings,
+not the late-scene failure or full-game gate. Distant blur and VR character
+shadow qualification remain. Native sun stays opt-in; XR scale stays 0.65.
+The original view scheduler, descriptor/camera sources, interpolation,
+reflection derivation and post-focus producer remain conversion boundaries.
+See `research/20260905_1216_scoped-native-xr-camera.md`.
+
 Native eye geometry checkpoint (2026-09-05): scene and final layered output
 now share the full native runtime extent instead of fitting the whole 3D
 frame to the authored 16:9 HUD canvas. UI scaling remains separate; native

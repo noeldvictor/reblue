@@ -9,6 +9,7 @@
  */
 #include "engine/frame_interp.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <unordered_map>
@@ -33,6 +34,7 @@
 #include "gpu/gpu.h"
 #include "gpu/scene/native_transform_bridge.h"
 #include "xr/xr_game_camera.h"
+#include "xr/view_composition_scope.h"
 
 namespace {
 
@@ -58,6 +60,7 @@ std::unordered_map<u32, CamEntry> g_cams; // render-thread only
 u64 g_camFrame = 0;
 bool g_inCameraRender =
     false; // true only inside bdCameraRenderSetup (render thread)
+thread_local bd::xr::ViewCompositionScope *g_viewComposition = nullptr;
 
 void ReadFloats(be_f32 *p, float *out, int n) {
   for (int i = 0; i < n; ++i)
@@ -526,6 +529,25 @@ REX_HOOK_RAW(bdCameraRenderSetup) {
   g_inCameraRender = false;
 }
 
+// bdRenderViewSubmit's descriptor +8 names the render camera shared by the
+// scene and shadow-volume preparation. Its view/projection are +160/+224.
+// This is deliberately NOT bdCameraRenderSetup's outer object (which embeds
+// this camera at +432). The original still schedules the passes; the native
+// scope owns which camera can receive tracking and its one composed result.
+REX_EXTERN(__imp__bdRenderViewSubmit);
+REX_HOOK_RAW(bdRenderViewSubmit) {
+  const u32 camera = bd::mem::try_load<u32>(ctx.r3.u32 + 8);
+  bd::xr::ViewCompositionScope composition(
+      camera ? uint64_t(camera) + 160 : 0,
+      camera ? uint64_t(camera) + 224 : 0);
+  struct RestoreScope {
+    bd::xr::ViewCompositionScope *previous = g_viewComposition;
+    ~RestoreScope() { g_viewComposition = previous; }
+  } restore;
+  g_viewComposition = &composition;
+  __imp__bdRenderViewSubmit(ctx, base);
+}
+
 // Compose the tracked camera/XR view in native memory and feed the native
 // transform producer. Its temporary compatibility path preserves the inherited
 // PPC context if an unsupported engine callback still needs execution.
@@ -557,17 +579,20 @@ REX_HOOK_RAW(bdBuildViewMatrix) {
     }
   }
 
-  // The head pose composes on top of whatever the camera turned out to be,
-  // interpolated or not - it is an offset from the shot the game framed, not a
-  // replacement for it. Which is also why this runs even when interpolation is
-  // off: VR does not want to depend on the frame rate setting.
-  if (bd::xr::ViewOverrideActive() && ctx.r4.u32 != 0) {
-    if (!replaced)
-      ReadFloats(bd::mem::at<be_f32>(ctx.r4.u32), view, 16);
-    float composed[16];
-    if (bd::xr::ComposeView(view, composed)) {
-      for (int i = 0; i < 16; ++i)
-        view[i] = composed[i];
+  // Only the submitted camera pair receives head tracking. Light matrices,
+  // reflections and identity resets for 2D/post work must retain their own
+  // view; composing all r4 writes polluted both the anchor and post focus.
+  // The same native result is reused by camera consumers in this submission.
+  if (g_viewComposition) {
+    const auto *composed = g_viewComposition->Resolve(
+        ctx.r4.u32, ctx.r5.u32, bd::xr::ViewOverrideActive(),
+        [&](float *out) {
+          if (!replaced)
+            ReadFloats(bd::mem::at<be_f32>(ctx.r4.u32), view, 16);
+          return bd::xr::ComposeView(view, out);
+        });
+    if (composed) {
+      std::copy(composed->begin(), composed->end(), view);
       replaced = true;
     }
   }
