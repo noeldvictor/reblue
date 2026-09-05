@@ -116,6 +116,25 @@ void TestDepth() {
   world[14] = -20;
   work[1].depth = *EvaluateDeferredDepth(bounds, world, identity);
   assert(OrderDeferredWork(work) && work[0].payload == 0);
+
+  std::array<DeferredEntryRecipe, 2> entries;
+  entries[0].depth = bounds;
+  bounds.kind = DeferredDepthRecipe::Kind::Fixed;
+  bounds.fixed_depth = -100;
+  entries[1].depth = bounds;
+  std::vector<float> depths{99};
+  assert(EvaluateDeferredEntryDepths(entries, world, identity, depths));
+  assert((depths == std::vector<float>{30, -100}));
+  const auto saved = depths;
+  entries[1].depth.reset(); // no inferred policy from old image bytes
+  assert(!EvaluateDeferredEntryDepths(entries, world, identity, depths));
+  assert(depths == saved); // no partial update from entry 0
+  bounds.fixed_depth = std::numeric_limits<float>::quiet_NaN();
+  entries[1].depth = bounds;
+  assert(!EvaluateDeferredEntryDepths(entries, world, identity, depths));
+  assert(depths == saved);
+  assert(EvaluateDeferredEntryDepths({}, world, identity, depths));
+  assert(depths.empty());
 }
 
 int main() {
@@ -195,6 +214,18 @@ int main() {
     if (!(i >= 16 && i < 80) && !(i >= 264 && i < 272))
       assert(relocated[i] == image[i]);
   const auto before = relocated;
+  assert(RelocateDeferredEntry(image, matrix, 0x50000, 0x12345678, relocated,
+                               12.5f));
+  assert(relocated[276] == 0x41 && relocated[277] == 0x48 &&
+         relocated[278] == 0 && relocated[279] == 0);
+  for (size_t i = 0; i < before.size(); ++i)
+    if (i < 276 || i >= 280)
+      assert(relocated[i] == before[i]);
+  const auto fresh = relocated;
+  assert(!RelocateDeferredEntry(image, matrix, 0x50000, 0, relocated,
+                                std::numeric_limits<float>::quiet_NaN()));
+  assert(relocated == fresh);
+  relocated = before;
   for (uint32_t bad : {0u, 1u, 0xffffff00u}) {
     assert(!RelocateDeferredEntry(image, matrix, bad, 0, relocated));
     assert(relocated == before);

@@ -8,9 +8,13 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/frame_stats.h"
+#include "gpu/scene/deferred_depth_import.h"
 #include "gpu/scene/deferred_entry_bridge.h"
 #include "gpu/scene/deferred_work.h"
 #include <cstring>
+#include <rex/cvar.h>
+
+REXCVAR_DECLARE(bool, bd_native_deferred_depth);
 
 namespace bd::gpu::scene {
 namespace {
@@ -95,6 +99,8 @@ bool Prepare(std::span<const uint32_t> sizes, BridgePlan &out) {
   return true;
 }
 void Publish(const BridgePlan &plan) {
+  if (plan.batch.items_used == plan.batch.offsets.size())
+    ResetDeferredDepthImports(); // first allocation after the list was drained
   for (size_t i = 0; i < plan.batch.offsets.size(); ++i)
     StoreWord(plan.slots + i * 4, plan.pool + plan.batch.offsets[i]);
   StoreWord(plan.state, plan.pool + plan.batch.offsets.back());
@@ -105,12 +111,13 @@ void Publish(const BridgePlan &plan) {
   ++stats.batches;
   Report();
 }
-bool ImageSizes(std::span<const std::vector<uint8_t>> images,
+bool ImageSizes(std::span<const DeferredEntryRecipe> entries,
                 std::vector<uint32_t> &sizes) {
   sizes.clear();
-  if (images.empty() || images.size() > 64)
+  if (entries.empty() || entries.size() > 64)
     return false;
-  for (const auto &image : images) {
+  for (const auto &entry : entries) {
+    const auto &image = entry.compatibility_image;
     if (!ValidDeferredEntryImage(image))
       return false;
     sizes.push_back(uint32_t(image.size()));
@@ -129,34 +136,47 @@ uint32_t AllocateDeferredEntry(uint32_t bytes) {
   return plan.pool + plan.batch.offsets.front();
 }
 
-bool CanAppendDeferredEntries(std::span<const std::vector<uint8_t>> images) {
+bool CanAppendDeferredEntries(std::span<const DeferredEntryRecipe> entries,
+                              std::span<const uint8_t, 64> matrix) {
   thread_local std::vector<uint32_t> sizes;
+  thread_local std::vector<float> depths;
   BridgePlan plan;
-  return ImageSizes(images, sizes) && Prepare(sizes, plan);
+  return ImageSizes(entries, sizes) && Prepare(sizes, plan) &&
+         (!REXCVAR_GET(bd_native_deferred_depth) ||
+          ComposeDeferredDepths(entries, matrix, depths));
 }
 
-bool AppendDeferredEntries(std::span<const std::vector<uint8_t>> images,
+bool AppendDeferredEntries(std::span<const DeferredEntryRecipe> entries,
                            std::span<const uint8_t, 64> matrix,
                            uint32_t palette) {
   thread_local std::vector<uint32_t> sizes;
+  thread_local std::vector<float> depths;
   BridgePlan plan;
-  if (!ImageSizes(images, sizes) || !Prepare(sizes, plan)) {
+  const bool native_depth = REXCVAR_GET(bd_native_deferred_depth);
+  if (!ImageSizes(entries, sizes) || !Prepare(sizes, plan)) {
     Report(true);
     return false;
   }
+  if (native_depth && !ComposeDeferredDepths(entries, matrix, depths))
+    return false;
   // The draw thread owns this list. Populate the entire reserved batch before
   // exposing its slots/count; no partial list remains on validation failure.
-  for (size_t i = 0; i < images.size(); ++i) {
-    auto *dst = plan.data + (plan.batch.offsets[i] - plan.batch.offsets.front());
+  for (size_t i = 0; i < entries.size(); ++i) {
+    const auto &image = entries[i].compatibility_image;
+    auto *dst =
+        plan.data + (plan.batch.offsets[i] - plan.batch.offsets.front());
     // bdSceneNodeDrawSingle stores entry+388 into the callback pointer (+264).
     // This is a self-relative reference, not the original pooled address.
     // All validation below was already performed by ImageSizes/Prepare.
-    if (!RelocateDeferredEntry(images[i], matrix,
-                               plan.pool + plan.batch.offsets[i], palette,
-                               std::span(dst, images[i].size())))
+    if (!RelocateDeferredEntry(image, matrix, plan.pool + plan.batch.offsets[i],
+                               palette, std::span(dst, image.size()),
+                               native_depth ? std::optional(depths[i])
+                                            : std::nullopt))
       return false; // never publish a failed batch
   }
   Publish(plan);
+  if (native_depth)
+    RecordDeferredDepthReplay(entries, depths);
   return true;
 }
 

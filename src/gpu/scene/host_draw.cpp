@@ -68,6 +68,8 @@
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/scene/guest_scene.h"
 #include "gpu/scene/deferred_list.h"
+#include "gpu/scene/deferred_depth_import.h"
+#include "gpu/scene/deferred_entry_bridge.h"
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
@@ -322,7 +324,8 @@ struct Store {
   // Render-list entries built by the host instead of the interpreter.
   struct ListTemplate {
     SceneImportEpoch import_epoch;
-    std::vector<std::vector<u8>> entries; // the guest's bytes, per entry
+    std::vector<DeferredEntryRecipe> entries;
+    bool matrix_matches = false;
     u32 captured_frame = 0;
     u32 replays = 0;
   };
@@ -1749,15 +1752,21 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
     const u8 *bytes = entry ? bd::mem::try_at<u8>(entry) : nullptr;
     if (!bytes || size < 816)
       return;
-    lt.entries.emplace_back(bytes, bytes + size);
+    lt.entries.push_back({std::vector<u8>(bytes, bytes + size),
+                          CapturedDeferredDepth(entry)});
   }
   auto &st = store();
   std::lock_guard lock(st.mutex);
   // The matrix at +16 is the node's r5 matrix as handed to DrawSingle; the
   // replay copies it from tag.matrix_va, so check that here.
   {
-    const u8 *m = bd::mem::try_at<u8>(tag.matrix_va);
-    if (m && std::memcmp(m, lt.entries[0].data() + kEntryMatrix, 64) == 0)
+    std::array<u8, 64> matrix;
+    lt.matrix_matches = CopyDeferredMatrix(tag.matrix_va, matrix) &&
+        std::all_of(lt.entries.begin(), lt.entries.end(), [&](const auto &entry) {
+          return std::memcmp(matrix.data(), entry.compatibility_image.data() +
+                                                kEntryMatrix, matrix.size()) == 0;
+        });
+    if (lt.matrix_matches)
       ++st.matrix_agree;
     else
       ++st.matrix_disagree;
@@ -1806,11 +1815,13 @@ u32 HostListBuildStatus(const NodeTag &tag) {
       static_cast<u32>(std::max(1, REXCVAR_GET(bd_host_draw_refresh)));
   if (FrameStatFrameCount() - it->second.captured_frame >= refresh)
     return 2;
-  if (st.matrix_disagree > st.matrix_agree)
+  if (!it->second.matrix_matches)
     return 2;
   // A mixed node must not issue its direct draws if its deferred batch cannot
   // be published in full. There are no allocations between this gate and replay.
-  if (!CanAppendDeferredEntries(it->second.entries))
+  std::array<u8, 64> matrix;
+  if (!CopyDeferredMatrix(tag.matrix_va, matrix) ||
+      !CanAppendDeferredEntries(it->second.entries, matrix))
     return 2;
   return 1;
 }
@@ -1819,7 +1830,7 @@ bool HostListBuildReplay(const NodeTag &tag) {
   if (!tag.valid || !REXCVAR_GET(bd_host_list_build) || tag.from_list)
     return false;
   auto &st = store();
-  std::vector<std::vector<u8>> const *entries = nullptr;
+  std::vector<DeferredEntryRecipe> const *entries = nullptr;
   {
     std::lock_guard lock(st.mutex);
     auto it = st.lists.find(KeyOf(tag));
@@ -1832,16 +1843,15 @@ bool HostListBuildReplay(const NodeTag &tag) {
     if (FrameStatFrameCount() - it->second.captured_frame >= refresh)
       return false; // the interpreter runs once and re-records
     // Only a run that agreed on the matrix source is replayed.
-    if (st.matrix_disagree > st.matrix_agree)
+    if (!it->second.matrix_matches)
       return false;
     entries = &it->second.entries;
     ++it->second.replays;
   }
-  const u8 *matrix = bd::mem::try_at<u8>(tag.matrix_va);
-  if (!matrix)
+  std::array<u8, 64> matrix;
+  if (!CopyDeferredMatrix(tag.matrix_va, matrix))
     return false;
-  if (!AppendDeferredEntries(*entries, std::span<const u8, 64>(matrix, 64),
-                             tag.palette_va))
+  if (!AppendDeferredEntries(*entries, matrix, tag.palette_va))
     return false;
   {
     std::lock_guard lock(st.mutex);

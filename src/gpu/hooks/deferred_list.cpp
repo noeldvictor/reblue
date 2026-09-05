@@ -5,12 +5,16 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/deferred_list.h"
+#include "gpu/scene/deferred_depth_import.h"
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
 
 REXCVAR_DECLARE(bool, bd_native_deferred_order);
+REXCVAR_DECLARE(bool, bd_native_deferred_depth);
+REXCVAR_DECLARE(bool, bd_native_deferred_depth_verify);
 extern "C" void __imp__sub_8227F290(PPCContext &__restrict ctx, uint8_t *base);
+extern "C" void __imp__sub_8227EFC8(PPCContext &__restrict ctx, uint8_t *base);
 
 REX_HOOK_RAW(sub_8227DB50) {
   ctx.r3.u64 = bd::gpu::scene::AllocateDeferredEntry(ctx.r3.u32);
@@ -24,4 +28,28 @@ REX_HOOK_RAW(sub_8227F290) {
   // Invalid keys retain submission order and emit a refusal; do not execute
   // the old recursive sorter on malformed data after a failed host import.
   bd::gpu::scene::OrderDeferredEntries(ctx.r3.u32, ctx.r4.s32, ctx.r5.s32);
+}
+
+REX_HOOK_RAW(sub_8227EFC8) {
+  using namespace bd::gpu::scene;
+  const uint32_t entry = ctx.r3.u32;
+  const auto depth =
+      ImportDeferredDepth(entry, ctx.r4.u32, ctx.r5.u32, ctx.r6.u32 != 0);
+  if (!REXCVAR_GET(bd_native_deferred_depth) || !depth) {
+    // Explicit diagnostic/unknown-input boundary. Missing recipes cannot
+    // replay.
+    __imp__sub_8227EFC8(ctx, base);
+    RecordDeferredDepthFallback();
+    return;
+  }
+  const bool verify = REXCVAR_GET(bd_native_deferred_depth_verify);
+  if (verify) {
+    __imp__sub_8227EFC8(ctx, base);
+    VerifyDeferredDepth(entry, *depth);
+  }
+  if (!PublishDeferredDepth(entry, *depth)) {
+    if (!verify)
+      __imp__sub_8227EFC8(ctx, base);
+    RecordDeferredDepthFallback();
+  }
 }
