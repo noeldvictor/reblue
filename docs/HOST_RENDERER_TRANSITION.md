@@ -30,6 +30,22 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native directional-bloom checkpoint (2026-09-05): mode 1 now imports authored
+sigma/gain/count into native parameters and produces independent horizontal
+and vertical masks in at most two private quarter-pair atlases. One layered
+render pass per iteration and a 32-byte kernel replace guest mask caches,
+blur submission and emulated resolves. Bright preparation precedes heat;
+composition keeps both masks unwarped. All 29 CTests and 33 source guards
+pass. Strong flat/VR previews have 0/31 large changes and no cyan, but washed
+out near geometry makes preview VR depth inconclusive. Normal flat/VR have
+0/119, no cyan and crossed first/last depth; both eyes inspected. Authored
+mode-1 events/kernel comparisons, combined heat/bloom, other bloom-kernel
+approximations, three input refusals, image/property/UI adapters and complete
+frame/game gates remain. No Quest. Three superseded normal raw sets removed
+to fund bounded verification, reclaiming 3.89 GiB while retaining small and
+protected evidence. Full evidence, retention and net storage accounting:
+`research/20260905_1726_native-directional-bloom.md`.
+
 Native heat-shimmer checkpoint (2026-09-05): flag-16 filtering now selects
 depth-aware scene/DoF coordinates inside the native composite, with four
 noise samples and unwarped bloom. Existing cooked images, shared-eye host

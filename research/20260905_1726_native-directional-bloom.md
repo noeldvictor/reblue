@@ -1,6 +1,7 @@
 # Native directional bloom
 
-2026-09-05, Windows Vulkan desktop, EDT. Base `434f13f`. In progress.
+2026-09-05, Windows Vulkan desktop, EDT. Base `434f13f`; implementation
+`e636761`. Effect checkpoint, not full renderer or authored-event qualification.
 
 ## Source and storage preflight
 
@@ -157,3 +158,91 @@ this implementation checkpoint. The original authored mode-1 kernel
 publication/events, combined active heat+bloom, image/property/UI adapters,
 scene/animation/material/frame ownership and full representative desktop
 game gates remain. No Quest qualification; the full objective stays active.
+
+## Normal regression verification
+
+Implementation checkpoint `e636761` pushed during verification. No renderer
+source changed or binary rebuilt after the 17:40 build. Normal runs use no
+synthetic overrides, and neither activates authored directional bloom.
+
+Normal VR log 794, PID 25856, 17:52:03.255-17:53:16.518. All 16 settings
+audited (corrected preview VR settings minus preview, count 120); full
+install mounted, same process-local simulator. Final-eye captures
+`frame_1788645185_0.raw` through `frame_1788645194_119.raw`, 1440x3168.
+Streaming analysis: 0/119 changes over 6%, maximum .40115%, zero cyan.
+Both first/last stereo checks pass: bands 44/52/62/72/82/90/95% have
+-1/-2/-3/-5/-6/-8/-9 pixels, near-far -8, spread 8, correctly crossed.
+All four full-size eye images inspected: normal orange sky and ground,
+stairs/village/rocks, changing windmill geometry and shadows. Existing
+distant blur remains; Shu's shadow is not qualified in this framing.
+Last sample: 8,098 native scopes, three original/input refusals, directional
+and heat inactive. This does not qualify a full game session.
+
+Normal flat log 795, PID 19296, 17:54:12.163-17:55:19.301. Original five
+settings audited, full install mounted. Captures
+`frame_1788645314_0.raw` through `frame_1788645317_119.raw`, 1920x1080.
+0/119 changes over 6%, maximum 3.06525%, no cyan hits, max cyan .02083%.
+Full first/last images inspected: normal colours and recognizable Shu,
+cast silhouette, vegetation/ground, moving windmill and shadows; distant
+DoF remains. Last sample: 2,998 native scopes, three original/input
+refusals, 860 grade/scanline scopes, 241 visible flare frames / 3,615 sprites,
+zero directional or heat activation. Normal captures retain the existing
+appearance; previews above are intentionally stronger and separate.
+
+## Zero-iteration branch probes and final handoff
+
+Flat log 796, PID 26864, 17:55:41.267-17:56:45.122. All six settings
+audited; original flat profile except one frame and preview 2. The one
+1920x1080 frame `frame_1788645403_0.raw` (frame 2837) was inspected at full
+size: stronger unblurred highlights over coherent Shu/scenery/shadows,
+without the broader directional halos. Cyan .00121%, below the hit threshold.
+Last sample: 2,698 directional scopes, zero iterations, three input refusals.
+
+VR log 797, PID 25036, 17:57:31.070-17:58:35.091. All 17 settings audited;
+same corrected VR configuration with preview 2 and one frame. Both eyes of
+`frame_1788645513_0.raw` (1440x3168) inspected: coherent unblurred bright
+image, strongly clipped foreground/sky. Cyan .06403%, below threshold.
+The stereo check is again INCONCLUSIVE (-1/-2/-2, spread 1); no normal-depth
+or sequence-stability claim for either single-frame probe. Last sample:
+7,798 directional scopes, zero iterations, three original/input refusals.
+
+All seven logs 791-797 mounted 1673 archives / 119346 names and contain no
+checked error/critical/VK_ERROR/device-loss/exception/assertion/fatal markers.
+The rejected-config attempt 792 remains explicitly unqualified and created
+zero raw files. There was no raw retry or extra capture beyond the 306-frame
+cap. Every renderer/analysis process is terminal; the original five-setting
+profile was restored and read back. No Quest/Thor run or headset timing claim.
+
+Executable remains 47,506,432 bytes, 17:40:41 EDT, Clang 22.1.8, embedded
+`3979ddc78` with local modifications; SHA-256
+`4c2b4328fccef0cc279a7daf9e4abcdbc27fdf4d992c18ff7b68ff8d914f8b0b`.
+No rebuild or recapture for documentation stamps. Guest-source established
+the independent mask schedule and parameters; devloop reused the configured
+host/test trees; vrsim kept final-eye verification entirely on desktop.
+
+New retained evidence: 306 unique raw frames, 4,060,944,360 bytes;
+19,954,835 bytes of representative PNGs; 2,491,527 bytes of app logs;
+7,906,064 bytes across 14 perf files. Streaming sequence/cyan analysis kept
+only adjacent frames in memory and exported endpoints, not every frame.
+These outputs fit the raw allowance and 100 MiB logs/exports budget.
+No asset copies, dependency downloads or duplicate build trees were made.
+
+Ending free space: 53,171,654,656 bytes (49.52 GiB). Net volume usage
+decreased 64,761,856 bytes (61.76 MiB) from the original source preflight.
+The 3.89 GiB deletion mostly funded new verification; it is not the net
+saving. Final archive union: 28,387 unique raw files, 264,665,190,260 logical
+and 234,904,970,832 allocated bytes, 119,440,440 fewer raw bytes than before.
+The archive still substantially exceeds 10 GiB; the no-growth gate and
+frozen historical review obligation remain. Current normal bloom flat/VR
+supersedes the heat normal pair only as the short baseline. The heat pair
+is eligible for review at the next replacement checkpoint, not an automatic
+deletion. Retain synthetic bloom/shared probes until authored events or
+replacement probes supersede them; preserve all unresolved/control evidence.
+
+The authored mode-1 activation/kernel-publication gate, combined active
+heat/bloom and diverse effect events remain unqualified. Other modes retain
+the existing native folded-kernel approximation. Next source work should
+trace the three exact input refusals and replace remaining image/property/
+post-UI adapters; native animation/scene/material/frame ownership, removal
+of all console resource paradigms, and fields/battles/cutscenes/menus/
+transitions/reloads in both eyes remain necessary before Quest optimization.
