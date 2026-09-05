@@ -208,9 +208,13 @@ available capacity is not a reason to keep unnecessary outputs.
   pause new captures and ask the owner before increasing the archive's unique
   byte count. A new per-run exception or a new turn does not bypass this gate;
   continue source work and low-storage checks while capture growth is paused.
-  Do not leave repeated long captures enabled during unrelated diagnostics;
-  set frame counts and output locations before launch.
-  Bound diagnostic dumps and logs too, especially verbose shader/frame dumps.
+  For diagnostics that do not require images, explicitly disable automatic
+  captures and verify the effective configuration before launch; do not trust
+  a profile left by an earlier run. If capture cannot be disabled, its delay
+  must exceed an enforced run timeout. For image verification, set bounded
+  frame counts and output locations before launch. Bound diagnostic dumps and
+  logs too, especially verbose shader/frame dumps; a no-capture run is not an
+  unlimited logging allowance.
   At run completion or interruption, stop only agent-started jobs that are no
   longer needed and restore the owner's profile after temporary overrides.
 - Keep the current baseline, current flat/VR verification and evidence needed
