@@ -64,7 +64,8 @@ as `143a9cb`. All 11 standalone tests pass (0.49 seconds), including conflicting
 engine/native programs and policy, target/topology composition, null bindings,
 and return to engine state. The desktop `reblue` target linked successfully;
 codegen reported zero writes/deletes and the guest module up to date. No shaders,
-generated guest code, game assets, dependencies or build trees were changed.
+generated guest code, game assets or dependencies were changed; the existing
+build tree was reused.
 
 This does not make packet production fully native: retained draw recipes, engine
 scene/pass sources, shader-register packing, dynamic resource inputs and many

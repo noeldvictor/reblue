@@ -72,7 +72,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | All 11 upload/state/packet tests pass; latest 120-frame flat and final-eye multiview sequences have 0/119 jumps over 6% and no cyan patches after fixing packet state ownership | Stereo depth remains inconclusive; actual eyes are 936x1030, not the target; later-scene and full-game correctness remain unqualified |
+| Desktop verification | All 11 upload/state/packet tests pass; latest 120-frame short flat and final-eye multiview sequences have 0/119 jumps over 6% and no cyan patches after fixing packet state ownership | The longer cutscene/transition run still has deformed geometry and damaged text; stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -130,7 +130,9 @@ engine shader/declaration and render-state history from overwriting host packet
 intent during dispatch. Replay stays enabled. The latest short flat and final-eye
 multiview sequences have no large jumps or cyan patches, and inspected eyes no
 longer show broad horizontal banding. Blur/letterboxing, inconclusive depth,
-below-target eye sizing and the prior later-scene failure still require work.
+below-target eye sizing and full-scene coverage still require work. The
+[longer rerun](research/20260905_0010_native-draw-late-scene.md) confirms the
+later cutscene still has deformed geometry, disappearing scenery and damaged text.
 This fixes packet consumption, not the retained recipe or scene/pass producers.
 
 ## Project documentation

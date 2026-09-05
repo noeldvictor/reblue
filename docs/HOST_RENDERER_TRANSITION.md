@@ -42,7 +42,10 @@ have 0/119 jumps over 6% and no cyan patches. Inspected eyes no longer have broa
 horizontal banding. This supersedes the short-field flicker findings in earlier
 checkpoints below; it does not qualify other scenes. Stereo depth remains
 INCONCLUSIVE, blur/letterboxing remains, and actual eyes are 936x1030 instead of
-the 1440x1584 target. The prior later-scene failure has not yet been requalified.
+the 1440x1584 target. A longer run using the prior late-scene capture settings
+still fails: deformed character geometry, disappearing scenery and damaged text
+remain. See `research/20260905_0010_native-draw-late-scene.md`; zero allocation
+failures and zero cyan patches do not qualify those pixels.
 See `research/20260904_2348_native-draw-intent.md` for the replay-off control,
 consumer overwrite trace, normal-path captures and remaining producer boundaries.
 Earlier raster/blend/alpha draw-application counters included replay flushes;
