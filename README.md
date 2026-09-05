@@ -75,7 +75,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests and all 13 upload/state/packet/verification tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (107/119 large frame changes in the latest normal run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
+| Desktop verification | Material/skin tests, all 13 upload/state/packet/verification tests and two reflection lock-order guards pass; corrected loading transition advances; latest multiview has 0/119 large jumps | Later scenery/text still fail (108/119 large frame changes in the latest normal run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -167,8 +167,10 @@ an explicit compatibility boundary because the existing texture adapter treats
 them as no-ops. This is not full reflection-pass or frame ownership.
 Its first normal late run exposed a registry/upload deadlock despite matching
 source counters. The [lock-order correction](research/20260905_0235_reflection-validation-lock-order.md)
-moves binding validation outside the draw lock; normal-path visual checks remain
-to be completed.
+moves binding validation outside the draw lock. The corrected run advances
+through loading with 1214021 matching source checks, but inspected later frames
+still lose rock-wall surfaces and damage text. Normal multiview remains stable
+over its short sequence but blurred/letterboxed and inconclusive for depth.
 
 ## Project documentation
 

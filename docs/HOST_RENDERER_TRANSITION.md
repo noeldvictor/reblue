@@ -46,8 +46,13 @@ reflection selection; table-selected/enabled/dynamic cases remain unqualified.
 The subsequent normal late run deadlocked between capture's texture lookup and
 an IO upload, before producing captures. Source validation now snapshots at
 draw time and resolves outside the video lock before template publication;
-14 CTests and two source-boundary guards pass. A corrected normal rerun remains
-to be qualified. See `research/20260905_0235_reflection-validation-lock-order.md`.
+14 CTests and two source-boundary guards pass. The corrected normal run advances
+through loading, with 1214021 matching source checks (including 6701 enabled
+pass-default draws), but later rock-wall popping and damaged text remain:
+108/119 large frame changes. Table/dynamic bindings remain unqualified. Normal
+final-eye multiview has 0/119 large jumps but blurred/letterboxed, below-target
+936x1030 eyes and inconclusive depth. See
+`research/20260905_0235_reflection-validation-lock-order.md`.
 
 Lighting checkpoint (2026-09-05): the complete lighting setup producer and its
 reset/dimension helper execution now run on the host. Address-free records hold
