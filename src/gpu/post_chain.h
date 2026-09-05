@@ -1,6 +1,6 @@
 /**
  * @file    gpu/post_chain.h
- * @brief   Native DoF/bloom passes and explicit combined output, with counted
+ * @brief   Native DoF/bloom/flare passes and explicit combined output, with counted
  *          remaining effect, scheduling and image adapters.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
@@ -10,6 +10,7 @@
  */
 #pragma once
 #include <rex/types.h>
+#include <array>
 
 namespace bd::gpu {
 
@@ -17,12 +18,16 @@ struct VideoState;
 struct GuestTexture;
 struct DofParameters;
 struct BloomParameters;
+struct LensFlareParameters;
 
-// Whole native atlas + folded bloom/composite into an explicit attachment.
+// Whole native atlas + folded bloom/composite + instanced optical sprites.
+// The caller supplies an explicit attachment and native optical image mirrors.
 // No draw interception, shader-register import or tile allocation. False is
 // a preflight refusal; failures after GPU work starts are fatal, not replayed.
 bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *output,
-                    const DofParameters &dof, const BloomParameters &bloom);
+                    const DofParameters &dof, const BloomParameters &bloom,
+                    const LensFlareParameters &flare,
+                    const std::array<GuestTexture *, 4> &flare_images);
 
 // Authored-property adapters shared by direct scheduling and the transitional
 // DoF entry pair. No original rendering code executes in these functions.

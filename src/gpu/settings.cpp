@@ -788,11 +788,14 @@ REXCVAR_DEFINE_BOOL(bd_native_dof_verify, false, kCvarGroup,
                     "Diagnostic: execute original DoF preparation and compare "
                     "native parameters; retains original submission for this run.");
 REXCVAR_DEFINE_BOOL(bd_native_post, true, kCvarGroup,
-                    "Native DoF/bloom scheduling and explicit post output; "
+                    "Native DoF/bloom/lens-flare scheduling and explicit post output; "
                     "other effect scopes retain counted compatibility execution.");
 REXCVAR_DEFINE_BOOL(bd_native_post_verify, false, kCvarGroup,
                     "Diagnostic: execute original post scheduling and compare "
-                    "authored native bloom inputs at the combined draw boundary.");
+                    "authored native bloom and lens-flare sprite inputs.");
+REXCVAR_DEFINE_BOOL(bd_native_lensflare_preview, false, kCvarGroup,
+                    "Diagnostic only: synthetic visible lens flare for native "
+                    "GPU coverage; not authored occlusion qualification.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

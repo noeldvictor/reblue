@@ -11,6 +11,32 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.post = (root / "src/gpu/post_chain.cpp").read_text(encoding="utf-8")
         cls.parameters = (root / "src/gpu/post_parameters.h").read_text(encoding="utf-8")
         cls.scheduler = (root / "src/gpu/native_post_bridge.cpp").read_text(encoding="utf-8")
+        cls.flare = (root / "src/gpu/lens_flare.h").read_text(encoding="utf-8")
+        cls.flare_shader = (root / "src/gpu/shaders/hlsl/lens_flare_ps.hlsl").read_text(encoding="utf-8")
+
+    def test_flare_shader_folds_the_quarter_image_with_tested_mapping(self):
+        self.assertIn('#include "src/gpu/lens_flare_uv.h"', self.flare_shader)
+        self.assertIn("float2(LensFlareU(uv.x), LensFlareV(uv.y))", self.flare_shader)
+        self.assertIn("float3(optical_uv,0)", self.flare_shader)
+        self.assertIn("NonUniformResourceIndex(image)", self.flare_shader)
+
+    def test_native_flare_is_one_instanced_draw_into_explicit_output(self):
+        body = self.post.split("bool RenderLensFlare(", 1)[1].split("} // namespace", 1)[0]
+        self.assertIn("drawInstanced(6, parameters.count, 0, 0)", body)
+        self.assertIn("GetFramebuffer(s, output, nullptr)", body)
+        for name in ("s.render_target", "GuestPixelConstant", "D3DDevice_", "s.textures[", "device_guest"):
+            self.assertNotIn(name, body)
+        self.assertNotIn("filter(8660", self.scheduler)
+        self.assertIn("std::none_of(tail.adjustments.begin()", self.scheduler)
+
+    def test_flare_recipe_has_no_engine_or_register_dependency(self):
+        for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "psFloatConstants"):
+            self.assertNotIn(name, self.flare)
+        body = self.scheduler.split("bool ReadLensFlare(", 1)[1].split("bool ReadPlan(", 1)[0]
+        self.assertIn("GetNativeRenderTransforms()", body)
+        self.assertIn("MakeLensFlareParameters(", body)
+        for name in ("sub_82183DE8(", "sub_82218140(", "__imp__", "psFloatConstants"):
+            self.assertNotIn(name, body)
 
     def test_direct_frame_has_no_old_draw_trigger_or_target_inference(self):
         body = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]

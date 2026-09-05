@@ -30,6 +30,29 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native lens-flare checkpoint (2026-09-05): the complete supported flare
+producer and sprite submission now execute as native recipes and a single
+instanced draw into the owned post output. No lens wrapper, per-sprite
+constant flush, texture setter, UP vertices, target allocation or emulated
+resolve executes on that path. Shared C++/HLSL quadrant folding preserves the
+authored optical assets without copying them. The initial visible preview
+exposed a wrong globally-linear UV assumption; corrected first/last images
+in both eyes show smooth glows/rings instead of quarter-image rectangles.
+All 26 CTests and 22 source guards pass; a diagnostic recorded 3615 matching
+original sprite parameter checks and 5142 matching bloom checks. The supported
+normal post scope now has zero old tail-effect/state-308 calls, superseding
+the one-effect/three-state-call boundary in the prior checkpoint below.
+Final normal flat and 1440x1584-per-eye VR 120-frame sequences have 0/119
+large jumps and no cyan patches; first/last VR depth is correctly crossed.
+Both eyes were inspected; flat Shu/windmill shadows remain. Original profile
+restored, all agent-started app runs stopped, and no Quest run occurred.
+Packed effects, other trailing adjustments, dual-mask mode, non-flare input
+refusals, authored light/visibility producers, image/getter adapters and per-eye
+optics remain. Full-frame, late-scene and full-game qualification are not done;
+the synthetic preview does not qualify authored visibility or VR comfort.
+See `research/20260905_1422_native-lens-flare.md` for the exact conversion,
+failed preview, correction and bounded normal flat/VR checks.
+
 Native post scheduling checkpoint (2026-09-05): supported DoF/bloom dispatch
 now runs directly from authored native parameters into an explicit persistent
 post output. It bypasses the bloom texture caches, blur loops, ms_tex input
@@ -37,8 +60,9 @@ array, shader-hash composite trigger and that scope's EDRAM allocation/resolve.
 All 26 CTests and nineteen source guards pass; 3642 flat diagnostic parameter
 checks match. Normal flat and 1440x1584 final-eye 120-frame sequences have
 0/119 large changes and no cyan patches, with correctly crossed first/last
-stereo depth. Flat Shu and windmill shadows remain. One trailing effect and
-three state-308 calls per tested field frame still execute; startup packed
+stereo depth. Flat Shu and windmill shadows remain. At that checkpoint one
+trailing effect and three state-308 calls per tested field frame still executed
+(replaced by the lens-flare checkpoint above); startup packed
 effect combinations and two image/preflight refusals per normal run retain
 the counted original scope. Other filter combinations, mode-1 dual masks,
 image/getter/UI adapters and complete frame ownership remain. VR blur,

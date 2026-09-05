@@ -17,6 +17,8 @@ set(REBLUE_GENERATED_SOURCES "${REBLUE_GEN_DIR}/shader_cache.cpp")
 foreach(shader IN ITEMS copy_vs bd_2d_blit_vs imgui_vs)
     reblue_host_shader(${shader} vs_6_0)
 endforeach()
+reblue_host_shader(lens_flare_vs vs_6_0)
+reblue_host_shader(lens_flare_ps ps_6_0)
 foreach(shader IN ITEMS
         cel_ps pfx_occlusion_count_ps
         bd_2d_blit_ps imgui_ps)

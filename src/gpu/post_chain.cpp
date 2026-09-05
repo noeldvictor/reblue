@@ -19,7 +19,8 @@
  * host-owned blur atlas. No DoF level allocation, quad or intermediate resolve
  * executes. Native post scheduling also bypasses the bloom allocation/blur
  * loops and ms_tex submission, with typed weights and an explicit completed
- * output. Authored properties, image/getter adapters, other effect bodies and
+ * output. Lens-flare recipes are native, with fifteen optical sprites in one
+ * instanced screen-blend draw. Authored properties, image/getter adapters, other effect bodies and
  * unsupported filter combinations remain. Diagnostic/compatibility paths
  * retain the old draw intercept and per-level textures explicitly.
  *
@@ -35,6 +36,7 @@
  */
 #include "gpu/post_chain.h"
 #include "gpu/post_parameters.h"
+#include "gpu/lens_flare.h"
 
 #include <cstring>
 #include <memory>
@@ -55,6 +57,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/host_targets.h"
 #include "gpu/resources.h"
+#include "gpu/scene/native_texture_gpu.h"
 
 #if defined(REBLUE_D3D12)
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.dxil.h"
@@ -63,6 +66,8 @@
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
@@ -70,6 +75,8 @@
 #include "src/gpu/shaders/hlsl/post_down_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_dual_down_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_pyramid_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -98,6 +105,7 @@ enum class Shader : u32 {
   DualDown = 3,
   Composite = 4,
   Pyramid = 5,
+  LensFlare = 6,
   Count
 };
 
@@ -162,6 +170,7 @@ struct Chain {
   // The bloom mask texture the host wrote last, for HostPostWillOverwrite.
   GuestTexture *bloom_mask = nullptr;
   std::unique_ptr<plume::RenderShader> shaders[u32(Shader::Count)];
+  std::unique_ptr<plume::RenderShader> flare_vs;
   std::unordered_map<u64, std::unique_ptr<plume::RenderPipeline>> pipelines;
   std::vector<std::unique_ptr<Scratch>> scratch;
   DofInputs dof;
@@ -194,6 +203,14 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(post_composite_ps), "main", kHostShaderFormat);
   c.shaders[u32(Shader::Pyramid)] = s.device->createShader(
       REBLUE_SHADER_BLOB(post_pyramid_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::LensFlare)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(lens_flare_ps), "main", kHostShaderFormat);
+  c.flare_vs = s.device->createShader(
+      REBLUE_SHADER_BLOB(lens_flare_vs), "main", kHostShaderFormat);
+  if (!c.flare_vs) {
+    c.failed = true;
+    return false;
+  }
   for (auto &sh : c.shaders) {
     if (!sh) {
       BD_ERROR("[post] host post shaders failed to create; chain disabled");
@@ -214,7 +231,7 @@ plume::RenderPipeline *Pipeline(VideoState &s, Chain &c, Shader which,
     return nullptr;
   plume::RenderGraphicsPipelineDesc desc;
   desc.pipelineLayout = s.pipeline_layout.get();
-  desc.vertexShader = s.copy_vs.get();
+  desc.vertexShader = which == Shader::LensFlare ? c.flare_vs.get() : s.copy_vs.get();
   desc.pixelShader = c.shaders[u32(which)].get();
   desc.depthFunction = plume::RenderComparisonFunction::ALWAYS;
   desc.depthEnabled = false;
@@ -224,6 +241,14 @@ plume::RenderPipeline *Pipeline(VideoState &s, Chain &c, Shader which,
   desc.renderTargetCount = 1;
   desc.renderTargetFormat[0] = format;
   desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
+  if (which == Shader::LensFlare) {
+    auto &blend = desc.renderTargetBlend[0];
+    blend.blendEnabled = true;
+    blend.srcBlend = plume::RenderBlend::INV_DEST_COLOR;
+    blend.dstBlend = plume::RenderBlend::ONE;
+    blend.srcBlendAlpha = plume::RenderBlend::INV_DEST_ALPHA;
+    blend.dstBlendAlpha = plume::RenderBlend::ONE;
+  }
   desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
   // Under multiview every host pass draws both layers in one go; the pixel
   // shaders pick the source layer by SV_ViewID.
@@ -641,10 +666,50 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
 #endif
 }
 
+bool RenderLensFlare(VideoState &s, Chain &c, GuestTexture *output,
+                     const LensFlareParameters &parameters,
+                     const std::array<GuestTexture *, 4> &images) {
+  if (!parameters.count)
+    return true;
+  auto sprites = parameters.sprites;
+  static bool reported_images = false;
+  if (!reported_images) {
+    for (u32 i = 0; i < images.size(); ++i) {
+      const auto *asset = Content(images[i]);
+      BD_INFO("[native-post] optical image {} {}x{} descriptor {} native {:016X} source alias {}",
+          i, asset->width, asset->height, asset->descriptorIndex,
+          asset->nativeGpu ? asset->nativeGpu->asset->id : 0,
+          asset != images[i]);
+    }
+    reported_images = true;
+  }
+  for (auto *image : images)
+    if (!Source(s, image)) return false;
+  for (u32 i = 0; i < parameters.count; ++i)
+    sprites[i].texture = Content(images[sprites[i].texture])->descriptorIndex;
+  const auto allocation = UploadHostConstants(sprites.data(), sizeof(sprites));
+  auto *pipeline = Pipeline(s, c, Shader::LensFlare, output->format, output->layers > 1);
+  auto *framebuffer = GetFramebuffer(s, output, nullptr);
+  if (!allocation.memory || !pipeline || !framebuffer)
+    return false;
+  const u32 offsets[3] = {allocation.dynamicOffset, s.constant_dyn_offsets[1],
+                          s.constant_dyn_offsets[2]};
+  auto *cmd = s.command_list;
+  cmd->setGraphicsDescriptorSetDynamic(s.constant_descriptor_set.get(),
+      kConstantDescriptorSetIndex, offsets, 3);
+  cmd->setFramebuffer(framebuffer);
+  cmd->setPipeline(pipeline);
+  cmd->setViewports(plume::RenderViewport(0, 0, float(output->width), float(output->height)));
+  cmd->setScissors(plume::RenderRect(0, 0, i32(output->width), i32(output->height)));
+  cmd->drawInstanced(6, parameters.count, 0, 0);
+  return true;
+}
 } // namespace
 
 bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *output,
-                    const DofParameters &dof, const BloomParameters &bloom) {
+                    const DofParameters &dof, const BloomParameters &bloom,
+                    const LensFlareParameters &flare,
+                    const std::array<GuestTexture *, 4> &flare_images) {
 #if defined(REBLUE_D3D12)
   return false;
 #else
@@ -660,6 +725,17 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
       !output || !output->texture || source == output || z == output ||
       source->layers != z->layers || source->layers != output->layers)
     return false;
+  if (flare.count > flare.sprites.size()) return false;
+  if (flare.count) {
+    for (auto *image : flare_images) {
+      if (auto *asset = Content(image); asset && asset->texture)
+        BindTextureSRVLocked(s, asset);
+      if (!Readable(Content(image)) || Content(image) == output ||
+          Content(image)->layers != 1) return false;
+    }
+    for (u32 i = 0; i < flare.count; ++i)
+      if (flare.sprites[i].texture >= flare_images.size()) return false;
+  }
   Video::OpenCommandListLocked();
   if (!s.command_list_open || !s.command_list)
     return false;
@@ -671,6 +747,8 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
   if (!HostComposite(s, c, source, nullptr, output, bloom))
     throw std::runtime_error("Native post composite failed");
+  if (!RenderLensFlare(s, c, output, flare, flare_images))
+    throw std::runtime_error("Native lens-flare submission failed");
   output->surfaceDrawn = true;
   // The complete source is consumed before publishing the new output alias.
   DetachSourceSurfaceLocked(s, scene);

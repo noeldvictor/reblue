@@ -18,6 +18,9 @@ set(REBLUE_HLSL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/shaders/hlsl")
 function(reblue_host_shader STEM PROFILE)
     # dxc emits no header deps, so every sibling .hlsli is listed by hand.
     file(GLOB hlsl_includes "${REBLUE_HLSL_DIR}/*.hlsli")
+    if(STEM STREQUAL "lens_flare_ps")
+        list(APPEND hlsl_includes "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/lens_flare_uv.h")
+    endif()
 
     foreach(target_list IN ITEMS REBLUE_D3D12_TARGETS REBLUE_VULKAN_TARGETS)
         if(NOT ${target_list})
