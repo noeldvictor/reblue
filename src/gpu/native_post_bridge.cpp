@@ -52,7 +52,8 @@ REXCVAR_DECLARE(int32_t, bd_native_bloom_preview);
 namespace bd::gpu {
 namespace {
 constexpr uint32_t kThread = (uint32_t(-32035) << 16) - 26664;
-constexpr uint32_t kDepth = (uint32_t(-32136) << 16) + 14888 + 16;
+constexpr uint32_t kEffectList = (uint32_t(-32136) << 16) + 14888;
+constexpr uint32_t kDepth = kEffectList + 16;
 constexpr uint32_t kLensSource = (uint32_t(-32137) << 16) + 30160;
 constexpr uint32_t kLensAttenuation = (uint32_t(-32137) << 16) + 12124;
 constexpr uint32_t kPostOwner = (uint32_t(-32137) << 16) + 31212;
@@ -70,6 +71,7 @@ struct Stats {
   uint64_t directional_bloom_frames = 0, directional_bloom_iterations = 0;
   uint64_t sequences = 0, sequence_roots = 0, sequence_empty = 0;
   uint64_t sequence_original = 0, sequence_refused = 0, sequence_max = 0;
+  uint64_t scene_handoffs = 0, scene_original = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -117,6 +119,9 @@ void Report() {
           "original sequences {} refused {}; direct depth, no global depth publication",
           stats.sequences, stats.sequence_roots, stats.sequence_empty, stats.sequence_max,
           stats.sequence_original, stats.sequence_refused);
+  BD_INFO("[native-post] direct scene handoffs {} original container scopes {}; "
+          "no temporary post containers on the direct path; scene output/getter adapters remain",
+          stats.scene_handoffs, stats.scene_original);
 }
 bool Words(uint64_t address, uint64_t bytes) {
   if (!address || (address & 3) || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -138,6 +143,12 @@ GuestTexture *Texture(uint32_t container) {
        type != ResourceType::DepthStencil))
     return nullptr;
   return HostResourceHeap::FromGuest<GuestTexture>(handle);
+}
+GuestTexture *SceneOutput(uint32_t container) {
+  // Scene-output getters hold the image at +4, unlike the old post container's
+  // +0 handle. Borrow it only for synchronous scheduling; its scene owner keeps
+  // it alive. No level wrappers, binding-index vectors or guest AddRef needed.
+  return Words(container, 8) ? Texture(container + 4) : nullptr;
 }
 struct PostEffects {
   HeatShimmerParameters heat;
@@ -418,7 +429,7 @@ bool AcquirePostTargets(GuestTexture *scene, GuestTexture *depth, uint32_t count
   }
   return true;
 }
-bool RunEffectSequence(uint32_t list, uint32_t color_container, uint32_t depth_container) {
+bool RunEffectSequence(uint32_t list, GuestTexture *scene, GuestTexture *depth) {
   if (!REXCVAR_GET(bd_native_post) || REXCVAR_GET(bd_native_post_verify) ||
       !REXCVAR_GET(bd_host_targets) || !REXCVAR_GET(bd_native_dof) ||
       REXCVAR_GET(bd_native_dof_verify))
@@ -465,8 +476,6 @@ bool RunEffectSequence(uint32_t list, uint32_t color_container, uint32_t depth_c
     ++stats.sequence_empty;
     return true;
   }
-  auto *scene = Texture(color_container);
-  auto *depth = Texture(depth_container);
   PostTargets targets;
   if (!AcquirePostTargets(scene, depth, sequence->target_count, targets))
     return refuse("image targets");
@@ -699,7 +708,7 @@ REX_HOOK_RAW(sub_8221B1D8) {
   Report();
 }
 REX_HOOK_RAW(bdEffectSlotArrayApply) {
-  if (!RunEffectSequence(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32)) {
+  if (!RunEffectSequence(ctx.r3.u32, Texture(ctx.r4.u32), Texture(ctx.r5.u32))) {
     ++stats.sequence_original;
     __imp__bdEffectSlotArrayApply(ctx, base);
   }
@@ -708,3 +717,21 @@ REX_HOOK_RAW(bdEffectSlotArrayApply) {
   Report();
 }
 } // namespace bd::gpu
+
+// bdRenderViewSubmit: after camera/focus publication, before either temporary
+// container constructor. Success jumps beyond BOTH destructors and the obsolete
+// GPR-allocation restore to the saved effect-flag restoration. A refusal leaves
+// PPC registers and temporary stack storage untouched for the original path.
+bool bdNativeScenePostHook(PPCRegister &view) {
+  using namespace bd::gpu;
+  bool handled = false;
+  if (Words(view.u32, 8)) {
+    auto *scene = SceneOutput(bd::mem::load<uint32_t>(view.u32));
+    auto *depth = SceneOutput(bd::mem::load<uint32_t>(view.u32 + 4));
+    handled = RunEffectSequence(kEffectList, scene, depth);
+  }
+  if (handled) ++stats.scene_handoffs;
+  else ++stats.scene_original;
+  Report();
+  return handled;
+}

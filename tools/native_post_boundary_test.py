@@ -1,5 +1,6 @@
 """DoF source ownership guards, not independent GPU qualification."""
 from pathlib import Path
+import re
 import unittest
 
 
@@ -7,6 +8,8 @@ class NativePostBoundaryTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         root = Path(__file__).resolve().parents[1]
+        cls.root = root
+        cls.hooks = (root / "config/hooks/render_tweaks.toml").read_text(encoding="utf-8")
         cls.bridge = (root / "src/gpu/native_dof_bridge.cpp").read_text(encoding="utf-8")
         cls.post = (root / "src/gpu/post_chain.cpp").read_text(encoding="utf-8")
         cls.parameters = (root / "src/gpu/post_parameters.h").read_text(encoding="utf-8")
@@ -213,13 +216,66 @@ class NativePostBoundaryTest(unittest.TestCase):
 
     def test_native_sequence_uses_explicit_depth_without_global_publication(self):
         body = self.scheduler.split("bool RunEffectSequence(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
-        for name in ("Texture(depth_container)", "Texture(color_container)",
+        for name in ("GuestTexture *scene, GuestTexture *depth",
                      "targets.images[sequence->Output(i)]", "RenderPostPlan(plan, scene, depth,"):
             self.assertIn(name, body)
         for name in ("Texture(kDepth)", "sub_82184790(", "sub_8221CC90(",
                      "REX_CALL", "__imp__", "bd::mem::store", "ctx.r1", "SetTexture("):
             self.assertNotIn(name, body)
+        self.assertNotIn("Texture(", body)
         self.assertIn("REX_HOOK_RAW(bdEffectSlotArrayApply)", self.scheduler)
+
+    def test_scene_handoff_borrows_explicit_outputs_without_temporary_containers(self):
+        helper = self.scheduler.split("GuestTexture *SceneOutput(", 1)[1].split("struct PostEffects", 1)[0]
+        self.assertIn("Words(container, 8) ? Texture(container + 4) : nullptr", helper)
+        body = self.scheduler.split("bool bdNativeScenePostHook(", 1)[1]
+        self.assertIn("Words(view.u32, 8)", body)
+        self.assertIn("SceneOutput(bd::mem::load<uint32_t>(view.u32))", body)
+        self.assertIn("SceneOutput(bd::mem::load<uint32_t>(view.u32 + 4))", body)
+        self.assertIn("handled = RunEffectSequence(kEffectList, scene, depth)", body)
+        self.assertIn("return handled", body)
+        for name in ("__imp__", "REX_CALL", "REX_STORE", "bd::mem::store", "ctx.",
+                     "sub_8221C9A0(", "ReleaseResourceAdapter(", "AddRef(", "view.u32 ="):
+            self.assertNotIn(name, body)
+
+    def test_scene_handoff_hook_skips_constructors_and_complete_cleanup(self):
+        hooks = [h for h in self.hooks.split("[[midasm_hook]]")
+                 if 'name = "bdNativeScenePostHook"' in h]
+        self.assertEqual(len(hooks), 1)
+        lines = [line.split("#", 1)[0].strip() for line in hooks[0].splitlines()]
+        self.assertEqual([line for line in lines if line], ["address = 0x821865B8",
+            'name = "bdNativeScenePostHook"', 'registers = ["r18"]',
+            "after_instruction = false", "jump_address_on_true = 0x821867E8"])
+        device = (self.root / "src/gpu/hooks/device.cpp").read_text(encoding="utf-8")
+        self.assertIn("BD_NOOP(D3DDevice_SetShaderGPRAllocation)", device)
+
+    def test_owned_generated_scene_handoff_instruction_contract(self):
+        # Optional owned-game evidence. Generated code stays generated; this
+        # test checks the original PPC comments, not a hand-maintained fixture.
+        path = self.root / "generated/reblue_recomp.16.cpp"
+        if not path.exists():
+            self.skipTest("Owned game codegen is unavailable")
+        body = path.read_text(encoding="utf-8").split("DEFINE_REX_FUNC(bdRenderViewSubmit) {", 1)[1]
+        body = body.split("\nDEFINE_REX_FUNC(", 1)[0]
+        address, instructions = 0x82184E90, {}
+        for line in body.splitlines():
+            label = re.fullmatch(r"loc_([0-9A-F]+):", line)
+            if label:
+                self.assertEqual(address, int(label[1], 16))
+            if line.startswith("\t// "):
+                instructions[address] = line[4:].strip()
+                address += 4
+        self.assertEqual(address, 0x8218683C)
+        self.assertEqual(instructions[0x821865B4], "stfs f29,8(r11)")
+        self.assertEqual(instructions[0x821865B8], "lwz r11,4(r18)")
+        skipped = [v for k, v in instructions.items() if 0x821865B8 <= k < 0x821867E8]
+        self.assertEqual(skipped.count("bl 0x8221c9a0"), 2)
+        self.assertEqual(skipped.count("bl 0x82184898"), 1)
+        self.assertEqual(skipped.count("bl 0x82481108"), 2)
+        self.assertEqual([instructions[a] for a in range(0x821867E8, 0x821867FC, 4)],
+            ["lwz r31,288(r1)", "li r5,1", "lbz r4,154(r1)", "mr r3,r31", "bl 0x82173df8"])
+        tail = [v for k, v in instructions.items() if k >= 0x821867E8]
+        self.assertFalse(any(re.search(r",(?:22[4-9]|2[3-7][0-9]|28[0-7])\(r1\)", v) for v in tail))
 
     def test_native_sequence_preflights_unknown_callbacks_and_preserves_ordered_focus(self):
         body = self.scheduler.split("bool RunEffectSequence(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]

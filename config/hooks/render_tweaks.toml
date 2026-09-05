@@ -123,6 +123,23 @@ name = "bdDOFStrengthScaleHook"
 registers = ["r11"]
 after_instruction = true
 
+# bdRenderViewSubmit: focus publication ends at 0x821865B4. At 0x821865B8,
+# r18 still names its input record: scene colour/depth getters at +0/+4,
+# each holding its output image at +4. Schedule native post with those images
+# before the two sub_8221C9A0 temporary containers (stack +224/+256) exist.
+# Success skips their complete construction, wrapper dispatch and destruction.
+# 0x821867E8 reloads r31/r3/r4/r5 for saved effect-flag restoration; no skipped
+# local/condition value is consumed. The skipped GPR-allocation setter is a
+# host no-op. Refusal leaves registers/stack unchanged and runs the old path.
+# Body: src/gpu/native_post_bridge.cpp. Scene getters and parent scheduling
+# remain explicit migration adapters, not a completed native frame.
+[[midasm_hook]]
+address = 0x821865B8
+name = "bdNativeScenePostHook"
+registers = ["r18"]
+after_instruction = false
+jump_address_on_true = 0x821867E8
+
 # Clamp water c51.w (g_vWaveParams1.w) at each mcl_water_object_vf08 constant flush;
 # r3 = flush descriptor, hook acts only on the PS flush covering c51.
 [[midasm_hook]]
