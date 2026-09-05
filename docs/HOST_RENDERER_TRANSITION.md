@@ -34,8 +34,12 @@ Scene-image producer checkpoint (2026-09-05): current/next scene-table selection
 and the complete scene-image binding callback now execute on the host, with
 explicit native image handles, live dynamic adapters and counted null no-ops.
 Both bindings are preflighted outside the video lock before publication.
-All 15 material/texture/state CTests pass. Producer comparison is underway;
-scene-table production, persistent scene associations, retained replay recipes,
+All 15 material/texture/state CTests pass. Desktop producer comparison records
+39485 matching selections and 14 matching binding publications, with no
+compatibility/refusal calls. All 28 bound inputs use native handles; dynamic
+and null publication cases were not exercised. Its early field/title-transition
+capture does not qualify the normal comparison-off path, later scenes or VR.
+Scene-table production, persistent scene associations, retained replay recipes,
 the wrapper's blend/constants and full visual qualification remain. See
 `research/20260905_0301_native-scene-textures.md`.
 

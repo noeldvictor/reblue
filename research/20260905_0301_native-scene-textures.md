@@ -70,5 +70,60 @@ or qualify the existing scenery/text defects or stereo depth.
 
 The producer comparison run (PID 23580, started 03:01:07 EDT) uses autoplay/perf,
 180-second capture delay, minimum 30 draws, 120 captures and
-`bd_native_scene_textures_verify=true`. Its results are pending at this first
-checkpoint; no runtime or visual qualification is claimed from the unit tests.
+`bd_native_scene_textures_verify=true`. Results were pending at the first
+checkpoint (`f3d4272`); no runtime or visual qualification was claimed from the
+unit tests. The completed comparison is recorded below.
+
+## Completed producer comparison
+
+PID 23580 ran from 03:01:07 to 03:07:47 EDT, using the 02:59:18 Vulkan binary
+(logged revision `e4e47ca` dirty, containing the code subsequently committed as
+`f3d4272`). Log: `out/build/win-amd64-release/logs/reblue_704.log`. The startup
+audit confirms all six profile settings took effect: autoplay/perf true,
+capture delay 180, minimum 30 draws, 120 frames, scene-texture verification true.
+The renderer was stopped only after the complete sequence was preserved. The
+original five-setting profile was restored: autoplay/perf true, capture delay
+60, minimum 600 draws, 120 frames, no verification override.
+
+Final periodic scene-texture report:
+
+- Current 19743, next 19742: 39485 original-selector comparisons, zero wrong.
+- 14 host pair publications and 14 original-publication comparisons, zero wrong.
+- Zero compatibility calls or refusals. All 28 non-null inputs used native
+  image handles; dynamic inputs and null no-ops were not exercised by this run.
+
+These are separate coverage counts: the high selector count does not mean the
+binding callback ran on every frame or draw. Comparison mode also executes the
+original producers and is not proof of guest-free execution. No replay recipe
+integration is included in this checkpoint.
+
+The run progressed beyond the previous loading deadlock. Its final reflection
+report has 1021972 matching source checks, five unsupported callback draws,
+zero refusals and 3014967 composed native bindings. Lighting has 49034 host
+publications, zero compatibility/refusal/reset calls and 998345 matching direct
+shadow-input checks. No error/critical, Vulkan error, overflow or exhaustion
+lines were found. These are correctness observations, not performance results.
+
+All 120 flat 1920x1080 captures are isolated in
+`out/verification/native_scene_texture_producer_verify`, from
+`frame_1788591849_0.raw` through `frame_1788591853_119.raw`. They cover frames
+10015-10134, 03:04:09.468-03:04:13.231 EDT. Inspected endpoints show the field path
+and the village/title-logo transition. This is an early transition, not the
+normal late scene that still has scenery/text defects. The local `--raw --mono`
+preview command only converts an existing flat capture; it is not a separately
+launched replay-off control.
+
+Sequence analysis completed successfully: 111/119 pairs exceed the 6% change
+threshold. Inspected pairs 064 and 101 show camera movement and title animation
+without the previously observed broad rock-wall disappearance; their count
+must not be interpreted as 111 confirmed rendering failures or compared with
+the late-scene failure count as a performance/correctness trend. These sampled
+pairs and endpoints do not qualify every frame or the full game.
+
+The cyan detector reports 47/120 frames above 0.30%, median 0%, maximum 1.25%,
+but zero patch frames in its 2-60% range and zero whole-frame detections. Cyan
+matching alone cannot distinguish title art/sky from rendering defects.
+
+Rechecked after staged review: 14/14 texture/state CTests, 1/1 material CTest
+and both reflection lock-order source guards pass. Normal comparison-off flat,
+later-scene and final-eye VR checks have not been rerun at this checkpoint.
