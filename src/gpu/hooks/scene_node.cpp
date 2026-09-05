@@ -47,6 +47,7 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/deferred_consumer.h"
 #include "gpu/scene/host_draw.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/scene/scene_recorder.h"
@@ -57,6 +58,7 @@ extern "C" void __imp__bdSceneNodeDrawSingle(PPCContext &__restrict ctx,
 REXCVAR_DECLARE(bool, bd_node_write_diag);
 REXCVAR_DECLARE(bool, bd_material_source);
 REXCVAR_DECLARE(bool, bd_draw_ledger);
+REXCVAR_DECLARE(bool, bd_native_deferred_consumer);
 
 namespace {
 std::atomic<u64> g_node_calls{0};
@@ -340,7 +342,11 @@ bool bdRenderListEntryHook(PPCRegister &r31, PPCRegister &r23) {
 }
 
 REX_HOOK_RAW(sub_8227F360) {
-  __imp__sub_8227F360(ctx, base);
+  if (!REXCVAR_GET(bd_native_deferred_consumer) ||
+      !bd::gpu::scene::ConsumeDeferredList(ctx, base)) {
+    bd::gpu::scene::RecordDeferredConsumerFallback();
+    __imp__sub_8227F360(ctx, base);
+  }
   CloseListCapture();
 }
 

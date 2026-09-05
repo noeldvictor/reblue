@@ -5,6 +5,7 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/deferred_surface.h"
+#include "gpu/scene/deferred_shader_bridge.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -13,6 +14,27 @@
 
 using namespace bd::gpu::scene;
 int main() {
+  for (uint32_t first = 0; first <= 256; ++first)
+    for (uint32_t count = 0; count <= 256 - first; ++count) {
+      uint64_t expected = 0;
+      for (uint32_t vector = first; vector < first + count; ++vector)
+        expected |= uint64_t(1) << (63 - vector / 4);
+      assert(DeferredConstantMask(first, count) == expected);
+    }
+  assert(DeferredConstantMask(0, 256) == UINT64_MAX);
+  assert(DeferredConstantMask(255, 1) == 1);
+  assert(!DeferredConstantMask(256, 1));
+  assert(!DeferredConstantMask(UINT32_MAX, 0));
+  assert(!DeferredConstantMask(1, UINT32_MAX));
+  for (uint32_t bit = 0; bit < 32; ++bit)
+    for (uint32_t previous : {0u, UINT32_MAX, 0x12345678u})
+      for (uint32_t value : {0u, 1u, 2u, 3u, UINT32_MAX}) {
+        const auto result = DeferredBooleanWord(previous, bit, value);
+        const auto mask = uint32_t(1) << bit;
+        assert(result && ((*result >> bit) & 1) == (value & 1));
+        assert((*result & ~mask) == (previous & ~mask));
+      }
+  assert(!DeferredBooleanWord(0, 32, 1));
   for (int shells = -128; shells <= 127; ++shells)
     for (bool stencil : {false, true}) {
       const auto plan = PlanDeferredSurface(shells, stencil);

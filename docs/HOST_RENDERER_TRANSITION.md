@@ -78,9 +78,10 @@ the host (`gpu/scene/deferred_work.h` and the temporary `deferred_list.cpp`
 bridge). Replayed batches refresh world/palette and relocate their material
 self-reference instead of retaining the original pooled pointer. The native
 core has standalone capacity, ordering and relocation tests. This still
-publishes big-endian entry images to the guest draw loop; remaining entry fields,
-material/pass records, visual switches and the list consumer remain required
-conversion work. See `research/20260904_2055_host-deferred-work.md`.
+publishes big-endian entry images; remaining entry fields, material/pass records
+and engine storage require conversion. The consumer replacement below now owns
+the consuming loop. See `research/20260904_2055_host-deferred-work.md` for the
+earlier allocation/sort checkpoint.
 Its short flat check passes, but multiview still shows 10/119 jumps and the
 later scene 79/119 with missing scenery/damaged text. Neither allocation/sort
 conversion nor pointer relocation resolves those visual failures.
@@ -95,9 +96,28 @@ jumps over 6% and no cyan patches. Multiview still has 10/119 jumps at the
 64-frame cadence, with an inconclusive stereo-depth check. See
 `research/20260904_2122_live-native-deferred-depth.md`.
 The object/view transforms remain engine-produced; bounds/policy discovery is
-not yet native scene-asset loading. Engine storage, other entry fields and the
-guest consumer remain tracked boundaries. The prior later-scene failure has
+not yet native scene-asset loading. Engine storage and other entry fields remain
+tracked boundaries. The prior later-scene failure has
 not been requalified by this short-run checkpoint.
+
+`gpu/scene/deferred_consumer.cpp` now owns deferred-list iteration, visual-switch
+scheduling, CPU bone gathering, material constant publication, ordinary/fur/
+stencil surface expansion, direct draw issuance and list cleanup. Its valid-input
+path replaces the original `sub_8227F360` loop. `bd_native_deferred_consumer`
+defaults on; the explicit compatibility switch/import fallback is counted.
+Standalone surface-policy and shader-ABI packing tests pass. The initial flat
+sequence has 0/119 jumps and no cyan patches; multiview still has 10/119 jumps
+at a 64-frame cadence and an inconclusive stereo-depth result. See
+`research/20260904_2154_host-deferred-consumer.md` for verification and limits.
+
+This is not a fully native frame: visual/material/world/shader callbacks and
+state/resource adapters remain, with separate bridge counters. Some resource
+adapters already route to host hooks, so these are boundary-call counts, not a
+precise guest-instruction census. Engine entry storage, resource/declaration
+associations, shader-register packing and replay's retained-state assumptions
+still need replacement. Fur/stencil policies have standalone coverage but the
+captured field does not exercise those GPU paths. The known later-scene failure
+and full-game/both-eye acceptance gates remain open.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free

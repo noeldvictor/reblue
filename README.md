@@ -65,7 +65,7 @@ Quest-ready release.
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
-| Deferred work | Live host depth from explicit bounds/fixed policies, host ordering, bounded whole-batch planning and corrected entry relocation | Native scene/pass inputs, remaining entry fields, engine storage and the guest list consumer |
+| Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/world/state adapters |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
@@ -95,6 +95,10 @@ The [live depth checkpoint](research/20260904_2122_live-native-deferred-depth.md
 also replaces initial depth execution and stale replay keys with host calculation
 from current transforms. Its input comparison and normal flat capture pass;
 the multiview defect and incomplete stereo-depth qualification remain.
+The [host consumer checkpoint](research/20260904_2154_host-deferred-consumer.md)
+also replaces the guest deferred-list loop, with explicit counters for the
+remaining engine adapters. This is not full native frame ownership, and it
+does not resolve the known multiview or later-scene failures.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 

@@ -482,6 +482,8 @@ REXCVAR_DEFINE_BOOL(bd_native_deferred_depth, true, kCvarGroup,
                     "Produce deferred depth from native bounds and current transforms.");
 REXCVAR_DEFINE_BOOL(bd_native_deferred_depth_verify, false, kCvarGroup,
                     "Compare native deferred depth with the original producer before publishing.");
+REXCVAR_DEFINE_BOOL(bd_native_deferred_consumer, true, kCvarGroup,
+                    "Schedule and consume deferred surfaces on the host (engine adapters remain).");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
 // when the interpreter issues them and when the host replays them, so the
 // two can be diffed.
