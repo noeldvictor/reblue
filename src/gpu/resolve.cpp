@@ -726,7 +726,8 @@ void NoteTileContentLocked(VideoState &s, GuestTexture *dst, bool pass_end) {
 
 } // namespace
 
-bool Video::PublishSceneOutput(GuestTexture *src, GuestTexture *dst, float exposure) {
+bool Video::PublishSceneOutput(GuestTexture *src, GuestTexture *dst, float exposure,
+                               bool publish_post_chain) {
   if (!src || !dst || !src->texture || !dst->texture || src == dst ||
       dst->sampleCount != plume::RenderSampleCount::COUNT_1 ||
       dst->viewDimension == plume::RenderTextureViewDimension::TEXTURE_CUBE ||
@@ -758,7 +759,8 @@ bool Video::PublishSceneOutput(GuestTexture *src, GuestTexture *dst, float expos
   s.last_resolved_dst = dst;
   // Remaining post/UI producers still consume the legacy chain publication.
   // This adapter is not native frame scheduling or removal of their tile model.
-  NoteTileContentLocked(s, dst, /*pass_end=*/true);
+  if (publish_post_chain)
+    NoteTileContentLocked(s, dst, /*pass_end=*/true);
   s.draw_framebuffer_bound = false;
   return true;
 }

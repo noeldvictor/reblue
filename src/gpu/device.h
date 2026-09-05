@@ -239,8 +239,9 @@ public:
   // Explicit completed scene attachment -> existing engine texture adapter.
   // No EDRAM flags, bound/last-drawn source inference, or square-depth heuristic.
   // Native MSAA/scale copies and downstream compatibility links remain shared.
+  // Shadow output has no post/UI tile-chain publication.
   static bool PublishSceneOutput(GuestTexture *source, GuestTexture *destination,
-                                 float exposure);
+                                 float exposure, bool publish_post_chain = true);
 
   // The other in-flight list may still reference it. Freed by DrainSlot. Takes
   // state().mutex.

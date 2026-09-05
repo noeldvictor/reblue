@@ -13,6 +13,7 @@ class NativeSceneBoundaryTest(unittest.TestCase):
         cls.output = source[start:source.index("void Video::ResolveRtToTexture(", start)]
         cls.view = (root / "src/gpu/scene/native_view_bridge.cpp").read_text(encoding="utf-8")
         cls.view_math = (root / "src/gpu/scene/native_view.h").read_text(encoding="utf-8")
+        cls.shadow = (root / "src/gpu/scene/native_shadow_pass_bridge.cpp").read_text(encoding="utf-8")
 
     def test_whole_native_pair_does_not_use_console_allocation_or_resolve(self):
         native = self.bridge[self.bridge.index("bool Begin("):self.bridge.index("REX_HOOK_RAW(")]
@@ -57,6 +58,30 @@ class NativeSceneBoundaryTest(unittest.TestCase):
                         native.index("CompareWords(kShape"))
         self.assertLess(native.index("CompareWords(kShape"), native.index("Publish(shape, frustum)"))
         self.assertIn('CompareWords(slot + 4, Pack(shape), "cache")', native)
+
+    def test_shadow_lifecycle_has_explicit_depth_and_output_ownership(self):
+        native = self.shadow[self.shadow.index("bool Begin("):self.shadow.index("REX_HOOK_RAW(")]
+        for name in ("__imp__", "hcgD3DCreateSurface", "bdRenderTargetRelease",
+                     "ClassifyHostTarget", "bdSurfaceSetMSAA", "bdDestroySurface",
+                     "D3DDevice_Resolve", "TrackResolveSource", "surfaceDrawn"):
+            self.assertNotIn(name, native)
+        self.assertIn("HostTargetClass::Shadow", native)
+        self.assertIn("EnterNativePass(nullptr, depth, result)", native)
+        self.assertIn("shadows.push_back({source, depth, output, NativePassDepth()})", native)
+        self.assertIn("RetainResourceAdapter(output->selfVa)", native)
+        end = native[native.index("bool End("):]
+        self.assertIn("Video::BindDrawFramebuffer()", end)
+        self.assertIn("PublishSceneOutput(pass.depth, pass.output, 1.0f, false)", end)
+        self.assertLess(end.index("LeaveNativePass(result)"),
+                        end.index("ReleaseResourceAdapter(pass.depth->selfVa)"))
+        self.assertNotIn("bd_native_shadow_passes", end)  # scopes outlive setting changes
+
+    def test_shadow_output_does_not_publish_a_post_chain(self):
+        self.assertIn("if (publish_post_chain)\n    NoteTileContentLocked", self.output)
+        self.assertIn("PublishSceneOutput(pass.depth, pass.output, 1.0f, false)", self.shadow)
+        # These two producers are deliberately still counted, never called native.
+        self.assertIn("++stats.camera_snapshots", self.shadow)
+        self.assertIn("++stats.light_fits", self.shadow)
 
 
 if __name__ == "__main__":

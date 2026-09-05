@@ -63,6 +63,7 @@ Quest-ready release.
 | Native mesh assets | Versioned persistent `.bdmesh` cache, triangle lists, shared host GPU buffers and existing generated LOD support; enabled by default | Asset-level discovery/loading, independent native layouts/materials, dynamic geometry and cache streaming/eviction |
 | Material properties | Shared, content-keyed `.bdmat` assets for supported diffuse/specular/reflection recipes, independent cooker/loader and bounded residency; enabled by default | Native texture/lighting definitions, asset-level scene bindings, remaining draw recipes and replacement of the shader-register compatibility boundary |
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
+| Sun-shadow lifecycle | Complete host begin/end bodies, explicit persistent depth/output ownership and empty-pass far clears; no engine allocation or inferred resolve source; stable short desktop sequence with 38674 matching ownership checks and no fallback | Engine camera snapshot/light fitting, secondary shadows, caster scheduling, sampling/resource/getter adapters, final-eye and broader scene qualification |
 | Lighting pass inputs | Host ambient/camera/colour/shadow parameter production and explicit direct-node shadow sampling; short publication/input comparisons pass | Native scene/light/texture associations, other draw recipes and removal of the material staging/shader ABI |
 | Reflection bindings | Explicit model selection/enable recipes and current pass/table resolution for supported direct draws; old slot-5 image handles are not retained | Null-selection inheritance, animated/ordinary texture overrides, deferred/other-phase recipes and persistent native scene associations |
 | Scene-image selection | Host selectors/binding callback and explicit per-draw current/next roles; replay resolves live inputs instead of retaining old images, with matching source checks | Scene-table production, persistent associations, intra-node pass sequences, wrapper blend/constants and dynamic/null GPU coverage |
@@ -82,7 +83,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests, all 20 upload/state/packet/verification/scene-image/pass/sampler/parameter/frustum tests and five source-boundary guards pass; corrected scene lifecycle build has 0/119 large jumps in both short flat and 1440x1584 final-eye sequences | Last late-scene check still fails (110/119 large frame changes); scenery/text remain unqualified. VR content remains 1440x808 letterboxed/blurred, with inconclusive depth; the default XR scale remains 0.65 |
+| Desktop verification | All 22 material/texture/state/view CTests and nine source guards pass; native shadow lifecycle short flat sequence and prior camera/cache 1440x1584 final eyes have 0/119 large jumps | Shadow lifecycle final-eye check is pending. Last late-scene check still fails (110/119 large frame changes); scenery/text remain unqualified. VR content remains 1440x808 letterboxed/blurred, with inconclusive depth; the default XR scale remains 0.65 |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -210,6 +211,11 @@ transform values and cached shapes. Original comparisons and short normal
 flat/final-eye sequences pass. Engine camera sources, invalidation/settings,
 getter clients and broader scene/frame producers remain. Stable final eyes
 still do not qualify their framing or stereo depth.
+
+The [sun-shadow lifecycle checkpoint](research/20260905_0756_native-shadow-pass-lifecycle.md)
+replaces complete attachment setup/output/teardown and removes resolve-source
+guessing for that pass. Scene-camera snapshot and light fitting still execute
+through counted engine adapters; secondary shadows and caster scheduling remain.
 
 - [Host renderer transition](docs/HOST_RENDERER_TRANSITION.md): active scope,
   completion checklist and remaining dependencies.

@@ -30,6 +30,19 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Sun-shadow lifecycle checkpoint (2026-09-05): the complete begin/end bodies
+now own an explicit persistent depth attachment and retained output association.
+Native entry/exit and explicit-source publication replace engine allocation,
+pass wrappers and resolve-source guessing. Empty caster passes publish their
+owned far-depth clear; shadow output no longer publishes a post/UI tile chain.
+All 22 CTests and nine source guards pass. The normal short desktop sequence
+has 0/119 large jumps or cyan patches, 38674 matching ownership checks and no
+lifecycle fallback. Final-eye qualification is pending. Engine scene-camera
+snapshot and light-fitting execution remain
+counted, and secondary shadows, caster scheduling and sampling/resource/getter
+adapters remain. This is not a complete shadow system or fully native frame.
+See `research/20260905_0756_native-shadow-pass-lifecycle.md`.
+
 View-cache checkpoint (2026-09-05): complete camera/frustum-cache execution
 and native cached-shape ownership now use host inverse/unprojection,
 roll-free orientation and native transform values. Normal production does
