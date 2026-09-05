@@ -148,8 +148,8 @@ The normal flat sequence has 0/119 jumps and no cyan patches. Normal desktop
 multiview still has 10/119 jumps at the 64-frame cadence, blurred/banded eyes
 and an inconclusive stereo-depth result; it does not qualify VR correctness.
 See `research/20260904_2238_native-raster-intent.md` for tests and captures.
-Getter/cache/register shadows remain explicit engine adapters. Alpha, sampler, other-state
-and material/pass producers, CCW stencil behavior, replay recipes and native
+Getter/cache/register shadows remain explicit engine adapters. Alpha, sampler,
+other-state and material/pass producers, CCW stencil behavior, replay recipes and native
 scene/pass assets remain unconverted. Field captures do not exercise stencil
 operation/mask setters. This is not full frame or both-eye qualification.
 
@@ -161,6 +161,9 @@ mismatches, untracked blend writes or compatibility calls, using one bootstrap
 import. Its short flat sequence has 0/119 jumps and no cyan patches.
 The normal flat path also has 0/119 jumps and no cyan patches, with 4007188
 native blend updates and no blend comparison/compatibility calls.
+Normal desktop multiview records 8979675 host blend updates without blend
+comparison/compatibility calls, but still reproduces 10/119 jumps at the 64-frame
+cadence, banded/blurred eyes and inconclusive stereo depth. This is not a VR pass.
 The source trace did not substantiate the earlier claim of inline device blend
 writers outside the SDK setters; unrelated matching object offsets are not D3D
 device writes. Verification still explicitly checks for untracked writers.

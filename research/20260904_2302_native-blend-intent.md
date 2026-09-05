@@ -145,6 +145,57 @@ structures and shadows were intact in this short field sample. No matching
 error/critical, Vulkan error/failed, overflow, exhausted or retirement-race log
 messages. The nine standalone tests were rerun: all passed in 0.51 s.
 
+### Normal desktop multiview: log 677
+
+Same executable, native blend on, comparison off. Process 25164 started at
+23:07:05 EDT and was stopped, by verified executable path, at 23:09:30.
+The profile audit confirmed all 13 settings applied: the five flat settings
+with `bd_capture_min_draws = 450`, plus:
+
+```toml
+bd_vr_enabled = true
+bd_stereo = false
+bd_stereo_multiview = true
+bd_mv_layered_textures = true
+bd_mv_capture_array = false
+bd_xr_mirror = false
+bd_vr_camera_mode = 2
+bd_vr_diorama_height = 0.0
+```
+
+The repository vrsim workflow was used, with the existing absolute runtime
+manifest `out/xrsim-build/reblue_xrsim.json` set through process-local
+`XR_RUNTIME_JSON`. Simulator environment: `XRSIM_WIDTH=1440`,
+`XRSIM_HEIGHT_PX=1584`, `XRSIM_HEIGHT=0`. The log confirms instance/session
+creation and eye position differing from the game camera. The actual layered
+swapchain was **936x1030 per eye**, not the requested 1440x1584. Its scene image
+was letterboxed into that target; no headset-resolution/performance claim follows.
+
+Final periodic counters at 23:09:26.023: 8979675 native blend updates, 8172223
+unchanged, 19301157 ordinary native draw flushes, one bootstrap import. Zero
+comparison, compatibility, refused, legacy-draw and unmapped counts. Drift
+checks were disabled. Coverage: enable 2549801; RGB src/dst 3214937 each; no
+separate-alpha/operation setter exercise. The raster bridge still counted
+4256448 other-state compatibility calls.
+
+Sequence 119 was written at 23:08:13.764, frame 20978, 936x2060 stacked eyes.
+Only this run's 120 raw files were copied after stopping into
+`out/verification/native_blend_vr`. Sequence analysis reproduces **10/119 jumps**
+over 6%, at destination frames 38/39/41/42/44 and 102/103/105/106/108: a 64-frame
+repeat. Cyan analysis found zero patch frames, median/max 0.000%.
+
+Actual sequence 0/119, the 37-to-38 jump pair and `stereo.png` were inspected
+in both eyes. Large black bars, horizontal bands, blurred terrain and periodic
+sharpness changes persist. `stereo_check.py --stacked` exited 2, **INCONCLUSIVE**:
+only the 44% band had a bounded match (disparity -1 px); that cannot establish
+near/far stereo depth. This is a reproduced failure, not a VR pass.
+No error/critical, Vulkan error/failed, overflow, exhausted or retirement-race
+log matches were found, which clearly does not imply visual correctness.
+
+The original five-line profile was restored after the run. No test renderer
+was left running. No later flat-scene capture or full-game qualification was
+performed in this checkpoint.
+
 ## Qualification limits
 
 The earlier 64-frame multiview flash, banded/blurred eyes, inconclusive stereo
