@@ -13,6 +13,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/scene/host_draw.h"
 #include "gpu/scene/native_transform.h"
+#include "gpu/scene/native_sun_camera_bridge.h"
 #include "gpu/scene/shader_parameter_import.h"
 #include <bit>
 #include <cstring>
@@ -352,7 +353,8 @@ bool Projection(PPCContext &ctx, uint8_t *base, bool secondary) {
       return false;
   }
   ctx.fpscr.enableFlushMode();
-  publication.matrix = TransposeRenderMatrix(
+  const auto sun = !secondary && source == kPrimary ? GetNativeSunCamera() : std::nullopt;
+  publication.matrix = TransposeRenderMatrix(sun ? sun->view_projection :
       MultiplyRenderMatrices(ReadMatrix(source + matrix_offset),
                              ReadMatrix(source + matrix_offset + 64)));
   if (publication.primary_scalars) {

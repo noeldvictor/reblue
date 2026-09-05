@@ -38,6 +38,22 @@ void CheckInverse(const RenderMatrix &matrix) {
     }
 }
 int main() {
+  {
+    NativeViewCache cache;
+    RenderFrustum volume;
+    volume.planes[0] = {1, 0, 0, -4};
+    cache.Publish(1, FrustumShape{});
+    cache.PublishVolume(1, volume);
+    assert(cache.Volume(1) && cache.Volume(1)->planes[0][3] == -4);
+    cache.Publish(1, FrustumShape{});
+    assert(!cache.Volume(1));
+    cache.PublishVolume(1, volume);
+    cache.Invalidate(1);
+    assert(!cache.Get(1) && !cache.Volume(1));
+    cache.PublishVolume(900, volume);
+    cache.Clear();
+    assert(!cache.Volume(900));
+  }
   CheckInverse(identity);
   CheckInverse({2,0,0,0, 0,3,0,0, 0,0,-4,0, 200,-50,12,1});
   uint32_t seed = 0x582469ab;

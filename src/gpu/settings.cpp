@@ -514,6 +514,10 @@ REXCVAR_DEFINE_BOOL(bd_native_scene_passes, true, kCvarGroup,
     "Construct and finish native scene colour/depth passes; keeps counted engine camera/state adapters.");
 REXCVAR_DEFINE_BOOL(bd_native_shadow_passes, true, kCvarGroup,
     "Own sun-shadow attachment setup/output/teardown; keeps counted engine camera fitting adapters.");
+// Experimental until the missing character-caster regression is resolved.
+// The native math alone does not qualify the integrated shadow image.
+REXCVAR_DEFINE_BOOL(bd_native_sun_camera, false, kCvarGroup,
+    "Experimental current-view native sun camera; known missing character shadows. Off until qualified.");
 REXCVAR_DEFINE_BOOL(bd_native_reflection_inputs, true, kCvarGroup,
                    "Resolve direct-node reflection recipes from current pass/table inputs.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both

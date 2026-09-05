@@ -205,10 +205,20 @@ public:
     const auto found = views_.find(view);
     return found == views_.end() ? nullptr : &found->second;
   }
-  void Publish(uint32_t view, const FrustumShape &shape) { views_[view] = shape; }
-  void Invalidate(uint32_t view) { views_.erase(view); }
-  void Clear() { views_.clear(); }
+  void Publish(uint32_t view, const FrustumShape &shape) {
+    views_[view] = shape;
+    volumes_.erase(view);
+  }
+  // An orthographic/native clip volume supersedes the compatibility slope shape.
+  void PublishVolume(uint32_t view, const RenderFrustum &volume) { volumes_[view] = volume; }
+  const RenderFrustum *Volume(uint32_t view) const {
+    const auto found = volumes_.find(view);
+    return found == volumes_.end() ? nullptr : &found->second;
+  }
+  void Invalidate(uint32_t view) { views_.erase(view); volumes_.erase(view); }
+  void Clear() { views_.clear(); volumes_.clear(); }
 private:
   std::unordered_map<uint32_t, FrustumShape> views_;
+  std::unordered_map<uint32_t, RenderFrustum> volumes_;
 };
 } // namespace bd::gpu::scene

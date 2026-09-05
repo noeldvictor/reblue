@@ -164,8 +164,8 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   const bool have_eye = extra_cull > 0.0 && bd::gpu::scene::HostSceneEye(eye);
   // The shadow walk against the fitted light frustum: the map's clip square
   // is [-1, 1] in x and y under the fitted light matrix (orthographic, the
-  // previous frame's fit - the walk runs before this frame's first shadow
-  // draw computes it), and a caster whose sphere misses the square cannot
+  // current native producer's fit, or the prior draw-time compatibility fit),
+  // and a caster whose sphere misses the square cannot
   // reach the map. The sphere's clip radius is the world radius times the
   // longer of the two rows' scales.
   float light_clip[16];

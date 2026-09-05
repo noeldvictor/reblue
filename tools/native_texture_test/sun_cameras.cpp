@@ -49,6 +49,14 @@ int main() {
   REQUIRE(BuildNativeSunCamera(identity, off_center, 0.7, 0.5, 64, 100, 100));
   REQUIRE(BuildNativeSunCamera(identity, rh, std::numbers::pi/2, 0, 4096, 500, 500));
   const auto first = *BuildNativeSunCamera(identity, rh, 0, 0, 4096, 500, 500);
+  REQUIRE(IntersectsSunVolume(first.frustum, first.focus, 1));
+  auto outside = first.focus;
+  outside[0] = first.eye[0] + first.half_extent + 2;
+  REQUIRE(!IntersectsSunVolume(first.frustum, outside, 1));
+  REQUIRE(IntersectsSunVolume(first.frustum, outside, 3));
+  REQUIRE(!IntersectsSunVolume(first.frustum, {NAN, 0, 0}, 1));
+  REQUIRE(!IntersectsSunVolume(first.frustum, first.focus, -1));
+  REQUIRE(!IntersectsSunVolume(first.frustum, first.focus, INFINITY));
   auto translated = identity;
   translated[12] = float(first.world_texel*0.2);
   const auto moved = *BuildNativeSunCamera(translated, rh, 0, 0, 4096, 500, 500);

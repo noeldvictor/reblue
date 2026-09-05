@@ -24,6 +24,16 @@ struct NativeSunCamera {
   double half_extent = 0, world_texel = 0, depth_range = 0;
 };
 
+inline bool IntersectsSunVolume(const RenderFrustum &volume, const SunVector &center,
+                                 double radius) {
+  if (!std::isfinite(radius) || radius < 0) return false;
+  for (const auto value : center) if (!std::isfinite(value)) return false;
+  for (const auto &plane : volume.planes)
+    if (center[0]*plane[0] + center[1]*plane[1] + center[2]*plane[2] + plane[3] > radius)
+      return false;
+  return true;
+}
+
 // Double precision avoids far-plane cancellation in translated scene cameras.
 // The result is native CPU math, not a translated register instruction stream.
 inline std::optional<std::array<double, 16>> InverseSunInput(const RenderMatrix &m) {

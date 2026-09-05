@@ -199,8 +199,15 @@ bool PublishCachedViewFrustum(PPCContext &ctx, uint32_t view) {
   if (!shape)
     return false;
   ctx.fpscr.enableFlushMode();
-  Publish(*shape, BuildFrustumPlanes(*shape));
+  const auto *volume = views.Volume(view);
+  Publish(*shape, volume ? *volume : BuildFrustumPlanes(*shape));
   ++stats.selected;
+  return true;
+}
+bool PublishNativeViewVolume(uint32_t view, const RenderFrustum &volume) {
+  if (!Words(kShape, 160) || !views.Get(view)) return false;
+  views.PublishVolume(view, volume);
+  Publish(*views.Get(view), volume); // slope shape stays a getter-only adapter
   return true;
 }
 } // namespace bd::gpu::scene

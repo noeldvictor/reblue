@@ -30,6 +30,20 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native sun camera experiment (2026-09-05): current-view orthographic fitting,
+scene snapshot and an explicit sun-scope culling volume are implemented, but
+`bd_native_sun_camera` is **off by default**. Opt-in flat captures lose Shu's
+cast silhouette despite stable sequences, zero camera-fit fallback and matching
+attachment ownership. Preserving the authored light-position getter and
+replacing the special view-1 cull did not resolve that failure. GPU replay
+confirms a populated 4096 depth image and matching caster/terrain light matrices;
+the remaining cause is not isolated. All 23 CTests and twelve source guards
+pass, which does not qualify the image. The final default-off flat control
+restores Shu's cast silhouette and has 0/119 large jumps or cyan patches, with
+218561 matching attachment checks. The default still executes the counted
+engine snapshot/light fitter. No new VR or Quest qualification is claimed.
+See `research/20260905_0914_experimental-native-sun-camera.md`.
+
 Sun-shadow lifecycle checkpoint (2026-09-05): the complete begin/end bodies
 now own an explicit persistent depth attachment and retained output association.
 Native entry/exit and explicit-source publication replace engine allocation,

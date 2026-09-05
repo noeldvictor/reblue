@@ -21,6 +21,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/native_sun_camera_bridge.h"
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(bool, bd_shadow_fit);
@@ -188,6 +189,13 @@ Pass ClassifyPass(const VideoState &s) {
 
 void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
   auto &st = state_();
+  if (const auto sun = scene::GetNativeSunCamera()) {
+    // The explicit pass producer already fitted this frame before traversal.
+    // Never infer it from a target size or warp caster/receiver registers again.
+    st.fix_valid = false;
+    st.zoom = 1.0;
+    return;
+  }
   const Pass pass = ClassifyPass(s);
   if (pass == Pass::Other)
     return;
@@ -312,6 +320,12 @@ void ShadowFitOnVertexBlock(float *regs, const VideoState &s) {
 }
 
 bool ShadowFitLightClip(float out[16], u32 &frame) {
+  if (const auto sun = scene::GetNativeSunCamera()) {
+    const auto matrix = scene::TransposeRenderMatrix(sun->view_projection);
+    std::copy(matrix.begin(), matrix.end(), out);
+    frame = FrameStatFrameCount();
+    return true;
+  }
   auto &st = state_();
   if (st.fitted_frame == 0)
     return false;
@@ -320,9 +334,15 @@ bool ShadowFitLightClip(float out[16], u32 &frame) {
   return true;
 }
 
-f64 ShadowFitZoom() { return state_().zoom; }
+f64 ShadowFitZoom() { return scene::GetNativeSunCamera() ? 1.0 : state_().zoom; }
 
 bool ShadowFitCamera(float out[16], u32 &frame) {
+  if (const auto sun = scene::GetNativeSunCamera()) {
+    const auto matrix = scene::TransposeRenderMatrix(sun->scene_view_projection);
+    std::copy(matrix.begin(), matrix.end(), out);
+    frame = FrameStatFrameCount();
+    return true;
+  }
   auto &st = state_();
   if (!st.camera_valid)
     return false;

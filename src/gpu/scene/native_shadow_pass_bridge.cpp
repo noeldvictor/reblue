@@ -5,6 +5,8 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/native_pass_bridge.h"
+#include "gpu/scene/native_sun_camera_bridge.h"
+#include "gpu/scene/native_view_bridge.h"
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/device.h"
@@ -22,6 +24,7 @@
 
 REX_EXTERN(__imp__sub_82187168);
 REX_EXTERN(__imp__sub_82187330);
+REX_EXTERN(__imp__sub_82287788);
 REX_EXTERN(bdSetRenderState);
 REX_EXTERN(sub_82184A88);
 REX_EXTERN(bdBuildViewMatrix);
@@ -31,6 +34,7 @@ REX_EXTERN(sub_82186840);
 REXCVAR_DECLARE(bool, bd_native_shadow_passes);
 REXCVAR_DECLARE(bool, bd_host_targets);
 REXCVAR_DECLARE(bool, bd_shadows);
+REXCVAR_DECLARE(bool, bd_shadow_fit_diag);
 
 namespace bd::gpu::scene {
 namespace {
@@ -50,6 +54,7 @@ struct Stats {
   uint64_t begins = 0, ends = 0, compatibility_begin = 0, compatibility_end = 0;
   uint64_t refused = 0, outputs = 0, null_outputs = 0, empty_clears = 0;
   uint64_t checked = 0, wrong = 0, camera_snapshots = 0, light_fits = 0;
+  uint64_t object_culls = 0, object_visible = 0, object_comparisons = 0, object_changed = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -66,6 +71,8 @@ void Report() {
           stats.empty_clears, stats.checked, stats.wrong, stats.camera_snapshots,
           stats.light_fits);
   stats.frame = frame;
+  BD_INFO("[native-sun-cull] objects {} visible {} original comparisons {} changed {}",
+          stats.object_culls, stats.object_visible, stats.object_comparisons, stats.object_changed);
 }
 bool Range(uint64_t address, uint64_t bytes) {
   if (!address || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -166,13 +173,15 @@ bool Begin(PPCContext &ctx, uint8_t *base, uint32_t source) {
   ctx.r4.u64 = camera + 160;
   ctx.r5.u64 = camera + 224;
   bdBuildViewMatrix(ctx, base);
-  sub_82283068(ctx, base); // remaining engine scene-camera snapshot producer
-  ++stats.camera_snapshots;
-  ctx.r3.s64 = int32_t(kPrimary);
-  ctx.r4.u64 = camera + 288;
-  ctx.r5.u64 = camera + 300;
-  sub_821752E8(ctx, base); // remaining light-camera fitting / object query producer
-  ++stats.light_fits;
+  if (!ProduceNativeSunCamera(kPrimary, camera + 300, dimension)) {
+    sub_82283068(ctx, base); // explicitly counted unsupported/correctness path
+    ++stats.camera_snapshots;
+    ctx.r3.s64 = int32_t(kPrimary);
+    ctx.r4.u64 = camera + 288;
+    ctx.r5.u64 = camera + 300;
+    sub_821752E8(ctx, base);
+    ++stats.light_fits;
+  }
   ctx.r3.u64 = 0;
   ctx.r4.s64 = int32_t(kPrimary + 68);
   ctx.r5.s64 = int32_t(kPrimary + 132);
@@ -185,6 +194,8 @@ bool Begin(PPCContext &ctx, uint8_t *base, uint32_t source) {
   bd::mem::store<float>(kEngine + 54620, 1.0f);
   ctx.r3.u64 = 1;
   sub_82186840(ctx, base); // native complete frustum/cache producer; preserve r3
+  if (const auto sun = GetNativeSunCamera())
+    Check(PublishNativeViewVolume(1, sun->frustum), "Native sun volume publication failed");
   bd::mem::store<uint8_t>(kPassMode,
       uint8_t(std::min(bd::mem::load<uint32_t>(settings + 7080), 2u)));
   ++stats.begins;
@@ -233,6 +244,7 @@ REX_HOOK_RAW(sub_82187168) {
   using namespace bd::gpu::scene;
   const auto source = ctx.r3.u32;
   if (!Begin(ctx, base, source)) {
+    InvalidateNativeSunCamera();
     ++stats.compatibility_begin;
     stats.refused += REXCVAR_GET(bd_native_shadow_passes);
     __imp__sub_82187168(ctx, base);
@@ -251,4 +263,31 @@ REX_HOOK_RAW(sub_82187330) {
     if (!shadows.empty()) shadows.pop_back();
   }
   Report();
+}
+
+REX_HOOK_RAW(sub_82287788) {
+  using namespace bd::gpu::scene;
+  // View 1's original branch uses fixed view-depth and radial clip cutoffs,
+  // not the published six planes. Those are not the native camera's volume.
+  // Restrict its replacement to the explicit owned sun scope, not target size.
+  const auto sun = !shadows.empty() && shadows.back().depth &&
+      NativePassDepth() == shadows.back().nesting ? GetNativeSunCamera() : std::nullopt;
+  if (!sun || !Words(ctx.r3.u32, 12)) {
+    __imp__sub_82287788(ctx, base);
+    return;
+  }
+  SunVector center;
+  for (uint32_t i = 0; i < 3; ++i) center[i] = bd::mem::load<float>(ctx.r3.u32 + i*4);
+  const auto radius = ctx.f1.f64;
+  const bool visible = IntersectsSunVolume(sun->frustum, center, radius);
+  ++stats.object_culls;
+  stats.object_visible += visible;
+  if (REXCVAR_GET(bd_shadow_fit_diag)) {
+    __imp__sub_82287788(ctx, base);
+    ++stats.object_comparisons;
+    if (bool(ctx.r3.u32) != visible && ++stats.object_changed <= 8)
+      BD_INFO("[native-sun-cull] original {} native {} center ({:.3f} {:.3f} {:.3f}) radius {:.3f}",
+              ctx.r3.u32, visible, center[0], center[1], center[2], radius);
+  }
+  ctx.r3.u64 = visible;
 }

@@ -25,6 +25,7 @@ extern "C" void __imp__sub_82174CE8(PPCContext &, uint8_t *);
 extern "C" void __imp__sub_821982C8(PPCContext &, uint8_t *);
 REXCVAR_DECLARE(bool, bd_native_lighting);
 REXCVAR_DECLARE(bool, bd_native_lighting_verify);
+REXCVAR_DECLARE(bool, bd_shadow_fit_diag);
 
 namespace bd::gpu::scene {
 namespace {
@@ -97,6 +98,10 @@ std::optional<NativeLightingPass> Prepare(uint32_t source, bool enabled) {
   inputs.color_scale = ReadVector(source + 44);
   inputs.shadow_bias = bd::mem::load<float>(source + 60);
   inputs.shadow_threshold = bd::mem::load<float>(source + 64);
+  static uint32_t bias_reports = 0;
+  if (REXCVAR_GET(bd_shadow_fit_diag) && FrameStatFrameCount() > 1800 && bias_reports++ < 12)
+    BD_INFO("[native-lighting] sun bias {} threshold {} mode {} secondary {}",
+            inputs.shadow_bias, inputs.shadow_threshold, inputs.shadow_mode, inputs.secondary_shadow);
   inputs.shadow_kernel_scale = bd::mem::load<float>(kKernelScale);
   for (uint32_t i = 0; i < 3; ++i)
     inputs.scene_origin[i] = bd::mem::load<float>(kScene + i * 4);
