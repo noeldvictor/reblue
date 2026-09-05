@@ -34,10 +34,11 @@ Sampler producer checkpoint (2026-09-05): complete scene defaults, seven direct
 sampler setters and supported changed engine setter calls execute on the host.
 All 18 material/texture/state CTests and three source-boundary guards pass.
 The live original-publication comparison has 146571 matches and zero fallbacks;
-its short flat sequence has 0/119 large jumps and no cyan patches. Normal-path
-and final-eye verification are pending. Inline material writers and per-draw
-fetch import remain: this is producer execution conversion, not complete live
-native sampler or frame ownership. See
+normal short flat and full-size final-eye sequences also have 0/119 large jumps
+and no cyan patches, with no sampler fallbacks. VR remains blurred/letterboxed
+and inconclusive for depth; later scenery/text were not requalified. Inline
+material writers and per-draw fetch import remain: this is producer execution
+conversion, not complete live native sampler or frame ownership. See
 `research/20260905_0436_host-sampler-producers.md`.
 
 Nested pass checkpoint (2026-09-05): supported pass push/pop execution now

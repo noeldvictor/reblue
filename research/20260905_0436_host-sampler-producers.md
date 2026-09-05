@@ -91,3 +91,75 @@ The comparison-off process 25480 started at 04:39:41, log `reblue_712.log`,
 with the same binary and seven audited settings, changing only
 `bd_host_sampler_verify=false`. Its initial host defaults/setters have zero
 fallbacks. Normal-path pixels and desktop final eyes remain pending here.
+
+## Normal desktop sequence
+
+Implementation committed/pushed as `6136ab0`. Process 25480 stopped at 04:42:03.
+Last totals: 20088 host default calls, 68100 default changes, 12222 changed
+engine calls and 3602662 unchanged calls, with no compatibility/refusals.
+Original-publication comparison was disabled. All seven profile entries audited;
+the full archive set mounted, and no error/critical/VK_ERROR or upload exhaustion
+entries were found.
+
+The isolated `out/verification/host_sampler_flat` sequence contains 120
+1920x1080 frames, 2846-2965, from `frame_1788597643_0.raw` through
+`frame_1788597647_119.raw` (04:40:43.675-04:40:47.145). All 119 pairs remain
+below 6%; no frame exceeds 0.30% cyan, with zero patches, median 0.012% and
+maximum 0.02%. Actual first/last images show Shu and the field scenery without
+broad banding or cyan patches. This is a normal host-producer run, not a
+sampler-off control or proof that later scenery/text defects are fixed. No new
+late-scene capture was made at this checkpoint.
+
+## Desktop final-eye setup
+
+Process 24052 started at 04:42:17 EDT, log `reblue_713.log`, with the same
+04:36:19 binary. The absolute xrsim manifest and 31232-byte runtime DLL were
+verified. Process-only environment used width 1440, height 1584 and head height
+0. All 16 profile entries audited: the normal seven settings above, minimum
+capture draws changed to 450, plus:
+
+```toml
+bd_vr_enabled = true
+bd_stereo = false
+bd_stereo_multiview = true
+bd_mv_layered_textures = true
+bd_mv_capture_array = false
+bd_xr_mirror = false
+bd_vr_camera_mode = 2
+bd_vr_diorama_height = 0
+bd_xr_render_scale = 1.0
+```
+
+The runtime reports 1440x1584 per eye. Scene content still uses 1440x808,
+with native two-layer colour/depth surfaces and MSAA 4. The normal flat analyzer
+briefly overlapped VR startup; no performance inference is made.
+
+## Final-eye result and handoff
+
+Process 24052 stopped at 04:44:24. The isolated
+`out/verification/host_sampler_vr_fullsize` sequence contains 120 final stacked
+1440x3168 frames (1440x1584 per eye), 12179-12298, from
+`frame_1788597803_0.raw` through `frame_1788597810_119.raw`
+(04:43:23.411-04:43:30.807). The log confirms layered direct presentation into
+the runtime swapchain. All 119 pairs stay below 6%, with no flagged cyan
+frames/patches and median/maximum 0% cyan.
+
+Both eyes of the actual first/last images were inspected. Broad banding and
+cyan patches are absent in this short view, but blur and large black bars
+remain. Both disparity tests are **inconclusive** (exit 2): only bands 44%/52%
+are usable, at -1/-2 pixels, with a 1-pixel spread. Full-size allocation does
+not establish correct native 3D framing, comfort or headset performance.
+
+Last normal VR totals: 36437 host default calls, 133876 default changes,
+11630 changed engine calls, 4613647 unchanged calls, with zero compatibility
+or refusals. Original comparison remains off. Direct W/border/mip setters
+are not exercised by these runs; scene defaults exercise mip publication.
+The full archive set mounted and no error/critical/VK_ERROR or upload
+exhaustion entries were found.
+
+Both analysis sessions completed, all three owned renderer processes stopped,
+and the exact original five-setting profile was restored. No assets or saves
+were manually edited or staged, and no headset runs occurred. Ordinary sampler
+fetch imports, inline material writers, remaining scene-begin producers and
+full frame ownership remain work; later scenery/text and VR framing/depth
+remain unqualified. No FPS gain is inferred from these correctness runs.

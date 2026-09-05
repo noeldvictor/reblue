@@ -73,12 +73,12 @@ Quest-ready release.
 | Object/pass transforms | Host world/view/projection publication and view-projection composition, direct native camera/XR view input; enabled by default | Engine object/camera sources, inherited matrix cache, complete native scene/pass data and shader-ABI removal |
 | Skin bindings | Explicit per-draw model-local joint indices and host-owned current palette gathering; matrix-value identity guessing removed | Native animation/pose producers, persistent skeleton/skin assets, remaining discovery/entry adapters and a dedicated GPU palette ABI |
 | Raster state | Native depth, cull/fill, colour-write and stencil intent; host setter execution and no normal per-draw raster-cache translation | Sampler and other-state producers, engine getter shadows, complete material/pass recipes and unexercised stencil GPU paths |
-| Sampler producers | Complete scene defaults and seven supported setters execute on the host; 146571 matching original-publication checks | Inline material writers, other setters, per-draw fetch import, independent native live intent and normal-path/final-eye verification |
+| Sampler producers | Complete scene defaults and seven supported setters execute on the host; 146571 matching original-publication checks and stable short normal flat/final-eye sequences | Inline material writers, other setters, per-draw fetch import, independent native live intent and broader GPU coverage |
 | Blend state | Native RGB/alpha blend intent and eight host setters; no normal per-draw Xenos blend-register import | Native material/pass producers, removal of getter shadows, blend constants and separate-alpha/operation GPU coverage |
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests, all 17 upload/state/packet/verification/scene-image/pass/sampler tests and three lock-boundary guards pass; latest qualified short desktop and final-eye multiview have 0/119 large jumps, with explicit 1440x1584 eye sizing | Latest sampler checkpoint still needs normal-path/final-eye checks. Later scenery still fails (110/119 large frame changes); text is not requalified. VR content remains 1440x808 letterboxed/blurred, with inconclusive depth; the default XR scale remains 0.65 |
+| Desktop verification | Material/skin tests, all 17 upload/state/packet/verification/scene-image/pass/sampler tests and three lock-boundary guards pass; latest short desktop and final-eye multiview have 0/119 large jumps, with explicit 1440x1584 eye sizing | Last late-scene check still fails (110/119 large frame changes); scenery/text are not requalified by the sampler checkpoint. VR content remains 1440x808 letterboxed/blurred, with inconclusive depth; the default XR scale remains 0.65 |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -191,6 +191,12 @@ the scene-image callbacks. Native scene associations, pass sequences and other
 material inputs remain; no Quest performance or full-frame completion is claimed.
 
 ## Project documentation
+
+The [sampler producer checkpoint](research/20260905_0436_host-sampler-producers.md)
+replaces complete scene defaults and seven supported setters. Publication
+comparison and short normal desktop/final-eye checks pass, but inline material
+writers and draw-time fetch import remain. It does not qualify later scenery,
+text, stereo depth or full native frames.
 
 - [Host renderer transition](docs/HOST_RENDERER_TRANSITION.md): active scope,
   completion checklist and remaining dependencies.
