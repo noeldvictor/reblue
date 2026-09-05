@@ -10,6 +10,9 @@
 #include <optional>
 
 namespace bd::gpu::scene {
+std::optional<NativeSkinBinding> ImportNativeSkinBinding(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count);
 NativeMaterialHandle ImportNativeMaterial(
     const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
     uint32_t first_index, uint32_t index_count);

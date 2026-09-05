@@ -30,7 +30,22 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
-Latest checkpoint (2026-09-05): host draw packets now retain authoritative shader,
+Latest skin checkpoint (2026-09-05): explicit per-draw joint bindings now come
+from model commands or deferred-entry indices. The host gathers each draw's
+current palette before submission; matrix-value identity guessing and the
+single final-node bone table are removed. Independent tests cover equal poses
+that diverge, different per-draw bindings, capacity and transactional failures.
+The normal late run records 787878 source checks with zero mismatches and
+481158 replayed palettes. Inspected character stretching is gone, superseding
+that specific failure in the earlier packet checkpoint below. Background
+surfaces and text still fail: 110/119 frame pairs exceed the 6% jump threshold.
+Normal final-eye multiview has 0/119 large jumps but inconclusive stereo depth.
+See `research/20260905_0025_native-skin-bindings.md` for both runs and the
+replay-off control. Skeleton/animation evaluation, pose sources, persistent
+skin scene assets, discovery/list adapters and the shader-register ABI remain
+explicit conversion boundaries; this is not a fully native skinned frame.
+
+Packet checkpoint (2026-09-05): host draw packets now retain authoritative shader,
 declaration and raster/blend/alpha intent throughout dispatch. Engine bind/setter
 history no longer overwrites replay packets, and shared vertex decoding uses the
 packet declaration. The new SDK-independent ownership regression test passes
@@ -42,9 +57,9 @@ have 0/119 jumps over 6% and no cyan patches. Inspected eyes no longer have broa
 horizontal banding. This supersedes the short-field flicker findings in earlier
 checkpoints below; it does not qualify other scenes. Stereo depth remains
 INCONCLUSIVE, blur/letterboxing remains, and actual eyes are 936x1030 instead of
-the 1440x1584 target. A longer run using the prior late-scene capture settings
-still fails: deformed character geometry, disappearing scenery and damaged text
-remain. See `research/20260905_0010_native-draw-late-scene.md`; zero allocation
+the 1440x1584 target. At that checkpoint, a longer run using the prior late-scene
+capture settings failed with deformed characters, disappearing scenery and
+damaged text. See `research/20260905_0010_native-draw-late-scene.md`; zero allocation
 failures and zero cyan patches do not qualify those pixels.
 See `research/20260904_2348_native-draw-intent.md` for the replay-off control,
 consumer overwrite trace, normal-path captures and remaining producer boundaries.

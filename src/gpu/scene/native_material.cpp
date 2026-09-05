@@ -125,6 +125,42 @@ bool Matches(const NativeMaterialRange &range, uint32_t ib, uint32_t vb,
 }
 } // namespace
 
+std::optional<NativeSkinBinding> ImportNativeSkinBinding(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count) {
+  if (tag.from_list) {
+    if (!tag.bone_table_va || tag.bone_count > NativeSkinBinding::kCapacity)
+      return {};
+    std::array<uint16_t, NativeSkinBinding::kCapacity> joints{};
+    for (uint32_t i = 0; i < tag.bone_count; ++i) {
+      const uint64_t address = uint64_t(tag.bone_table_va) + i * 4;
+      if (address > UINT32_MAX - 3)
+        return {};
+      const auto *joint = bd::mem::try_at<const be_u32>(uint32_t(address));
+      if (!joint || uint32_t(*joint) > UINT16_MAX)
+        return {};
+      joints[i] = uint16_t(uint32_t(*joint));
+    }
+    return DecodeNativeSkinBinding(std::span(joints).first(tag.bone_count));
+  }
+  const auto *commands = FindCommands(tag);
+  if (!commands)
+    return {};
+  const uint32_t ib = bd::mem::try_load<uint32_t>(tag.mesh_va + 8);
+  const uint32_t vb = bd::mem::try_load<uint32_t>(tag.mesh_va + 16);
+  if (!ib || !vb)
+    return {};
+  std::optional<NativeSkinBinding> found;
+  for (const auto &range : commands->ranges) {
+    if (!Matches(range, ib, vb, index_va, stream_va, first_index, index_count))
+      continue;
+    if (!range.skin || (found && *found != *range.skin))
+      return {}; // geometry reused under different joint bindings is ambiguous
+    found = range.skin;
+  }
+  return found;
+}
+
 NativeMaterialHandle ImportNativeMaterial(
     const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
     uint32_t first_index, uint32_t index_count) {

@@ -25,9 +25,9 @@
 // sightings. A replay takes stable values from the template and moving ones
 // from the latest interpreted node of the same visual in the same frame; when
 // no node of the visual has been interpreted yet this frame, this one is,
-// which is what keeps those values fresh. Nodes whose vertex shader reads c57
-// or the bone palette keep the interpreter, and so does a template whose
-// draw structure changed (volatile).
+// which is what keeps those values fresh. Foliage and per-draw skin bindings
+// have explicit host producers; unsupported inputs and volatile draw structures
+// still require the tracked interpreter boundary.
 //
 // The replay goes through the ordinary draw dispatch with the host state set
 // to the template and the constant sources overridden, so every gate, the
@@ -128,6 +128,7 @@ struct FetchDelta {
 // One of a node's draws.
 struct SubDraw {
   NativeMaterialHandle native_material;
+  std::optional<NativeSkinBinding> skin;
   std::optional<bool> material_disables_shadow;
   std::array<NativeTextureBinding, 16> native_textures;
   PipelineState pipelineState{};
@@ -202,12 +203,6 @@ struct NodeTemplate {
   bool draws_nothing = false;
   u32 replays = 0;
   std::vector<SubDraw> draws;
-  // A skinned node's bone palette is a gather: bdSceneNodeDrawSingle copies
-  // palette slot bone_slots[i] (64 bytes at ctx.palette + slot * 64) into a
-  // stack buffer and uploads it at c60 + 4i. The slots come from the mesh's
-  // bone-index tokens and never change; the matrices do, every frame, so the
-  // replay gathers them live from the same palette.
-  std::vector<u16> bone_slots;
 };
 
 // The registers and samplers the interpreter last wrote for a visual, with
@@ -398,8 +393,6 @@ struct Pending {
   u32 vs_bools_before[4] = {};
   u32 ps_bools_before[4] = {};
   std::vector<SubDraw> draws;
-  u32 bone_count = 0;  // matrices uploaded at c60 by this run, 0 if none
-  bool needs_bones = false; // a draw's vertex shader reads c60..c155
 };
 thread_local Pending t_pending;
 struct ShadowStats {
@@ -407,6 +400,11 @@ struct ShadowStats {
   u32 last_report = 0;
 };
 thread_local ShadowStats t_shadow_stats;
+struct SkinStats {
+  u64 checked = 0, wrong = 0, unsupported = 0, palettes = 0, joints = 0;
+  u32 last_report = 0;
+};
+thread_local SkinStats t_skin_stats;
 thread_local bool t_replaying = false;
 alignas(16) thread_local u8 t_vs_block[kBlockBytes];
 alignas(16) thread_local u8 t_ps_block[kBlockBytes];
@@ -533,9 +531,8 @@ bool FoliageTrusted() {
   return g_foliage_checked >= kFoliageTrustAfter && g_foliage_wrong == 0;
 }
 
-// The vertex shader reads only registers the template can supply: the
-// collision vector is computed here (once verified), the bone palette
-// (c60..c151) is not yet.
+// Collision inputs require their separate producer check. Skin bindings are
+// imported and checked per draw, never inferred from the final node palette.
 bool VertexShaderReplayable(const PipelineState &st) {
   const auto *vs = st.vertexShader;
   if (!vs || !vs->shaderCacheEntry)
@@ -546,23 +543,24 @@ bool VertexShaderReplayable(const PipelineState &st) {
   return true;
 }
 
-// Whether the vertex shader reads the bone palette, c60..c155.
+// Whether the vertex shader may read the imported palette, c60..c255.
 bool VertexShaderReadsBones(const PipelineState &st) {
   const auto *vs = st.vertexShader;
   if (!vs || !vs->shaderCacheEntry)
     return false;
   const u32 *m = vs->shaderCacheEntry->constantRegisterMask;
-  return (m[1] & 0xF0000000u) || m[2] || m[3] || (m[4] & 0x0FFFFFFFu);
+  return (m[1] & 0xF0000000u) || m[2] || m[3] || m[4] || m[5] || m[6] || m[7];
 }
 
 constexpr u32 kBoneBase = 60;
-constexpr u32 kBoneMax = 24; // bdSceneNodeDrawSingle refuses more (cmpwi 24)
-constexpr u32 kBoneRegs = kBoneMax * 4;
+constexpr u32 kBoneMax = NativeSkinBinding::kCapacity;
 
 // A palette slot as the constant file would hold it after the guest's
 // SetVertexShaderConstantFN and the host's byte-swapping copy (NaN flushed).
-void LoadPaletteSlot(u32 va, u32 out[16]) {
+bool LoadPaletteSlot(u32 va, u32 out[16]) {
   const u8 *src = bd::mem::try_at<u8>(va);
+  if (!src || va > UINT32_MAX - 63 || !bd::mem::try_at<u8>(va + 63))
+    return false;
   for (u32 i = 0; i < 16; ++i) {
     u32 v = 0;
     if (src) {
@@ -573,58 +571,17 @@ void LoadPaletteSlot(u32 va, u32 out[16]) {
       v = 0;
     out[i] = v;
   }
-}
-
-// Recover which palette slots the run's c60.. matrices came from, by value.
-bool RecoverBoneSlots(const NodeTag &tag, const u8 *block, u32 count,
-                      std::vector<u16> &slots) {
-  slots.clear();
-  if (!tag.palette_va || count == 0 || count > kBoneMax)
-    return false;
-  if (tag.bone_table_va) {
-    // The entry names them; check the first against the upload anyway.
-    if (tag.bone_count != count)
-      return false;
-    for (u32 i = 0; i < count; ++i) {
-      const u32 slot = bd::mem::try_load<u32>(tag.bone_table_va + i * 4);
-      if (slot > 4096)
-        return false;
-      slots.push_back(static_cast<u16>(slot));
-    }
-    u32 first[16];
-    LoadPaletteSlot(tag.palette_va + slots[0] * 64u, first);
-    if (std::memcmp(first, block + kBoneBase * 16, 64) != 0) {
-      slots.clear();
-      return false;
-    }
-    return true;
-  }
-  u32 span = bd::mem::try_field<u32>(tag.visual_va, kVisualBoneCount);
-  if (span == 0 || span > 1024)
-    span = 512;
-  std::vector<std::array<u32, 16>> palette(span);
-  for (u32 j = 0; j < span; ++j)
-    LoadPaletteSlot(tag.palette_va + j * 64, palette[j].data());
-  for (u32 i = 0; i < count; ++i) {
-    const u8 *want = block + (kBoneBase + 4 * i) * 16;
-    bool found = false;
-    for (u32 j = 0; j < span && !found; ++j)
-      if (std::memcmp(palette[j].data(), want, 64) == 0) {
-        slots.push_back(static_cast<u16>(j));
-        found = true;
-      }
-    if (!found) {
-      slots.clear();
-      return false;
-    }
-  }
   return true;
 }
 
-void GatherBones(const NodeTag &tag, const std::vector<u16> &slots, u8 *block) {
-  for (size_t i = 0; i < slots.size(); ++i)
-    LoadPaletteSlot(tag.palette_va + slots[i] * 64u,
-                    reinterpret_cast<u32 *>(block + (kBoneBase + 4 * i) * 16));
+using SkinPalette = std::array<std::array<u32, 16>, kBoneMax>;
+bool ImportSkinPose(const NodeTag &tag, const NativeSkinBinding &binding,
+                    SkinPalette &palette) {
+  return GatherNativeSkinPalette(binding, [&](u16 joint, std::array<u32, 16> &matrix) {
+    const u64 address = u64(tag.palette_va) + u64(joint) * 64;
+    return tag.palette_va && address <= UINT32_MAX - 63 &&
+           LoadPaletteSlot(u32(address), matrix.data());
+  }, std::span(palette));
 }
 
 void ReadFetch(const D3DDevice *dev, u32 out[32][6], u32 native_mask = 0) {
@@ -637,9 +594,11 @@ void ReadFetch(const D3DDevice *dev, u32 out[32][6], u32 native_mask = 0) {
 // The registers the run wrote (the setter hooks) or that moved anyway (a
 // store the hooks did not see), except the world rows.
 void DiffBlock(const u8 *before, const u8 *now, const u32 *set,
-               std::vector<RegDelta> &out, bool skip_world) {
+               std::vector<RegDelta> &out, bool skip_world, u32 skin_regs = 0) {
   out.clear();
   for (u32 r = 0; r < 256; ++r) {
+    if (r >= kBoneBase && r < kBoneBase + skin_regs)
+      continue;
     if (skip_world && (r >= 20 && r < 24))
       continue;
     if (skip_world && r == 57)
@@ -726,6 +685,10 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
   for (size_t i = 0; i < have.size(); ++i) {
     SubDraw &x = have[i];
     const SubDraw &y = now[i];
+    if (x.skin != y.skin) {
+      ++g_why[3];
+      return false;
+    }
     if (std::memcmp(&x.pipelineState, &y.pipelineState, sizeof(PipelineState)) != 0) {
       ++g_why[1];
       return false;
@@ -978,8 +941,6 @@ void NoteConstantsSet(bool vertex, u32 start, u32 count) {
   const u32 end = std::min<u32>(start + count, 256u);
   for (u32 r = start; r < end; ++r)
     set[r / 32] |= 1u << (r % 32);
-  if (vertex && start == kBoneBase)
-    p.bone_count = count / 4;
 }
 
 // One-shot: where the interpreter's constant writes come from, relative to
@@ -1026,8 +987,6 @@ void HostDrawSnapshotBefore() {
   p.valid = false;
   p.replayable = true;
   p.set_mask = 0;
-  p.bone_count = 0;
-  p.needs_bones = false;
   p.sampler_mask = 0;
   std::memset(p.vs_set, 0, sizeof(p.vs_set));
   std::memset(p.ps_set, 0, sizeof(p.ps_set));
@@ -1051,7 +1010,7 @@ void HostDrawSnapshotBefore() {
 
 namespace {
 
-void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d, bool needs_bones) {
+void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
   Verify &vf = t_verify;
   const u32 idx = vf.next++;
   ++vf.draws;
@@ -1072,8 +1031,6 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d, bool needs_bones)
     return fmt::format("({:.3f} {:.3f} {:.3f} {:.3f})", v[0], v[1], v[2], v[3]);
   };
   for (u32 r = 0; r < 256; ++r) {
-    if (needs_bones && r >= kBoneBase && r < kBoneBase + kBoneRegs)
-      continue;
     if (std::memcmp(t_vs_block + r * 16, e.vs + r * 16, 16) == 0)
       continue;
     const bool world = r >= 20 && r < 24;
@@ -1294,14 +1251,26 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     }
   }
   if (VertexShaderReadsBones(s.pipelineState)) {
-    // The palette is gathered live at replay; keep it out of the delta.
-    p.needs_bones = true;
-    std::memset(p.vs + kBoneBase * 16, 0, kBoneRegs * 16);
-    std::memset(t_vs_block + kBoneBase * 16, 0, kBoneRegs * 16);
-    for (u32 r = kBoneBase; r < kBoneBase + kBoneRegs; ++r)
-      p.vs_set[r / 32] &= ~(1u << (r % 32));
+    d.skin = q.indexed ? ImportNativeSkinBinding(tag, s.index_va,
+        s.vertex_stream_va[0], q.start_index, q.count) : std::nullopt;
+    SkinPalette palette;
+    if (!d.skin || !ImportSkinPose(tag, *d.skin, palette)) {
+      ++t_skin_stats.unsupported;
+      p.replayable = false;
+      return;
+    }
+    ++t_skin_stats.checked;
+    if (std::memcmp(palette.data(), t_vs_block + kBoneBase * 16,
+                    size_t(d.skin->count) * 64) != 0) {
+      if (++t_skin_stats.wrong <= 8)
+        BD_INFO("[native-skin] source mismatch view {} node {} list {} joints {}",
+                tag.render_view, tag.node_index, tag.from_list, d.skin->count);
+      p.replayable = false;
+      return;
+    }
   }
-  DiffBlock(p.vs, t_vs_block, p.vs_set, d.vs_delta, true);
+  DiffBlock(p.vs, t_vs_block, p.vs_set, d.vs_delta, true,
+            d.skin ? u32(d.skin->count) * 4 : 0);
   DiffBlock(p.ps, t_ps_block, p.ps_set, d.ps_delta, false);
   ReadFetch(dev, t_fetch);
   for (u32 i = 0; i < 32; ++i) {
@@ -1398,11 +1367,17 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     }
   }
   if (t_verify.active && t_verify.key == KeyOf(tag))
-    VerifyAgainstReplay(tag, d, p.needs_bones);
+    VerifyAgainstReplay(tag, d);
   p.draws.push_back(std::move(d));
 }
 
 void HostDrawCommit(const NodeTag &tag) {
+  if (FrameStatFrameCount() - t_skin_stats.last_report >= 300) {
+    BD_INFO("[native-skin] checked {} wrong {} unsupported {}; replayed {} palettes / {} joints (cumulative, engine pose import remains)",
+            t_skin_stats.checked, t_skin_stats.wrong, t_skin_stats.unsupported,
+            t_skin_stats.palettes, t_skin_stats.joints);
+    t_skin_stats.last_report = FrameStatFrameCount();
+  }
   if (t_verify.active) {
     Verify &vf = t_verify;
     vf.active = false;
@@ -1456,27 +1431,6 @@ void HostDrawCommit(const NodeTag &tag) {
     }
     p.valid = false;
     return;
-  }
-  std::vector<u16> bone_slots;
-  if (p.needs_bones) {
-    const u32 device_guest = LastGuestDeviceVa();
-    CopyGuestVertexBlock(device_guest, t_vs_block);
-    if (!RecoverBoneSlots(tag, t_vs_block, p.bone_count, bone_slots)) {
-      static u32 told = 0;
-      if (told++ < 4)
-        BD_INFO("[node] bones not recovered: {} uploaded, palette {:08X}, "
-                "visual {:08X} (list {})",
-                p.bone_count, tag.palette_va, tag.visual_va,
-                tag.from_list ? 1 : 0);
-      st.never[KeyOf(tag)] = FrameStatFrameCount();
-      p.valid = false;
-      return;
-    }
-    static u32 said = 0;
-    if (said++ < 2)
-      BD_INFO("[node] bones recovered: {} slots from palette {:08X} for "
-              "visual {:08X}",
-              p.bone_count, tag.palette_va, tag.visual_va);
   }
   const u32 frame = FrameStatFrameCount();
 
@@ -1537,7 +1491,7 @@ void HostDrawCommit(const NodeTag &tag) {
       return;
     }
     if (t.captured_frame != frame) {
-      if (t.bone_slots != bone_slots || !MergeDraws(t.draws, p.draws)) {
+      if (!MergeDraws(t.draws, p.draws)) {
         t.volatile_material = true;
         t.draws.clear();
         ++st.volatile_count;
@@ -1713,7 +1667,6 @@ void HostDrawCommit(const NodeTag &tag) {
   }
   t.captured_frame = frame;
   t.draws = std::move(p.draws);
-  t.bone_slots = std::move(bone_slots);
   p.draws.clear();
   p.valid = false;
 }
@@ -2166,6 +2119,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   // physical block moves under the template (streaming, refresh); a slot
   // whose buffer is gone refuses the replay and recaptures.
   struct ResolvedStreams {
+    SkinPalette skin_pose;
     plume::RenderVertexBufferView views[16];
     plume::RenderIndexBufferView index;
     // The guest bytes behind the streams and the index buffer, for the
@@ -2184,6 +2138,12 @@ bool HostDrawReplay(const NodeTag &tag) {
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     ResolvedStreams &rs = resolved[di];
+    // Preflight all poses before issuing any sub-draw. The packet owns this
+    // frame's gathered palette; the shader upload never follows an old pose.
+    if (d.skin && !ImportSkinPose(tag, *d.skin, rs.skin_pose)) {
+      ++t_skin_stats.unsupported;
+      return false;
+    }
     const bool cached = fast && d.cached_generation == phys_gen;
     for (u32 k = 0; k < 16; ++k) {
       rs.views[k] = d.vertex_views[k];
@@ -2279,7 +2239,9 @@ bool HostDrawReplay(const NodeTag &tag) {
     // terrain piece's matrix is identity and its translation says nothing).
     // Render-list entries have no published distance yet and skinned nodes
     // keep full detail (a character's silhouette is the point of it).
-    if (lod_grid == 0 && tag.render_view == 3 && t->bone_slots.empty() &&
+    const bool skinned = std::any_of(t->draws.begin(), t->draws.end(),
+        [](const SubDraw &draw) { return draw.skin && draw.skin->count; });
+    if (lod_grid == 0 && tag.render_view == 3 && !skinned &&
         REXCVAR_GET(bd_lod) && !verify_requested &&
         REXCVAR_GET(bd_lod_scene_distance) > 0.0) {
       // A render-list entry carries the depth the guest sorts the list by
@@ -2430,8 +2392,12 @@ bool HostDrawReplay(const NodeTag &tag) {
         std::memcpy(t_ps_block + r * 16, pass.ps[r], 16);
     }
     std::memcpy(t_vs_block + 20 * 16, world_rows, sizeof(world_rows));
-    if (!t->bone_slots.empty())
-      GatherBones(tag, t->bone_slots, t_vs_block);
+    if (d.skin) {
+      std::memcpy(t_vs_block + kBoneBase * 16, rs.skin_pose.data(),
+                  size_t(d.skin->count) * 64);
+      ++t_skin_stats.palettes;
+      t_skin_stats.joints += d.skin->count;
+    }
     u32 bools[8];
     // The bits the node's run set come from the template; the rest (the
     // pass and visual bits the guest toggles - VS bit 30, PS bit 5 in the

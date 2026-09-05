@@ -67,12 +67,13 @@ Quest-ready release.
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
 | Object/pass transforms | Host world/view/projection publication and view-projection composition, direct native camera/XR view input; enabled by default | Engine object/camera sources, inherited matrix cache, complete native scene/pass data and shader-ABI removal |
+| Skin bindings | Explicit per-draw model-local joint indices and host-owned current palette gathering; matrix-value identity guessing removed | Native animation/pose producers, persistent skeleton/skin assets, remaining discovery/entry adapters and a dedicated GPU palette ABI |
 | Raster state | Native depth, cull/fill, colour-write and stencil intent; host setter execution and no normal per-draw raster-cache translation | Sampler and other-state producers, engine getter shadows, complete material/pass recipes and unexercised stencil GPU paths |
 | Blend state | Native RGB/alpha blend intent and eight host setters; no normal per-draw Xenos blend-register import | Native material/pass producers, removal of getter shadows, blend constants and separate-alpha/operation GPU coverage |
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | All 11 upload/state/packet tests pass; latest 120-frame short flat and final-eye multiview sequences have 0/119 jumps over 6% and no cyan patches after fixing packet state ownership | The longer cutscene/transition run still has deformed geometry and damaged text; stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
+| Desktop verification | Material/skin tests and all 11 upload/state/packet tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (110/119 large frame changes); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -131,9 +132,16 @@ intent during dispatch. Replay stays enabled. The latest short flat and final-ey
 multiview sequences have no large jumps or cyan patches, and inspected eyes no
 longer show broad horizontal banding. Blur/letterboxing, inconclusive depth,
 below-target eye sizing and full-scene coverage still require work. The
-[longer rerun](research/20260905_0010_native-draw-late-scene.md) confirms the
-later cutscene still has deformed geometry, disappearing scenery and damaged text.
+[longer rerun](research/20260905_0010_native-draw-late-scene.md) at that checkpoint
+had deformed geometry, disappearing scenery and damaged text.
 This fixes packet consumption, not the retained recipe or scene/pass producers.
+
+The [per-draw native skin checkpoint](research/20260905_0025_native-skin-bindings.md)
+removes joint identity guessing and the node-wide retained bone table. Its
+palette-source checks have zero mismatches; inspected late-scene characters no
+longer stretch across the frame with replay enabled. Background surfaces and
+text still fail, and the stable short multiview sequence remains inconclusive
+for stereo depth. Animation evaluation and pose sources are still engine-owned.
 
 ## Project documentation
 
