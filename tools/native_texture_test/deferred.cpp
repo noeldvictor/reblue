@@ -4,6 +4,7 @@
  * @copyright Copyright (c) 2026 reblue contributors
  * @license BSD 3-Clause, see LICENSE
  */
+#include "gpu/scene/deferred_depth.h"
 #include "gpu/scene/deferred_entry_bridge.h"
 #include "gpu/scene/deferred_work.h"
 #include <array>
@@ -15,7 +16,110 @@
 #include <random>
 
 using namespace bd::gpu::scene;
+
+void TestDepth() {
+  const DeferredMatrix identity{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+  DeferredDepthRecipe bounds;
+  bounds.centre = {2, 3, -10};
+  bounds.radius = 2;
+  assert(EvaluateDeferredDepth(bounds, identity, identity) == 8);
+  auto world = identity;
+  world[14] = -5;
+  assert(EvaluateDeferredDepth(bounds, world, identity) == 13);
+  auto view = identity;
+  view[14] = 7;
+  assert(EvaluateDeferredDepth(bounds, world, view) == 6);
+  // Camera rotation uses X, not the previously captured Z key.
+  view = {0, 0, -1, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 1};
+  assert(EvaluateDeferredDepth(bounds, identity, view) == 0);
+  // Preserve the producer's unscaled far extent; no invented max-axis scale.
+  world = identity;
+  world[0] = 2;
+  world[5] = 3;
+  world[10] = 4;
+  assert(EvaluateDeferredDepth(bounds, world, identity) == 38);
+  bounds.radius = -2;
+  assert(EvaluateDeferredDepth(bounds, identity, identity) == 12);
+  bounds.radius = 2;
+
+  // Compare arbitrary affine transforms against independent double-precision
+  // point->world->view math, not a copy of the optimized Z-column expression.
+  std::mt19937 random(123);
+  auto value = [&] { return (int(random() % 2001) - 1000) / 100.0f; };
+  for (int sample = 0; sample < 1000; ++sample) {
+    world = identity;
+    view = identity;
+    for (size_t row = 0; row < 4; ++row)
+      for (size_t col = 0; col < 3; ++col) {
+        world[row * 4 + col] = value();
+        view[row * 4 + col] = value();
+      }
+    for (auto &axis : bounds.centre)
+      axis = value();
+    bounds.radius = value();
+    std::array<double, 4> point{bounds.centre[0], bounds.centre[1],
+                                bounds.centre[2], 1};
+    std::array<double, 4> transformed{};
+    for (size_t col = 0; col < 4; ++col)
+      for (size_t row = 0; row < 4; ++row)
+        transformed[col] += point[row] * world[row * 4 + col];
+    double reference = -bounds.radius;
+    for (size_t row = 0; row < 4; ++row)
+      reference -= transformed[row] * view[row * 4 + 2];
+    const auto actual = EvaluateDeferredDepth(bounds, world, view);
+    assert(actual && std::fabs(*actual - reference) <
+                         0.001 + std::fabs(reference) * 1e-5);
+  }
+
+  bounds = {};
+  for (float bad : {std::numeric_limits<float>::quiet_NaN(),
+                    std::numeric_limits<float>::infinity(),
+                    -std::numeric_limits<float>::infinity()}) {
+    bounds.radius = bad;
+    assert(!EvaluateDeferredDepth(bounds, identity, identity));
+    bounds.radius = 0;
+    for (size_t i = 0; i < 3; ++i) {
+      bounds.centre[i] = bad;
+      assert(!EvaluateDeferredDepth(bounds, identity, identity));
+      bounds.centre[i] = 0;
+    }
+    for (size_t i = 0; i < 16; ++i) {
+      world = identity;
+      world[i] = bad;
+      assert(!EvaluateDeferredDepth(bounds, world, identity));
+      assert(!EvaluateDeferredDepth(bounds, identity, world));
+    }
+  }
+  world = identity;
+  world[10] = std::numeric_limits<float>::max();
+  bounds.centre[2] = 2;
+  assert(!EvaluateDeferredDepth(bounds, world,
+                                identity)); // finite inputs overflow
+  bounds.kind = static_cast<DeferredDepthRecipe::Kind>(99);
+  assert(!EvaluateDeferredDepth(bounds, identity, identity));
+  bounds.kind = DeferredDepthRecipe::Kind::Fixed;
+  bounds.fixed_depth = -17;
+  world.fill(std::numeric_limits<float>::quiet_NaN());
+  assert(EvaluateDeferredDepth(bounds, world, world) ==
+         -17); // no matrix dependency
+  bounds.fixed_depth = std::numeric_limits<float>::infinity();
+  assert(!EvaluateDeferredDepth(bounds, identity, identity));
+
+  // Live movement must actually change back-to-front submission order.
+  bounds = {};
+  bounds.centre = {0, 0, -10};
+  std::array work{
+      DeferredSortItem{*EvaluateDeferredDepth(bounds, identity, identity), 0},
+      DeferredSortItem{15, 1}};
+  assert(OrderDeferredWork(work) && work[0].payload == 1);
+  world = identity;
+  world[14] = -20;
+  work[1].depth = *EvaluateDeferredDepth(bounds, world, identity);
+  assert(OrderDeferredWork(work) && work[0].payload == 0);
+}
+
 int main() {
+  TestDepth();
   std::array items{DeferredSortItem{2, 0}, DeferredSortItem{-1, 1},
                    DeferredSortItem{2, 2}, DeferredSortItem{7, 3}};
   assert(OrderDeferredWork(items));
