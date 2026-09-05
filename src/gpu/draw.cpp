@@ -1,6 +1,6 @@
 /**
  * @file    gpu/draw.cpp
- * @brief   What every draw flushes: the guest render state read, the PSO
+ * @brief   What every draw flushes: live native render intent, the PSO
  *          lookup, and the constant buffer uploads.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
@@ -23,6 +23,7 @@
 #include "gpu/constant_buffers.h"
 #include "gpu/vertex_pull.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_blend_bridge.h"
 #include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
@@ -42,31 +43,13 @@ REXCVAR_DECLARE(i32, bd_debug_max_pso);
 namespace bd::gpu {
 namespace {
 
-// Blend remains a temporary register import because unconverted engine sites
-// write it inline. Raster/depth/stencil intent is produced at the state
-// boundary and copied from host memory; normal draws never read its engine
-// cache.
-void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
-  const auto *dev = bd::mem::at<const D3DDevice>(device_guest);
-  if (!dev)
-    return;
-  const u32 blend = dev->rbBlendControl0;
-  const u32 color_control = dev->rbColorControl;
+// Live host intent is independent of the last bound/replayed pipeline. Normal
+// draws do not import Xenos blend words or the engine raster cache. Explicit
+// correctness switches retain legacy/diagnostic imports inside the bridges.
+void ApplyNativeRenderState(VideoState &s, u32 device_guest) {
   bool &dirty = s.dirtyStates.pipelineState;
   PipelineState &ps = s.pipelineState;
-  Video::SetDirtyValue(dirty, ps.alphaBlendEnable,
-                       (color_control & 0x80000000u) != 0);
-  Video::SetDirtyValue(dirty, ps.srcBlend, ConvertBlendMode(blend & 0x1Fu));
-  Video::SetDirtyValue(dirty, ps.blendOp, ConvertBlendOp((blend >> 5) & 0x7u));
-  Video::SetDirtyValue(dirty, ps.destBlend,
-                       ConvertBlendMode((blend >> 8) & 0x1Fu));
-  Video::SetDirtyValue(dirty, ps.srcBlendAlpha,
-                       ConvertBlendMode((blend >> 16) & 0x1Fu));
-  Video::SetDirtyValue(dirty, ps.blendOpAlpha,
-                       ConvertBlendOp((blend >> 21) & 0x7u));
-  Video::SetDirtyValue(dirty, ps.destBlendAlpha,
-                       ConvertBlendMode((blend >> 24) & 0x1Fu));
-
+  scene::ApplyBlendState(scene::CurrentBlendIntent(device_guest), ps, dirty);
   scene::ApplyRasterState(scene::CurrentRasterIntent(), ps, dirty);
   // Existing diagnostic switches remain explicit; native intent itself is not
   // mutated by a temporary per-draw override.
@@ -196,9 +179,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
                   s.pipelineState.depthStencilFormat, ds_format);
   }
 
-  // Live native raster intent plus the still-imported blend register shadow.
-  // Blend's inline engine writers remain a separately tracked boundary.
-  ReadDeviceRenderState(s, device_guest);
+  // Restore live raster/blend intent after any retained pipeline replay.
+  ApplyNativeRenderState(s, device_guest);
 
   // Anything missing here means the engine has not wired the pipeline up yet.
   if (!s.pipelineState.vertexShader || !s.pipelineState.vertexDeclaration) {

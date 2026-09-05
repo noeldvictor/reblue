@@ -26,6 +26,7 @@
 #include "gpu/device.h"
 #include "gpu/host_resource_heap.h"
 #include "gpu/occlusion.h"
+#include "gpu/scene/native_blend_bridge.h"
 
 namespace {
 
@@ -137,6 +138,7 @@ void SeedDeviceRenderState(u32 device_guest) {
   device->rbBlendControl1 = kBlendControlNoBlend;
   device->rbBlendControl2 = kBlendControlNoBlend;
   device->rbBlendControl3 = kBlendControlNoBlend;
+  bd::gpu::scene::ResetBlendImport();
 }
 
 u32 Direct3D_CreateDevice_hook(u32 /*adapter*/, u32 /*deviceType*/,

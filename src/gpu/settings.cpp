@@ -488,6 +488,10 @@ REXCVAR_DEFINE_BOOL(bd_native_raster, true, kCvarGroup,
                    "Host raster/depth/stencil production and native draw intent");
 REXCVAR_DEFINE_BOOL(bd_native_raster_verify, false, kCvarGroup,
                    "Compare native raster publication and track unobserved engine cache writes");
+REXCVAR_DEFINE_BOOL(bd_native_blend, true, kCvarGroup,
+                   "Host blend production and native draw intent");
+REXCVAR_DEFINE_BOOL(bd_native_blend_verify, false, kCvarGroup,
+                   "Compare native blend publication and track unobserved device writes");
 REXCVAR_DEFINE_BOOL(bd_native_transforms, true, kCvarGroup,
                     "Compose and publish object/pass transforms on the host.");
 REXCVAR_DEFINE_BOOL(bd_native_transforms_verify, false, kCvarGroup,

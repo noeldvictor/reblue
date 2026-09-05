@@ -46,7 +46,7 @@ void Report() {
       "{}; "
       "imports {}; coverage depth {} {} {} fill {} cull {} stencil {} {} {} {} "
       "{} {} {} {} {} color {}; "
-      "blend/other state and engine cache adapters remain",
+      "other state and engine cache adapters remain",
       stats.produced, stats.unchanged, stats.compatibility, stats.refused,
       stats.checked, stats.wrong, stats.draws, stats.draw_checks, stats.drift,
       stats.legacy_draws, stats.imports, stats.setters[0], stats.setters[1],

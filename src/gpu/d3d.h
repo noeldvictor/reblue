@@ -254,10 +254,9 @@ struct D3DDevice {
   // D3DDevice_SetVertexDeclaration: stw r4, 0x2D10(r3).
   be_u32 vertexDeclaration;     // +0x2D10
   u8 pad_2D14[0x2D3C - 0x2D14]; // +0x2D14
-  // Xenos RB_COLORCONTROL shadow. Bit 31 is the alpha blend master enable.
-  // ReadDeviceRenderState reads regs[2895] (2895*4 = 0x2D3C). The regs[] index
-  // == device byte offset / 4 mapping holds because regs[2606]*4 = 0x28B8, the
-  // rbBlendControl0 offset asserted below.
+  // SDK control shadow: bit 31 enables blending, bit 30 separates alpha.
+  // The native blend bridge maintains these getter bits at update time;
+  // normal draw submission consumes host BlendState, not this word.
   be_u32 rbColorControl;        // +0x2D3C
   u8 pad_2D40[0x2F88 - 0x2D40]; // +0x2D40
   // Bound RT/DS surface shadow. D3DDevice_GetRenderTarget (0x824739F0) reads

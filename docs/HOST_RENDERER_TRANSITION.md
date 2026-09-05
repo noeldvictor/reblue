@@ -148,11 +148,26 @@ The normal flat sequence has 0/119 jumps and no cyan patches. Normal desktop
 multiview still has 10/119 jumps at the 64-frame cadence, blurred/banded eyes
 and an inconclusive stereo-depth result; it does not qualify VR correctness.
 See `research/20260904_2238_native-raster-intent.md` for tests and captures.
-Getter/cache/register shadows remain explicit engine adapters; blend still
-imports registers written inline by the engine. Alpha, sampler, other-state
+Getter/cache/register shadows remain explicit engine adapters. Alpha, sampler, other-state
 and material/pass producers, CCW stencil behavior, replay recipes and native
 scene/pass assets remain unconverted. Field captures do not exercise stencil
 operation/mask setters. This is not full frame or both-eye qualification.
+
+Blend intent now also lives in named host state (`native_blend*`), with eight
+host setters and no normal per-draw blend-register read/conversion.
+`bd_native_blend` defaults on; comparison defaults off. The comparison recorded
+4002268 setter checks and 3073105 ordinary draw checks without publication
+mismatches, untracked blend writes or compatibility calls, using one bootstrap
+import. Its short flat sequence has 0/119 jumps and no cyan patches.
+The normal flat path also has 0/119 jumps and no cyan patches, with 4007188
+native blend updates and no blend comparison/compatibility calls.
+The source trace did not substantiate the earlier claim of inline device blend
+writers outside the SDK setters; unrelated matching object offsets are not D3D
+device writes. Verification still explicitly checks for untracked writers.
+See `research/20260904_2302_native-blend-intent.md`. This is not a complete native
+material/pass producer: getter/cache shadows, blend constants, alpha testing,
+other-state execution and retained replay recipes remain. Separate-alpha and
+operation setters have standalone coverage but no field GPU exercise so far.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free

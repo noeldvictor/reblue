@@ -29,6 +29,7 @@
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/native_blend_bridge.h"
 #include "gpu/scene/native_raster_bridge.h"
 #include "gpu/shaders/shader_constants.h"
 
@@ -448,7 +449,8 @@ REX_HOOK_RAW(bdSetRenderState) {
     bd::gpu::Video::SetAlphaThreshold(static_cast<float>(value) *
                                       kAlphaRefScale);
   }
-  bd::gpu::scene::UpdateRasterImport(ctx, base);
+  if (!bd::gpu::scene::UpdateBlendImport(ctx, base))
+    bd::gpu::scene::UpdateRasterImport(ctx, base);
 }
 
 // Initialization seeds the render cache via SDK getters rather than the
@@ -457,4 +459,5 @@ REX_EXTERN(__imp__bdEngineInit);
 REX_HOOK_RAW(bdEngineInit) {
   __imp__bdEngineInit(ctx, base);
   bd::gpu::scene::ResetRasterImport();
+  bd::gpu::scene::ResetBlendImport();
 }
