@@ -47,6 +47,10 @@ bool HostDrawWantsCapture(const NodeTag &tag);
 // run is being captured. A binding that does not change the pointer is still
 // a binding the replay has to make.
 void NoteTextureSet(u32 index);
+enum class SceneTextureRole : uint8_t;
+struct SceneTextureInput;
+// Semantic producer event; ordinary SetTexture calls do not infer this role.
+void NoteSceneTextureInput(SceneTextureRole role, const SceneTextureInput &input);
 // From the D3DDevice_Set*ShaderConstantFN hooks: registers [start, start +
 // count) of the vertex (or pixel) file were written while a node's run is
 // being captured - written, whether or not the value moved.

@@ -14,6 +14,8 @@ struct SceneTextureInput {
   uint32_t source_address = 0; // transient import/diagnostic only
 };
 using SceneTextureInputs = std::array<SceneTextureInput, 2>;
+// Checked logical snapshot only; no registry lookup and no retained association.
+std::optional<std::array<uint32_t, 2>> ReadNativeSceneTextureAddresses();
 // Must run outside the video mutex: resource lookup can wait for an IO upload.
 std::optional<SceneTextureInputs> PrepareNativeSceneTextures();
 } // namespace bd::gpu::scene

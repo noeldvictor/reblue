@@ -11,6 +11,7 @@
 #include "gpu/frame.h"
 #include "gpu/frame_stats.h"
 #include "gpu/native_texture_mirror.h"
+#include "gpu/scene/host_draw.h"
 #include <mutex>
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -90,8 +91,12 @@ void Select(SceneTextureRole role, PPCContext &ctx, uint8_t *base) {
 }
 } // namespace
 
+std::optional<std::array<uint32_t, 2>> ReadNativeSceneTextureAddresses() {
+  return ReadSceneTexturePair(ReadWord);
+}
+
 std::optional<SceneTextureInputs> PrepareNativeSceneTextures() {
-  const auto addresses = ReadSceneTexturePair(ReadWord);
+  const auto addresses = ReadNativeSceneTextureAddresses();
   if (!addresses)
     return {};
   SceneTextureInputs result;
@@ -136,8 +141,12 @@ void PublishNativeSceneTextures(PPCContext &ctx, uint8_t *base) {
     }
   }
   for (size_t i = 0; i < inputs->size(); ++i)
-    if ((*inputs)[i].source_address)
+    if ((*inputs)[i].source_address) {
       Video::SetTexture(kSceneTextureSlots[i], (*inputs)[i].bridge);
+      // Video first records the ordinary write. Claim this semantic role only
+      // after the native producer has actually published its non-null input.
+      NoteSceneTextureInput(SceneTextureRole(i), (*inputs)[i]);
+    }
   // The original callback is void; its final SetTexture leaves the device in r3.
   ctx.r3.u64 = *device;
   std::lock_guard lock(stats_mutex);

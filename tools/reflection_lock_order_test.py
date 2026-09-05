@@ -23,7 +23,7 @@ class ReflectionLockOrderTest(unittest.TestCase):
         self.assertIn("p.reflection_checks.push_back", self.capture)
         self.assertIn("SelectReflectionTextureImport", self.capture)
         for name in ("ResolveGuestTexture(", "ResolveReflectionBinding(",
-                     "ResolveReflectionAddress("):
+                     "ResolveReflectionAddress(", "PrepareNativeSceneTextures("):
             self.assertNotIn(name, self.capture)
 
     def test_commit_resolves_before_store_lock_and_publication(self):
@@ -32,6 +32,14 @@ class ReflectionLockOrderTest(unittest.TestCase):
         self.assertLess(lookup, self.commit.index("!p.replayable"))
         self.assertNotIn("SelectReflectionTextureImport(", self.commit)
         self.assertIn("p.reflection_checks.clear()", self.commit)
+
+    def test_scene_capture_uses_prepared_input_and_discards_retained_slots(self):
+        self.assertIn("p.scene_texture_inputs[i]", self.capture)
+        self.assertIn("expected.native == CaptureNativeTexture(actual)", self.capture)
+        self.assertIn("d.scene_textures.SlotMask()", self.commit)
+        self.assertIn("d.native_textures[k] = {}", self.commit)
+        self.assertIn("d.textures[k] = nullptr", self.commit)
+        self.assertIn("d.tex_va[k] = 0", self.commit)
 
 
 if __name__ == "__main__":

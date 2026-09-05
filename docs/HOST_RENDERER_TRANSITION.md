@@ -30,6 +30,15 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Scene-image replay checkpoint (2026-09-05): explicit per-draw current/next
+roles now replace retained image bindings for converted scene callbacks.
+Ordinary writes clear role ownership; null remains a no-op. Replay resolves
+today's inputs and preflights the whole node outside the video/store locks.
+All 16 material/texture/state CTests and three source-boundary guards pass;
+runtime comparison is pending. Native scene associations, intra-node pass
+sequences, other retained inputs and full visual qualification remain. See
+`research/20260905_0318_native-scene-input-recipes.md`.
+
 Scene-image producer checkpoint (2026-09-05): current/next scene-table selection
 and the complete scene-image binding callback now execute on the host, with
 explicit native image handles, live dynamic adapters and counted null no-ops.
@@ -39,7 +48,7 @@ All 15 material/texture/state CTests pass. Desktop producer comparison records
 compatibility/refusal calls. All 28 bound inputs use native handles; dynamic
 and null publication cases were not exercised. Its early field/title-transition
 capture does not qualify the normal comparison-off path, later scenes or VR.
-Scene-table production, persistent scene associations, retained replay recipes,
+Scene-table production, persistent scene associations, remaining replay recipes,
 the wrapper's blend/constants and full visual qualification remain. See
 `research/20260905_0301_native-scene-textures.md`.
 

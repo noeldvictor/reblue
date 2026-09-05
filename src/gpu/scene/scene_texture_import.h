@@ -5,15 +5,20 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #pragma once
+#include "gpu/scene/scene_texture_recipe.h"
 #include <array>
 #include <cstdint>
 #include <optional>
 
 namespace bd::gpu::scene {
-enum class SceneTextureRole : uint8_t { Current, Next };
-constexpr std::array<uint32_t, 2> kSceneTextureSlots{5, 10}; // shader ABI only
 constexpr uint32_t kSceneTextureTable = (uint32_t(-32137) << 16) + 29804 + 4;
 constexpr uint32_t kActiveTextureTable = (uint32_t(-32036) << 16) - 7864;
+
+constexpr SceneTextureProducer ImportSceneTextureProducer(uint32_t callback) {
+  return callback == 0x8221E618 ? SceneTextureProducer::Images
+      : callback == 0x82454C08 ? SceneTextureProducer::ImagesAndBlend
+      : SceneTextureProducer::None;
+}
 
 // Unlike model reflection selection, these images always come from the scene
 // table. The active offset applies only when that table is the active table.
