@@ -105,8 +105,8 @@ scheduling, CPU bone gathering, material constant publication, ordinary/fur/
 stencil surface expansion, direct draw issuance and list cleanup. Its valid-input
 path replaces the original `sub_8227F360` loop. `bd_native_deferred_consumer`
 defaults on; the explicit compatibility switch/import fallback is counted.
-Standalone surface-policy and shader-ABI packing tests pass. The initial flat
-sequence has 0/119 jumps and no cyan patches; multiview still has 10/119 jumps
+Standalone surface-policy and shader-ABI packing tests pass. The final flat
+sequence has 0/119 jumps and no cyan patches; final multiview still has 10/119 jumps
 at a 64-frame cadence and an inconclusive stereo-depth result. See
 `research/20260904_2154_host-deferred-consumer.md` for verification and limits.
 

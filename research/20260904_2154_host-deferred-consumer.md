@@ -142,3 +142,35 @@ field; it is not all-scene or fur/stencil GPU qualification.
 
 Local profiles, logs, captures, binaries, generated code and game data are
 excluded from commits.
+
+### Multiview, log 666
+
+The integrated consumer was committed and pushed as `7021ccc` after the final
+flat check. The same final binary launched at 21:57:14, PID 23104, with the
+13-setting profile and simulator environment described for log 664. All 13
+settings applied; the log confirms instance/session, the 936x1030x2 swapchain
+and composed eyes differing from the game camera.
+
+Sequence 119 completed 21:58:22.235 at frame 20297, 936x2060 stacked eyes.
+Output isolated in `out/verification/native_consumer_final_vr`. 10/119 pairs
+exceed 6%, at destination frames 20, 21, 23, 24, 26 and 84, 85, 87, 88, 90.
+The 64-frame defect remains. No cyan patches (median/maximum 0%). Both eyes of
+0/119 and 20/21 were inspected: the flagged jump changes the terrain plane to
+the known blurred/banded image. Stereo check exited 2, INCONCLUSIVE, with only
+one bounded textured band. This is not a successful VR stability/depth check.
+
+Last periodic report: 151156 lists, 4293914 entries, 3794220 replays, 494870
+direct draws; zero shells/stencil/fallback/refusal. Bridge calls: visual
+1086309, material 999388, state 3535644, world 499694, resource 2453383, shader
+zero. No error/critical, Vulkan error/failure, overflow, exhaustion or
+retirement-race matches. The exact-path validated process stopped and was
+confirmed exited at 21:58:59.
+
+All renderer processes are stopped and the original five-setting profile is
+restored: autoplay/perf CSV on, 60-second capture delay, minimum 600 draws and
+120 frames. No later-scene capture was repeated with this checkpoint. Fur,
+stencil, battles, cutscenes, menus, transitions/reloads and full both-eye
+coverage remain unqualified. The next ownership work is replacement of the
+remaining visual/material/world/state adapters and entry/pass producers with
+native scene/material/pass data, while keeping the multiview and late-scene
+pixel failures open. No Quest work was performed.
