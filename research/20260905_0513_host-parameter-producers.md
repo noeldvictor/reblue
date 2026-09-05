@@ -62,7 +62,8 @@ constant writers and draw-time shader-register import still exist.
 
 Built the existing Vulkan-only `reblue` target with four jobs. Final executable:
 `out/build/win-amd64-release/reblue_vk.exe`, 47,282,688 bytes, 05:13:33 EDT.
-The log revision is `eab360a52` plus local changes. Codegen reported the module
+The log revision is `eab360a52` plus local changes; final code was committed
+and pushed as `8d4b389`. Codegen reported the module
 up to date; no guest translation unit was rebuilt. No dependency changed.
 
 All 18 texture/upload/state/parameter CTests and the material CTest pass,
@@ -103,8 +104,69 @@ First/last actual image previews show Shu in the village with animated
 waterwheel shadows, without a broad missing band or cyan patch. `--mono`
 only decoded flat captures; it is not a replay-disabled control.
 
-Normal comparison-off and final-eye runs are not yet qualified at this
-initial producer checkpoint. No performance improvement is claimed.
+### Normal comparison-off desktop
+
+PID 25300, 05:17:20-05:19:24, `reblue_716.log`, same final binary. All seven
+profile settings audited, with comparison changed to false. Full archives
+mounted and no error/critical/VK_ERROR/upload-exhaustion messages.
+
+Last normal totals: primary 10,583, secondary 5,722, inactive 51,498;
+1,718,798 flushes, 2,020,436 VS and 1,389,265 PS publications, 33,342,305
+vectors; zero compatibility/refused. Checked stays zero as expected.
+
+`out/verification/host_parameters_flat` contains 120 1920x1080 frames
+2845-2964, `frame_1788599902_0.raw` through `frame_1788599906_119.raw`,
+05:18:22.619-05:18:26.392. Analysis: 0/119 jumps over 6%, zero cyan threshold
+or patch frames, median 0.012%, max 0.02%. First/last actual previews show
+Shu in the village and changing waterwheel shadows without a broad missing
+band or cyan patch. This short view does not requalify the known late-scene
+rock-wall/text failure.
+
+### Desktop final-eye setup
+
+PID 5052 started 05:20:18, same binary, desktop xrsim manifest with verified
+absolute runtime DLL path (31,232 bytes). Process-only environment requests
+1440x1584 per eye and head height 0. Profile uses the normal seven entries,
+minimum draws 450, plus:
+
+```toml
+bd_vr_enabled = true
+bd_stereo = false
+bd_stereo_multiview = true
+bd_mv_layered_textures = true
+bd_mv_capture_array = false
+bd_xr_mirror = false
+bd_vr_camera_mode = 2
+bd_vr_diorama_height = 0
+bd_xr_render_scale = 1.0
+```
+
+### Final-eye result and handoff
+
+PID 5052 stopped at 05:22:10, log `reblue_717.log`. All 16 settings audited;
+full archives mounted, runtime/final eyes 1440x1584, layered direct
+presentation confirmed, but scene content remains 1440x808 with MSAA 4.
+No error/critical/VK_ERROR/upload-exhaustion messages.
+
+`out/verification/host_parameters_vr_fullsize`: 120 final stacked 1440x3168
+frames 12067-12186, `frame_1788600080_0.raw` through
+`frame_1788600090_119.raw`, 05:21:20.842-05:21:30.861. All 119 pairs are below
+6%, no cyan threshold/patch frames, median/max cyan 0%. Both eyes of actual
+first/last previews were inspected: no broad missing bands or cyan patches,
+but blur and large black bars remain. Both stereo checks are **inconclusive**
+(exit 2), with only 44%/52% bands usable, disparities -1/-2 pixels and spread
+1 pixel. This does not establish correct depth, framing or VR completion.
+
+Last normal totals: primary 19,387, secondary 14,316, inactive 128,844;
+5,465,104 flushes, 3,561,785 VS and 6,402,004 PS publications, 78,540,159
+vectors. Compatibility/refused/checked/wrong all zero. Normal runtime confirms
+supported producer execution without calling the original bodies, not removal
+of engine storage or other rendering calls.
+
+All renderers and analyzers completed; original five profile settings restored.
+No device deployment, gameplay/save edits, asset changes, dependency changes or
+performance improvement is claimed. These are desktop correctness runs, not
+headset measurements. Full scene and final-eye qualification remain incomplete.
 
 ## Remaining work
 
