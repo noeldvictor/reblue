@@ -148,6 +148,8 @@ interpreter mentioned in research is distinct from CPU emulation.
 
 The owner explicitly requested disk cleanup and space-conscious work on
 2026-09-05. Treat storage as a budget, not an unlimited experiment archive.
+Minimize retained and peak temporary bytes even when the drive has free space;
+available capacity is not a reason to keep unnecessary outputs.
 
 - Check actual volume free space before builds, asset cooking, downloads and
   captures. Estimate peak additional space first: final outputs plus overlapping
@@ -169,6 +171,12 @@ The owner explicitly requested disk cleanup and space-conscious work on
   Run focused, low-storage checks before storage-heavy verification so simple
   failures do not consume another capture/build budget. Produce only the outputs
   needed for the current question, without weakening required qualification.
+- Prefer streaming analysis and bounded in-memory batches over additional
+  on-disk copies. Analyze complete sequences when required, but do not export
+  every frame to PNG just to inspect a sample. Keep only the representative and
+  failure frames needed for visual review and reports.
+  Check tools' default cache, temporary and automatic output locations before
+  running them; include those bytes in the job budget, not just named outputs.
 - Cook or convert assets in bounded batches, reusing unchanged native outputs.
   Avoid extracting the whole game or retaining every intermediate format for a
   small test. Budget overlapping source, temporary and final representations;
@@ -213,8 +221,7 @@ The owner explicitly requested disk cleanup and space-conscious work on
 - At each experiment checkpoint, identify which artifacts remain the baseline,
   current verification or unresolved-failure evidence, and which are superseded.
   Give retained large artifacts a reason and a cleanup condition. Avoid keeping
-  several copied representations of the same capture; export only the images
-  needed for inspection and reports.
+  several copied representations of the same capture.
   Once a cleanup condition is met, perform the safe, in-scope cleanup before
   generating another replacement set; do not only document an ever-growing
   backlog. Preserve protected evidence and ask if its value is uncertain.
