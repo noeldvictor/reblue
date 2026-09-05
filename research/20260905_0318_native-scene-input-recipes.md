@@ -63,3 +63,46 @@ The first run uses autoplay/perf, capture delay 180, minimum 30 draws, 120
 frames and `bd_host_draw_verify_every=8`. Scene producer comparison is off.
 Runtime coverage and pixel inspection are pending at this implementation
 checkpoint; tests alone do not qualify replay, later scenes or VR.
+
+## Selection-path guard and first runtime evidence
+
+Review after `cb9c342` found that comparing only selected image addresses could
+miss an intra-node table/offset change when two rows currently alias the same
+image. The transient source stamp now includes scene/active tables, count,
+active offset, effective index, selected source word and image. The full stamp
+must agree between node entry and publication. None of it enters the persisted
+role recipe. Added regression cases keep both images identical while changing
+the active rows or relocating their array; both changes are detected.
+
+The strengthened build linked at 03:23:51 EDT (`cb9c342` dirty), again with
+zero codegen writes/deletions and no guest object rebuild. All 15 texture/state
+CTests and three source-boundary guards still pass.
+
+The first sampled run used the 03:17:58 binary, before this stamp strengthening:
+PID 19296, 03:19:33-03:23:40 EDT, `reblue_705.log`. All six settings were audited
+as effective. It recorded 3414 scene-input source comparisons with zero wrong
+or unsupported inputs, and 11613 composed scene-role draws / 23226 native
+inputs, with zero dynamic inputs or preflight refusals. Composition counts
+include diagnostic candidates, not only dispatched draws. The scene producer
+recorded 1707 pairs / 3414 native inputs and zero comparison/compatibility calls.
+
+The general sampled replay comparator still fails: its final report has
+569028 draws compared, 183381 wrong, including unrelated material/texture,
+constant, geometry and bool fields. The bounded examples contain no slot-5/10
+difference, but that absence is not a complete per-role comparator census.
+Source-role checks do not establish that all replay inputs or later inherited
+state are correct. No error/critical, Vulkan error, overflow or exhaustion
+lines were found.
+
+The complete early flat sequence is isolated in
+`out/verification/native_scene_roles_sampled`, from
+`frame_1788592956_0.raw` to `frame_1788592960_119.raw`, 1920x1080. Its inspected
+endpoints show the field path and village/title transition, not the later
+scenery/text failure. Cyan analysis reports 50/120 frames above 0.30%, median
+0.003%, maximum 1.23%, zero 2-60% patches and zero whole-frame detections.
+Sequence-difference analysis is still running at this second checkpoint.
+
+The strengthened normal run (PID 18528, started 03:24:29 EDT, `reblue_706.log`)
+has both comparison modes off and all five settings audited: autoplay/perf,
+270-second delay, minimum 30 draws and 120 frames. Its late-scene result is
+pending; the diagnostic run above must not stand in for it.

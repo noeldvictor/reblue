@@ -449,7 +449,7 @@ struct Pending {
   std::optional<LightingVector> shadow_sampling;
   std::optional<ReflectionTextureImport> reflection_inputs;
   std::vector<PendingReflectionCheck> reflection_checks;
-  std::optional<std::array<u32, 2>> scene_texture_entry;
+  std::optional<SceneTextureSelections> scene_texture_entry;
   SceneTextureRecipe scene_texture_recipe;
   SceneTextureInputs scene_texture_inputs;
   alignas(16) u8 vs[kBlockBytes];
@@ -1013,7 +1013,7 @@ void NoteSceneTextureInput(SceneTextureRole role, const SceneTextureInput &input
   // Until pass changes inside a node have their own native sequence, do not
   // replay a later selection as if it had been the node-entry scene input.
   if (producer == SceneTextureProducer::None || !p.scene_texture_entry ||
-      (*p.scene_texture_entry)[i] != input.source_address) {
+      (*p.scene_texture_entry)[i] != input.selection) {
     ++t_scene_texture_stats.unsupported;
     p.replayable = false;
     return;
@@ -1086,7 +1086,7 @@ void HostDrawSnapshotBefore() {
   p.shadow_sampling = NativeNodeShadowSampling(CurrentNodeTag());
   p.reflection_inputs = NodeReflectionInputs(CurrentNodeTag());
   p.scene_texture_entry = REXCVAR_GET(bd_native_scene_textures)
-      ? ReadNativeSceneTextureAddresses() : std::nullopt;
+      ? ReadNativeSceneTextureSources() : std::nullopt;
   p.scene_texture_recipe = {};
   p.scene_texture_inputs = {};
   p.valid = false;

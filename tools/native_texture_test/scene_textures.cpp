@@ -26,6 +26,23 @@ int main() {
   };
   auto pair = [&] { return ReadSceneTexturePair(read); };
   Require(pair() == std::array<uint32_t, 2>{12, 13});
+  const auto original_sources = ReadSceneTextureSources(read);
+  Require(original_sources.has_value());
+  words[kActiveTextureTable] = 0;
+  words[2024] = 12;
+  words[2052] = 13;
+  Require(pair() == std::array<uint32_t, 2>{12, 13}); // identical images, different rows
+  Require(original_sources != ReadSceneTextureSources(read));
+  words[kActiveTextureTable] = 2;
+  words[1004] = 4000;
+  words[4080] = 12;
+  words[4108] = 13;
+  Require(pair() == std::array<uint32_t, 2>{12, 13}); // relocated row array also differs
+  Require(original_sources != ReadSceneTextureSources(read));
+  words[1004] = 2000;
+  words[2024] = 10;
+  words[2052] = 11;
+  Require(original_sources == ReadSceneTextureSources(read));
   words[kActiveTextureTable + 4] = 3000;
   Require(pair() == std::array<uint32_t, 2>{10, 11}); // scene table, not active table
   words[kActiveTextureTable + 4] = 1000;

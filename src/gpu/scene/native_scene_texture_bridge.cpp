@@ -91,20 +91,22 @@ void Select(SceneTextureRole role, PPCContext &ctx, uint8_t *base) {
 }
 } // namespace
 
-std::optional<std::array<uint32_t, 2>> ReadNativeSceneTextureAddresses() {
-  return ReadSceneTexturePair(ReadWord);
+std::optional<SceneTextureSelections> ReadNativeSceneTextureSources() {
+  return ReadSceneTextureSources(ReadWord);
 }
 
 std::optional<SceneTextureInputs> PrepareNativeSceneTextures() {
-  const auto addresses = ReadNativeSceneTextureAddresses();
-  if (!addresses)
+  const auto selections = ReadNativeSceneTextureSources();
+  if (!selections)
     return {};
   SceneTextureInputs result;
   for (size_t i = 0; i < result.size(); ++i) {
-    auto *texture = (*addresses)[i] ? ResolveGuestTexture((*addresses)[i]) : nullptr;
-    if ((*addresses)[i] && !texture)
+    const auto &selection = (*selections)[i];
+    auto *texture = selection.image ? ResolveGuestTexture(selection.image) : nullptr;
+    if (selection.image && !texture)
       return {}; // preflight both before any binding; original owns debug fallback
-    result[i] = CaptureInput(texture, (*addresses)[i]);
+    result[i] = CaptureInput(texture, selection.image);
+    result[i].selection = selection;
   }
   return result;
 }

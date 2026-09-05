@@ -34,8 +34,11 @@ Scene-image replay checkpoint (2026-09-05): explicit per-draw current/next
 roles now replace retained image bindings for converted scene callbacks.
 Ordinary writes clear role ownership; null remains a no-op. Replay resolves
 today's inputs and preflights the whole node outside the video/store locks.
-All 16 material/texture/state CTests and three source-boundary guards pass;
-runtime comparison is pending. Native scene associations, intra-node pass
+All 16 material/texture/state CTests and three source-boundary guards pass.
+The sampled run records 3414 matching scene-input checks and 11613 composed
+scene-role draws; the general replay comparator still fails other inputs.
+The source guard also distinguishes equal images selected by different table
+paths. Its normal late-scene run is underway. Native scene associations, intra-node pass
 sequences, other retained inputs and full visual qualification remain. See
 `research/20260905_0318_native-scene-input-recipes.md`.
 

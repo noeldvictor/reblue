@@ -12,10 +12,11 @@ struct SceneTextureInput {
   NativeTextureBinding native;
   GuestTexture *bridge = nullptr;
   uint32_t source_address = 0; // transient import/diagnostic only
+  SceneTextureSelection selection; // transient source stamp, not recipe identity
 };
 using SceneTextureInputs = std::array<SceneTextureInput, 2>;
 // Checked logical snapshot only; no registry lookup and no retained association.
-std::optional<std::array<uint32_t, 2>> ReadNativeSceneTextureAddresses();
+std::optional<SceneTextureSelections> ReadNativeSceneTextureSources();
 // Must run outside the video mutex: resource lookup can wait for an IO upload.
 std::optional<SceneTextureInputs> PrepareNativeSceneTextures();
 } // namespace bd::gpu::scene
