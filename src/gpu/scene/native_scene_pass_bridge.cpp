@@ -116,7 +116,7 @@ bool Output(uint32_t container, GuestTexture *&image) {
   image = address ? Texture(address) : nullptr;
   return !address || image;
 }
-// Reuse the original caller frame for still-recompiled camera-cache execution.
+// Reuse the original caller frame for remaining state/parameter ABI adapters.
 // This is stack ABI storage, not rendering ownership or an engine allocation.
 struct CallFrame {
   PPCContext &ctx;

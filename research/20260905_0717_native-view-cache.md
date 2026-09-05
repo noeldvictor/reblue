@@ -109,9 +109,66 @@ Actual first/last images show Shu in the village, solid scenery and animated
 shadows, without broad banding/cyan. All analysis completed after stopping
 the renderer. No normal-path performance claim or full-game coverage follows.
 
+## Normal comparison-off flat
+
+Implementation and comparison evidence were committed/pushed as `b257079`.
+The unchanged 07:28:42 binary ran as process 24108, log 732,
+07:35:57-07:38:01. The original five-setting profile was restored exactly;
+all five audited. Full archives/names mounted. Native view totals: 18054
+produced/rebuilt, all native matrix values, zero checked/clip-check calls,
+compatibility, refusal, matrix imports or cache bootstraps. Native culling
+has 604783 walks and no missing volume. Scene begin/end have no fallbacks,
+44959 matching ownership checks and 12600 explicit outputs. No error,
+critical, VK_ERROR or upload-exhaustion entries.
+
+Captures: `out/verification/native_view_flat`, 120 1920x1080 frames 2817-2936,
+`frame_1788608219_0.raw` through `frame_1788608223_119.raw`,
+07:36:59.849-07:37:03.227. All 119 pairs stay below 6%, no cyan patches;
+median cyan 0.011%, max 0.02%. Actual first/last images show stable village
+scenery and Shu, with moving shadows and no broad banding. Analysis finished
+before the VR renderer launched; no capture/control setting was retained.
+
+## Normal final-eye desktop VR
+
+The vrsim guide was read and used. Same binary, process 24548, log 733,
+07:38:42-07:41:16. All 15 temporary settings audited: autoplay/perf,
+delay 60, minimum 450, count 120, native views on, VR on, legacy stereo off,
+multiview and layered textures on, scene-array capture and mirror off,
+camera mode 2, diorama height 0, XR scale 1.0. The absolute runtime manifest
+and its absolute 31232-byte DLL were checked. Process-only simulator
+environment: 1440x1584 recommended eyes, height 0. Full archives/names mounted.
+Logged XR eye and game positions differ, confirming the native view override.
+
+Final sampled view totals: 41174 produced/rebuilt with native matrices,
+zero compatibility, refusal, matrix imports, bootstraps or comparison calls.
+Native culling has 691810 walks and no missing volume. Scene lifecycle has
+17401 begins / 17400 ends, 34800 explicit outputs, 11174 empty-pass clears,
+132975 matching ownership checks and no fallback/refusal. No error/critical,
+VK_ERROR or upload exhaustion. The remaining state-308 adapter has 34802
+calls and parameter adapters 191411; these are not fully host-owned frames.
+
+The scene colour/depth attachments initially use 1440x808, briefly change
+to 1280x720 during the transition, and return to 1440x808 at 07:39:11.430.
+All have two layers. Final swapchain/captured eyes are 1440x1584 per eye;
+this does not fix the shorter scene-content height.
+
+Captures: `out/verification/native_view_vr`, 120 stacked 1440x3168 frames
+13900-14019, `frame_1788608384_0.raw` through
+`frame_1788608416_119.raw`, 07:39:44.904-07:40:16.672. All 119 pairs stay
+below 6%, no cyan patches (median/max measured 0). Actual first/last images
+show both eyes with stable rocky scenery/orange sky but substantial blur and
+letterboxing. Both stereo checks return exit 2, INCONCLUSIVE: usable bands
+44/52%, disparity -1/-2 pixels, spread 1. This is not a stereo-depth or
+framing pass, headset comfort/performance evidence, or full VR qualification.
+
+The renderer stopped before analysis. Analysis completed successfully with
+the inconclusive stereo outcomes retained, and the exact original five
+profile settings were restored. No renderer, test or analyzer remains live.
+The follow-up source edit only corrects an obsolete camera-cache comment;
+all three successful runtime checks use the same functional binary.
+
 ## Remaining work
 
-Comparison-off flat and final-eye desktop checks follow this checkpoint.
 Engine camera/object sources, inherited transform imports, invalidation/debug
 settings, other-view clients/getters, scene traversal, frame scheduling,
 state 308, animation, effects/post/UI and resource adapters remain. This does

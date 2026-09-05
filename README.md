@@ -68,7 +68,7 @@ Quest-ready release.
 | Scene-image selection | Host selectors/binding callback and explicit per-draw current/next roles; replay resolves live inputs instead of retaining old images, with matching source checks | Scene-table production, persistent associations, intra-node pass sequences, wrapper blend/constants and dynamic/null GPU coverage |
 | Nested render passes | Host attachment/extent stack, complete supported push/pop bodies, typed native entry/exit and shared attachment binders | Engine traversal, other pass producers, getter/lifetime adapters, multiple colour attachments, deeper GPU nesting and full visual qualification |
 | Scene lifecycle | Host begin/end bodies with explicit persistent colour/depth roles and explicit-source outputs; no engine 16-slot allocation or resolve-source guessing; short flat and corrected final-eye sequences are stable, with two-layer depth outputs | State 308, engine camera sources/descriptors/getters, shared MSAA/scale copies, downstream post/UI tile-chain adapters and broader visual qualification |
-| Camera/frustum cache | Complete host inverse/unprojection/orientation and native cached shapes, using native transform values; 15341 matching full publications and a stable comparison sequence | Engine camera sources, inherited transform imports, invalidation/settings/getters, cache-hit GPU coverage and normal flat/final-eye qualification at this checkpoint |
+| Camera/frustum cache | Complete host inverse/unprojection/orientation and native cached shapes, using native transform values; 15341 matching full publications and stable short normal flat/final-eye sequences without fallback/imports | Engine camera sources, inherited transform imports, invalidation/settings/getters, cache-hit GPU coverage, VR framing/depth and broader scene qualification |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
@@ -204,9 +204,12 @@ text, stereo depth or full native frames.
 
 The [frustum checkpoint](research/20260905_0559_native-frustum-producer.md)
 moves complete plane construction and default-view culling volume ownership
-to the host. Original comparisons and short normal flat/final-eye sequences
-pass; engine view/cache producers, other-view tables and whole scene begin
-remain. Stable final eyes still do not qualify their framing or stereo depth.
+to the host. The [native camera/cache checkpoint](research/20260905_0717_native-view-cache.md)
+also replaces view inverse/unprojection/orientation execution and uses native
+transform values and cached shapes. Original comparisons and short normal
+flat/final-eye sequences pass. Engine camera sources, invalidation/settings,
+getter clients and broader scene/frame producers remain. Stable final eyes
+still do not qualify their framing or stereo depth.
 
 - [Host renderer transition](docs/HOST_RENDERER_TRANSITION.md): active scope,
   completion checklist and remaining dependencies.

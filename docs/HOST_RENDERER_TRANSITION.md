@@ -38,7 +38,11 @@ guards pass; the corrected desktop comparison records 15341 matching full
 publications, zero fallback/matrix imports/cache bootstraps and a stable
 120-frame sequence with no large jumps or cyan patches. Float cofactor and
 trigonometric ordering corrections are documented, not hidden by a wider
-tolerance. Comparison-off flat/final-eye checks follow this checkpoint.
+tolerance. Normal comparison-off flat and full-size final-eye sequences also
+have no large jumps or cyan patches, with 18054/41174 native view updates,
+no fallback/imports and no missing native culling volume. Final eyes remain
+blurred/letterboxed and depth-inconclusive; the scene stays 1440x808 during
+the final-eye sequence, despite 1440x1584 output layers.
 Engine camera sources, invalidation/settings, getter publications and broader
 scene/frame ownership remain. Cache-hit/alternate-selection GPU coverage and
 later scenery/text are not qualified. See
