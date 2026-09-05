@@ -181,3 +181,26 @@ diorama height 0, XR render scale 1.0. Process-only environment: absolute
 was used; no Quest or Thor was run. Analysis finished before the next renderer
 launched. The original five-setting profile was restored exactly; final flat
 recheck process 25288 started at 06:53:10 with the same corrected binary.
+
+## Final corrected-build flat recheck
+
+The layer fix and VR evidence were committed/pushed as `23c52e0`. Process
+25288 (log 728) ran from 06:53:10 to 06:55:56 with the 06:49:37 binary and
+the exact original five settings; all five audited and the full archive set
+mounted. Its 120 1920x1080 captures are in
+`out/verification/native_scene_layered_flat`, from `frame_1788605653_0.raw`
+to `frame_1788605658_119.raw`, frames 2846-2965, 06:54:13.260-06:54:18.736.
+There are 0/119 large jumps and no frames over 0.30% cyan: zero patches,
+median 0.012%, maximum 0.02%. Actual first/last images again show Shu and
+the village with solid scenery, animated shadows and no broad banding/cyan.
+
+Last counters: 7501 native begins / 7500 ends, 15000 explicit output
+publications, 874 empty-pass clears and 53375 matching ownership checks.
+Compatibility begin/end, refusals, null outputs and wrong ownership are all
+zero. Remaining engine camera-cache calls: 7501; state-308 adapters: 15002;
+parameter adapters: 82511. No error/critical/VK_ERROR or upload-exhaustion
+entries. All analysis finished; no renderer remains running and the original
+profile is restored. Flat and final-eye runs used the same corrected binary,
+with no overlapping renderer/analysis workload. These are correctness checks,
+not an FPS improvement claim. The known late-scene scenery/text failure was
+not requalified, and the full desktop completion gate remains open.
