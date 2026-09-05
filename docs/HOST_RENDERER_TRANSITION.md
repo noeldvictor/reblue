@@ -30,6 +30,16 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Nested pass checkpoint (2026-09-05): supported pass push/pop execution now
+uses a host-owned attachment/extent stack and shared host attachment binders.
+The engine's saved handles remain checked getter/lifetime adapters; native
+pop does not recover its targets from them. All 17 material/texture/state/pass
+CTests and three source-boundary guards pass. Early desktop coverage has
+native colour/depth/null scopes with no compatibility calls; pixel and
+later-scene/final-eye verification are pending. Engine traversal, scene-begin
+producers, allocation/resolve adapters and full frame scheduling remain. See
+`research/20260905_0355_native-pass-scopes.md`.
+
 Scene-image replay checkpoint (2026-09-05): explicit per-draw current/next
 roles now replace retained image bindings for converted scene callbacks.
 Ordinary writes clear role ownership; null remains a no-op. Replay resolves

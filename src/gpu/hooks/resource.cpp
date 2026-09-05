@@ -30,6 +30,7 @@
 #include "gpu/physical_buffers.h"
 #include "gpu/surface_pool.h"
 #include "gpu/host_targets.h"
+#include "gpu/resource_bridge.h"
 #include "gpu/texture_upload.h"
 
 REXCVAR_DECLARE(bool, bd_stereo_multiview);
@@ -620,6 +621,15 @@ u32 D3DResource_Unlock_hook(u32 resource, u32 /*a2*/, u32 /*a3*/) {
 }
 
 } // namespace
+
+namespace bd::gpu {
+uint32_t RetainResourceAdapter(uint32_t address) {
+  return D3DResource_AddRef_hook({bd::mem::try_at<D3DResource>(address), address});
+}
+uint32_t ReleaseResourceAdapter(uint32_t address) {
+  return D3DResource_Release_hook({bd::mem::try_at<D3DResource>(address), address});
+}
+} // namespace bd::gpu
 
 REX_HOOK(D3DDevice_CreateSurface, D3DDevice_CreateSurface_hook);
 REX_HOOK(D3DDevice_CreateTexture, D3DDevice_CreateTexture_hook);

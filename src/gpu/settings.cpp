@@ -508,6 +508,8 @@ REXCVAR_DEFINE_BOOL(bd_native_scene_textures, true, kCvarGroup,
     "Produce current/next scene texture selection and material bindings on host.");
 REXCVAR_DEFINE_BOOL(bd_native_scene_textures_verify, false, kCvarGroup,
     "Compare native scene texture selection/publication with the original producer.");
+REXCVAR_DEFINE_BOOL(bd_native_passes, true, kCvarGroup,
+    "Own nested pass attachment scopes on the host; keeps engine getter adapters.");
 REXCVAR_DEFINE_BOOL(bd_native_reflection_inputs, true, kCvarGroup,
                    "Resolve direct-node reflection recipes from current pass/table inputs.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both

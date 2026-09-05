@@ -28,6 +28,7 @@
 #include "gpu/host_resource_heap.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/physical_buffers.h"
+#include "gpu/pass_bindings.h"
 #include "gpu/scene/host_draw.h"
 #include "gpu/scene/native_alpha_bridge.h"
 #include "gpu/scene/native_blend_bridge.h"
@@ -83,143 +84,30 @@ void D3DDevice_SetViewport_hook(
 void D3DDevice_SetRenderTarget_hook(
     rex::MappedPtr<bd::gpu::D3DDevice> pDevice, u32 RenderTargetIndex,
     rex::MappedPtr<bd::gpu::D3DSurface> pRenderTarget) {
-  auto *surface = bd::gpu::HostResourceHeap::FromGuest<bd::gpu::GuestTexture>(
-      pRenderTarget.guest_address());
-
-  // Maintain the device RT shadow the recompiled D3DDevice_GetRenderTarget
-  // reads: the RT stack push/pop (every Sofdec movie frame) saves via the
-  // getter and restores via Set, so a stale shadow un-binds the real RT after
-  // each stack pop.
-  if (pDevice && RenderTargetIndex < 4) {
-    pDevice->renderTargetShadow[RenderTargetIndex] =
-        pRenderTarget.guest_address();
-  }
-
-  // MRT is not modeled. BD issues SetRenderTarget(idx=1..3, NULL) every frame
-  // after binding RT[0], and writing those into state would clobber the real
-  // RT[0].
+  if (pDevice && RenderTargetIndex < 4)
+    pDevice->renderTargetShadow[RenderTargetIndex] = pRenderTarget.guest_address();
+  // Additional colour attachments are still an explicit unsupported boundary;
+  // the engine's null writes must not unbind colour attachment zero.
   if (RenderTargetIndex != 0)
     return;
-
-  auto &s = bd::gpu::state();
-
-  // FlushRenderState bakes the new RT's format into the PSO, so the cached
-  // framebuffer holding the old RTV has to go with it.
-  if (s.render_target != surface) {
-    // Deferred draws belong to the target they were recorded against, and this
-    // is the moment it stops being current. Emit them while the old
-    // framebuffer is still bound.
-    //
-    // This is the flush that was missing, and it was missing for a subtle
-    // reason: the queue's other flush points are guarded on
-    // draw_framebuffer_bound, and the very next line clears it - so on the one
-    // event that most needs a flush, every guard downstream was already false.
-    // The draws then came out against the new target, which is why the scene
-    // rendered black while a flush-after-every-draw run was pixel-perfect.
-    // No queue flush here. It reads as the natural place, but this hook also
-    // runs with no command list open, and the draws are emitted a moment later
-    // in BindDrawFramebuffer, immediately before the new framebuffer is bound -
-    // which is the only instant the outgoing one is still valid.
-    s.draw_framebuffer_bound = false;
-  }
-
-
-
-  bd::gpu::Video::SetDirtyValue<bd::gpu::GuestTexture *>(
-      s.dirtyStates.renderTargetAndDepthStencil, s.render_target, surface);
-  bd::gpu::Video::SetDirtyValue<plume::RenderFormat>(
-      s.dirtyStates.pipelineState, s.pipelineState.renderTargetFormat,
-      surface != nullptr ? surface->format : plume::RenderFormat::UNKNOWN);
-  bd::gpu::Video::SetDirtyValue<plume::RenderSampleCounts>(
-      s.dirtyStates.pipelineState, s.pipelineState.sampleCount,
-      surface != nullptr ? surface->sampleCount
-                         : plume::RenderSampleCount::COUNT_1);
-  // Follows the target the same way sampleCount does: a two-layer surface needs
-  // multiview pipelines, and a mono one in the same frame must not get them.
-  // A depth-only pass (the shadow map) takes the answer from its depth
-  // target: with the colour target null the pipelines came out mono while
-  // the two-layer depth framebuffer had viewMask 3, and the map's second
-  // layer was never drawn - no sun shadow in the right eye (desktop
-  // multiview screenshot, 2026-09-02).
-  bd::gpu::Video::SetDirtyValue<bool>(
-      s.dirtyStates.pipelineState, s.pipelineState.multiview,
-      surface != nullptr ? surface->layers > 1
-                         : (s.depth_stencil != nullptr &&
-                            s.depth_stencil->layers > 1));
-
-  // Foveation follows the target too, and from the same inputs the framebuffer
-  // uses - the two render passes must agree or they are incompatible.
-  bd::gpu::Video::SetDirtyValue<bool>(
-      s.dirtyStates.pipelineState, s.pipelineState.fragmentDensityMap,
-      surface != nullptr &&
-          bd::gpu::FoveationWanted(surface->width, surface->height,
-                                   surface->layers));
-  {
-    // Diagnostic: pipelines all come out mono while framebuffers get
-    // viewMask=3, which is a render-pass incompatibility and renders black.
-    // This says whether the target is layered by the time it is bound.
-    static std::atomic<u32> n{0};
-    const u32 i = n.fetch_add(1, std::memory_order_relaxed);
-    if (i < 6 || (i % 4000) == 0)
-      BD_INFO("[mv] SetRenderTarget #{} surface={} {}x{} layers={} -> mv={}", i,
-              surface ? "yes" : "null", surface ? surface->width : 0u,
-              surface ? surface->height : 0u, surface ? surface->layers : 0u,
-              s.pipelineState.multiview);
-  }
-  // Alpha cutout/coverage is composed from native intent at draw time, with
-  // this target's sample count; never infer intent from a replayed pipeline.
-
+  auto *surface = bd::gpu::HostResourceHeap::FromGuest<bd::gpu::GuestTexture>(
+      pRenderTarget.guest_address());
+  bd::gpu::BindColorAttachment(surface);
   bd::gpu::Video::SetDefaultViewport(pDevice, surface);
 }
 
 void D3DDevice_SetDepthStencilSurface_hook(
     rex::MappedPtr<bd::gpu::D3DDevice> pDevice,
     rex::MappedPtr<bd::gpu::D3DSurface> pZStencilSurface) {
+  if (pDevice)
+    pDevice->depthStencilShadow = pZStencilSurface.guest_address();
   auto *surface = bd::gpu::HostResourceHeap::FromGuest<bd::gpu::GuestTexture>(
       pZStencilSurface.guest_address());
-  // Shadow for the recompiled D3DDevice_GetDepthStencilSurface (+0x2F98). Raw
-  // VA as given, the pop's re-Set re-applies the type filter below.
-  if (pDevice) {
-    pDevice->depthStencilShadow = pZStencilSurface.guest_address();
-  }
-  // FromGuest verifies registration, not ResourceType: reject non-depth so a
-  // wrong-type struct never binds as depth_stencil. D32_FLOAT_S8_UINT (BD's
-  // D24S8/D24FS8) registers as DepthStencil, and legacy depth resolve dests as
-  // Texture, so accept both.
-  if (surface) {
-    const bool is_depth =
-        surface->type == bd::gpu::ResourceType::DepthStencil ||
-        (surface->type == bd::gpu::ResourceType::Texture &&
-         bd::gpu::IsDepthFormat(surface->format));
-    if (!is_depth)
-      surface = nullptr;
-  }
-
-  auto &s = bd::gpu::state();
-
-  // Depth surface change drops the cached framebuffer (same #613 reason as
-  // SetRenderTarget above).
-  if (s.depth_stencil != surface)
-    s.draw_framebuffer_bound = false;
-
-  bd::gpu::Video::SetDirtyValue<bd::gpu::GuestTexture *>(
-      s.dirtyStates.renderTargetAndDepthStencil, s.depth_stencil, surface);
-  // Depth-only pass: the multiview flag follows this target (see the colour
-  // hook above).
-  if (s.render_target == nullptr)
-    bd::gpu::Video::SetDirtyValue<bool>(
-        s.dirtyStates.pipelineState, s.pipelineState.multiview,
-        surface != nullptr && surface->layers > 1);
-  bd::gpu::Video::SetDirtyValue<plume::RenderFormat>(
-      s.dirtyStates.pipelineState, s.pipelineState.depthStencilFormat,
-      surface != nullptr ? surface->format : plume::RenderFormat::UNKNOWN);
-
-  // Remember the most recent real depth surface for the enhanced DOF
-  // downsample. BD rebinds the 1280 DOF depth here just before the post chain,
-  // so this ends up naming the depth aligned with the 1280 scene resolve.
-  if (surface)
-    s.scene_depth = surface;
-
+  if (surface && surface->type != bd::gpu::ResourceType::DepthStencil &&
+      !(surface->type == bd::gpu::ResourceType::Texture &&
+        bd::gpu::IsDepthFormat(surface->format)))
+    surface = nullptr;
+  bd::gpu::BindDepthAttachment(surface);
   bd::gpu::Video::SetDefaultViewport(pDevice, surface);
 }
 
