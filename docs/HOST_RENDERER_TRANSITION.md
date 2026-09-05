@@ -41,11 +41,19 @@ with 0/119 large jumps, no cyan patches, 28173 matching attachment checks and
 zero original snapshot/light-fit/cull-comparison calls. The diagnostic sequence
 flagged two transitions around one changed foliage/shadow frame; the normal
 run does not establish their cause or longer-term absence. All 23 CTests and
-thirteen source guards pass. The default still executes the counted engine
-snapshot/light fitter. Final-eye and broader camera qualification remain;
+thirteen source guards pass. Normal 1440x1584 final-eye output has 10/119 large
+changes during an inspected foreground-object passage, with 103019 matching
+shadow ownership checks and no camera fallback. That passage is not yet
+attributed to the camera change. Both eyes remain blurred/letterboxed with
+1440x808 scene content; depth is inconclusive and the character shadow is not
+qualified in that framing. The default still executes the counted engine
+snapshot/light fitter; the hooked binary's default-off short flat control has
+0/119 large jumps, Shu's cast silhouette present and zero cutoff bypasses.
+Final-eye and broader camera qualification remain;
 no Quest result is claimed. See
 `research/20260905_0956_native-sun-character-visibility.md`, which supersedes
-the missing-caster conclusion in the earlier experimental-camera note.
+the missing-caster conclusion in the earlier experimental-camera note, and
+`research/20260905_1004_native-sun-final-eye-check.md` for the subsequent run.
 
 Sun-shadow lifecycle checkpoint (2026-09-05): the complete begin/end bodies
 now own an explicit persistent depth attachment and retained output association.
