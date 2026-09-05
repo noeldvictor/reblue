@@ -116,6 +116,13 @@ void Video::ScrubBufferBindings(plume::RenderBuffer *buffer) {
     return;
   auto &s = state();
   std::lock_guard lock(s.mutex);
+  ScrubBufferBindingsLocked(buffer);
+}
+
+void Video::ScrubBufferBindingsLocked(plume::RenderBuffer *buffer) {
+  if (!buffer)
+    return;
+  auto &s = state();
   for (u32 i = 0; i < 16; ++i) {
     if (s.vertex_views[i].buffer.ref != buffer)
       continue;

@@ -7,7 +7,7 @@
 #include "gpu/scene/native_texture_gpu.h"
 #include "core/logging.h"
 #include "gpu/bindless_allocator.h"
-#include "gpu/constant_buffers.h"
+#include "gpu/host_upload.h"
 #include "gpu/device.h"
 #include "gpu/frame.h"
 #include "gpu/frame_stats.h"
@@ -108,7 +108,7 @@ NativeTextureGpuHandle Upload(VideoState &s, const NativeTextureHandle &asset) {
     return {};
 
   struct UploadImage {
-    ConstantAllocation allocation;
+    HostUploadAllocation allocation;
     uint32_t width, height, depth, row_width;
   };
   std::vector<UploadImage> uploads(data.images.size());
@@ -133,7 +133,7 @@ NativeTextureGpuHandle Upload(VideoState &s, const NativeTextureHandle &asset) {
     for (uint64_t row = 0; row < uint64_t(rows) * u.depth; ++row)
       std::memcpy(staging.data() + row * pitch,
                   data.images[i].data() + row * tight, tight);
-    u.allocation = UploadHostBytes(staging.data(), uint32_t(size), 0x200);
+    u.allocation = UploadHostData(staging.data(), uint32_t(size), 0x200);
     if (!u.allocation.memory)
       return {};
   }

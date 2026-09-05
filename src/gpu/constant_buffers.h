@@ -76,6 +76,8 @@ struct ConstantAllocation {
   // OpCapability Int64, which an Adreno 740 cannot compile. D3D12 still binds a
   // root descriptor and ignores this.
   u32 dynamicOffset = 0;
+  // Distinguishes a refused upload from a successful "already bound" size=0.
+  bool failed = false;
 };
 
 bool TryInit();
@@ -193,8 +195,9 @@ ConstantAllocation UploadSharedConstants(u32 device_guest);
 // list reset.
 void InvalidateSharedBinding();
 
-// alignment defaults to 4 (the upload buffer is WRITE_COMBINE), and CBV callers
-// pass 256.
+// Compatibility bulk-upload adapters. These now use the separate host staging
+// arena; dynamicOffset is invalid and must never be used as a uniform binding.
+// New native callers use gpu/host_upload.h directly. Caller holds renderer lock.
 ConstantAllocation UploadGuestBytesByteSwap32(u32 guest_va, u32 size,
                                               u32 alignment = 4);
 

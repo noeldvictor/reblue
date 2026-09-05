@@ -226,11 +226,11 @@ static void BindGuestConstants(VideoState &s) {
 // already uploaded and bound the unskewed block by this point, so the caller
 // must dirty vertexShaderConstants afterwards to put the next draw back on a
 // clean one.
-void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
+bool Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
                                    float eye_shift) {
   auto &s = state();
   if (!device_guest || !s.command_list)
-    return;
+    return false;
   const u32 *mask =
       (s.pipelineState.vertexShader &&
        s.pipelineState.vertexShader->shaderCacheEntry)
@@ -238,14 +238,17 @@ void Video::BindEyeVertexConstants(u32 device_guest, float eye_skew,
           : nullptr;
   auto alloc =
       UploadVertexShaderConstants(device_guest, eye_skew, eye_shift, mask);
+  if (alloc.failed)
+    return false;
   if (!alloc.size)
-    return;
+    return true;
 #if defined(REBLUE_D3D12)
   s.command_list->setGraphicsRootDescriptor(alloc.ref, 0);
 #else
   s.constant_dyn_offsets[0] = alloc.dynamicOffset;
   BindGuestConstants(s);
 #endif
+  return true;
 }
 
 bool Video::FlushRenderState(u32 device_guest) {
@@ -485,6 +488,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
               : nullptr;
       auto vs_alloc =
           UploadVertexShaderConstants(device_guest, 0.0f, 0.0f, mask);
+      if (vs_alloc.failed)
+        return false;
       if (vs_alloc.size) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(vs_alloc.ref, 0);
@@ -502,6 +507,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
               ? s.pipelineState.pixelShader->shaderCacheEntry
                     ->constantRegisterMask
               : nullptr);
+      if (ps_alloc.failed)
+        return false;
       if (ps_alloc.size) {
 #if defined(REBLUE_D3D12)
         s.command_list->setGraphicsRootDescriptor(ps_alloc.ref, 1);
@@ -516,6 +523,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // dirty signal. The upload is skipped internally when the built block is
     // byte-identical to the one already bound on this list.
     auto sc_alloc = UploadSharedConstants(device_guest);
+    if (sc_alloc.failed)
+      return false;
     if (sc_alloc.size) {
 #if defined(REBLUE_D3D12)
       s.command_list->setGraphicsRootDescriptor(sc_alloc.ref, 2);

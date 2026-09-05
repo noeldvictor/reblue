@@ -44,6 +44,8 @@
 #include "gpu/sampler_cache.h"
 #include "gpu/sampler_key.h"
 #include "gpu/scene/native_texture_binding.h"
+#include "gpu/host_upload.h"
+#include "gpu/upload_page_arena.h"
 #include "gpu/settings.h"
 #include "gpu/shaders/shader_cache.h"
 
@@ -67,9 +69,8 @@ namespace {
 
 constexpr u32 kCBVAlignment = 256;
 
-// Per frame slot. A draw costs at most 4096 (vertex) + 3584 (pixel) + 512
-// (shared, padded) bytes, so 32 MiB carries about 4000 draws - well past the
-// ~2100 a desktop field frame records.
+// Compatibility shader constants only. Bulk host resource uploads have their
+// own paged, fence-reclaimed arena and cannot consume/overwrite this window.
 constexpr u32 kSlotSpan = 32 * 1024 * 1024;
 constexpr u32 kUploadChunkSize = kSlotSpan * kNumFrames;
 
@@ -88,9 +89,8 @@ struct UploadChunk {
   u64 gpuBase = 0;
 };
 
-// One upload chunk list per in-flight frame slot, rewound only after that
-// slot's GPU fence is awaited, so the GPU never reads bytes the CPU has
-// overwritten.
+// One shader-constant region per in-flight frame slot, rewound only after
+// that slot's GPU fence is awaited. Bulk uploads live in host_upload instead.
 struct FrameUpload {
   // Offset within this slot's span of the shared buffer.
   u32 chunkOffset = 0;
@@ -275,7 +275,10 @@ bool CreateChunk(UploadChunk &chunk) {
                                                sizeof(SharedConstants))) {
     BD_ERROR("constant_buffers: could not bind the guest constant buffer; "
              "shaders would read nothing");
+    chunk.buffer->unmap();
     chunk.buffer.reset();
+    chunk.mapped = nullptr;
+    chunk.gpuBase = 0;
     return false;
   }
   return true;
@@ -392,30 +395,22 @@ ConstantAllocation AllocationAt(UploadState &s, u32 offset, u32 size) {
 
 ConstantAllocation Allocate(UploadState &s, u32 size, u32 alignment) {
   if (!s.ready)
-    return {};
-  if (size > kUploadChunkSize) {
-    BD_ERROR("constant_buffers: single allocation {} exceeds chunk size {}",
-             size, kUploadChunkSize);
-    return {};
-  }
+    return {.failed = true};
   if (!s.buffer.buffer && !CreateChunk(s.buffer))
-    return {};
+    return {.failed = true};
 
   FrameUpload &up = s.frames[s.cursor];
-  u32 off = (up.chunkOffset + alignment - 1) & ~(alignment - 1);
-  if (off + size > kSlotSpan) {
-    // Wrapping corrupts constants the GPU may still be reading, but the
-    // alternative is dropping the draw entirely. Say so once - a silent wrap
-    // reads as a rendering bug with no cause.
+  const auto reserved = ReserveUploadRange(up.chunkOffset, size, alignment, kSlotSpan);
+  if (!reserved) {
     if (!up.overflowed) {
       up.overflowed = true;
-      BD_ERROR("constant_buffers: slot {} exhausted its {} MiB span at {} bytes "
-               "- constants will wrap and some draws will read the wrong ones. "
-               "Raise kSlotSpan.",
-               s.cursor, kSlotSpan / (1024 * 1024), off + size);
+      BD_ERROR("constant_buffers: slot {} refused {} bytes at {} / {} bytes "
+               "(alignment {}); draw rejected, no in-flight constants overwritten",
+               s.cursor, size, up.chunkOffset, kSlotSpan, alignment);
     }
-    off = 0;
+    return {.failed = true};
   }
+  const u32 off = *reserved;
   const u32 base = s.cursor * kSlotSpan + off;
   up.chunkOffset = off + size;
   if (up.chunkOffset > up.peakOffset)
@@ -590,12 +585,18 @@ bool TryInit() {
 }
 
 void ResetFrame(u32 slot) {
+  ResetHostUploadsAfterFence(slot);
   auto &s = upload_state();
   if (!s.ready)
     return;
   s.cursor = slot;
   FrameUpload &up = s.frames[slot];
+  static u32 reports = 0;
+  if (++reports % 600 == 0)
+    BD_INFO("[constants] completed slot {} used {} bytes, peak {} / {} bytes",
+            slot, up.chunkOffset, up.peakOffset, kSlotSpan);
   up.chunkOffset = 0;
+  up.overflowed = false;
   up.recordsCommitted = 0;
   s.staged.clear();
   bd::gpu::VertexPullFrameReset(slot);
@@ -1000,7 +1001,7 @@ ConstantAllocation UploadVertexShaderConstants(u32 device_guest,
   }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
-    return {};
+    return alloc;
   std::memcpy(alloc.memory, block, kConstantBlockBytes);
   s.vsShadow.emplace_back();
   std::memcpy(s.vsShadow.back().data(), block, kConstantBlockBytes);
@@ -1047,7 +1048,7 @@ ConstantAllocation UploadPixelShaderConstants(u32 device_guest,
   }
   auto alloc = Allocate(s, kConstantBlockBytes, kCBVAlignment);
   if (!alloc.memory)
-    return {};
+    return alloc;
   std::memcpy(alloc.memory, block, kConstantBlockBytes);
   std::memcpy(s.lastPS, block, kConstantBlockBytes);
   s.psBound = true;
@@ -1061,10 +1062,14 @@ ConstantAllocation UploadHostConstants(const void *data, u32 size) {
   auto &s = upload_state();
   if (!data || !size)
     return {};
-  auto alloc = Allocate(s, size, kCBVAlignment);
+  // Host passes use either VS or PS; the largest fixed descriptor range must
+  // fit even for a small payload. Initialize its unused bytes as well.
+  auto alloc = Allocate(s, std::max(size, kConstantBlockBytes), kCBVAlignment);
   if (!alloc.memory)
-    return {};
+    return alloc;
   std::memcpy(alloc.memory, data, size);
+  std::memset(alloc.memory + size, 0, alloc.size - size);
+  alloc.size = size;
   return alloc;
 }
 
@@ -1354,7 +1359,7 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
 
   auto alloc = Allocate(s, sizeof(SharedConstants), kCBVAlignment);
   if (!alloc.memory)
-    return {};
+    return alloc;
   std::memcpy(alloc.memory, &s.shared, sizeof(SharedConstants));
   s.lastUploaded = s.shared;
   s.sharedBound = true;
@@ -1369,7 +1374,10 @@ ConstantAllocation UploadGuestBytesByteSwap32(u32 guest_va, u32 size,
   auto &s = upload_state();
   if (!s.ready || !guest_va || !size)
     return {};
-  auto alloc = Allocate(s, size, alignment);
+  const auto upload = AllocateHostUpload(size, alignment);
+  ConstantAllocation alloc{.memory = upload.memory, .ref = upload.ref,
+                           .size = upload.size, .dynamicOffset = ~0u,
+                           .failed = !upload.memory};
   if (!alloc.memory)
     return {};
   CopyByteSwap32(alloc.memory, guest_va, size);
@@ -1380,7 +1388,10 @@ ConstantAllocation UploadGuestBytes(u32 guest_va, u32 size, u32 alignment) {
   auto &s = upload_state();
   if (!s.ready || !guest_va || !size)
     return {};
-  auto alloc = Allocate(s, size, alignment);
+  const auto upload = AllocateHostUpload(size, alignment);
+  ConstantAllocation alloc{.memory = upload.memory, .ref = upload.ref,
+                           .size = upload.size, .dynamicOffset = ~0u,
+                           .failed = !upload.memory};
   if (!alloc.memory)
     return {};
   const auto *src = bd::mem::at<const u8>(guest_va);
@@ -1399,11 +1410,9 @@ ConstantAllocation UploadHostBytes(const void *host_data, u32 size,
   auto &s = upload_state();
   if (!s.ready || !host_data || !size)
     return {};
-  auto alloc = Allocate(s, size, alignment);
-  if (!alloc.memory)
-    return {};
-  std::memcpy(alloc.memory, host_data, size);
-  return alloc;
+  const auto upload = UploadHostData(host_data, size, alignment);
+  return {.memory = upload.memory, .ref = upload.ref, .size = upload.size,
+          .dynamicOffset = ~0u, .failed = !upload.memory};
 }
 
 const float *StagedVertexBlock() {

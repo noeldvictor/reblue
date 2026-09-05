@@ -951,9 +951,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
         scene_pass ? float(REXCVAR_GET(bd_stereo_separation)) : 0.0f;
     const float conv =
         scene_pass ? float(REXCVAR_GET(bd_stereo_convergence)) : 0.0f;
-    if (sep != 0.0f || conv != 0.0f)
-      bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? -sep : sep,
-                                             eye ? conv : -conv);
+    if ((sep != 0.0f || conv != 0.0f) &&
+        !bd::gpu::Video::BindEyeVertexConstants(device_guest, eye ? -sep : sep,
+                                               eye ? conv : -conv))
+      continue;
     if (s.deferring_draw)
       push_queued(&half, &rc);
     else
@@ -1107,8 +1108,12 @@ bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
           text_cache.stride == vertexStride && text_cache.tex_w == tex_w &&
           text_cache.tex_h == tex_h && text_cache.kx == kx &&
           text_cache.ky == ky && text_cache.drain == drain) {
-        auto hit = bd::gpu::UploadHostBytes(text_cache.bytes.data(),
-                                            totalSize, /*alignment=*/4);
+        bd::gpu::ConstantAllocation hit;
+        {
+          std::lock_guard lock(bd::gpu::state().mutex);
+          bd::gpu::Video::OpenCommandListLocked();
+          hit = bd::gpu::UploadHostBytes(text_cache.bytes.data(), totalSize, 4);
+        }
         if (!hit.memory)
           return false;
         ++diag.text_hits;
@@ -1163,7 +1168,12 @@ bool UploadAndBindUpVertices(u32 primitiveType, u32 pVertexData,
     text_cache.drain = drain;
     text_cache.bytes.assign(alloc.memory, alloc.memory + totalSize);
   }
-  auto up = bd::gpu::UploadHostBytes(scratch.data(), totalSize, /*alignment=*/4);
+  bd::gpu::ConstantAllocation up;
+  {
+    std::lock_guard lock(bd::gpu::state().mutex);
+    bd::gpu::Video::OpenCommandListLocked();
+    up = bd::gpu::UploadHostBytes(scratch.data(), totalSize, 4);
+  }
   if (!up.memory)
     return false;
   bd::gpu::Video::SetVertexStream(0, up.ref, up.size, vertexStride);
@@ -1460,6 +1470,8 @@ u32 D3DDevice_DrawVerticesUP_hook(u32 device_guest, u32 primitiveType,
   const bool ok =
       !identity && UploadAndBindUpVertices(primitiveType, pVertexData,
                                            vertexCount, vertexStride);
+  if (!identity && !ok)
+    return 0; // a failed upload cannot reuse a prior draw's vertex buffer
   DrawArgs args{};
   args.is_up = ok;
   args.identity_copy = identity;
@@ -1527,6 +1539,8 @@ u32 D3DDevice_EndVertices_hook(u32 /*device_guest*/) {
 
   const bool ok = UploadAndBindUpVertices(p.primitive_type, p.data_va,
                                          p.vertex_count, p.stride);
+  if (!ok)
+    return 0;
   DrawArgs args{};
   args.is_up = ok;
   args.vertexOrIndexCount = p.vertex_count;

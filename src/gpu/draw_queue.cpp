@@ -710,8 +710,11 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         d.index_view.size = ~0u;
         if (REXCVAR_GET(bd_record_mask) && REXCVAR_GET(bd_record_mask_mode) != 3) {
           const u32 base_off = UploadVertexBlockFromStaged(records[0]);
-          if (base_off != ~0u)
-            d.constant_offsets[0] = base_off;
+          if (base_off == ~0u) {
+            i = j;
+            continue; // never draw a masked record against a stale base window
+          }
+          d.constant_offsets[0] = base_off;
         }
         if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }
         if (EmitBindings(cmd, d, st)) {
@@ -739,6 +742,7 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         continue;
       }
     }
+    u32 fallback_vertex_offset = ~0u;
     if (instancing && q.instanced_pipeline && q.record_index != ~0u) {
       size_t j = i + 1;
       while (j < g_queue.size() && g_queue[j].instanced_pipeline &&
@@ -809,8 +813,11 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         // records' masks were computed against it (bd_record_mask).
         if (REXCVAR_GET(bd_record_mask) && REXCVAR_GET(bd_record_mask_mode) != 3) {
           const u32 base_off = UploadVertexBlockFromStaged(records[0]);
-          if (base_off != ~0u)
-            d.constant_offsets[0] = base_off;
+          if (base_off == ~0u) {
+            i = j;
+            continue;
+          }
+          d.constant_offsets[0] = base_off;
         }
         // Pulled when every draw of the group staged its pull info (the
         // group key already fixes the pipeline, so one check per group).
@@ -838,13 +845,20 @@ void DrawQueueFlush(plume::RenderCommandList *cmd) {
         i = j;
         continue;
       }
-      // Out of GPU records (CommitInstanceRecords said so): the plain
-      // pipeline below reads whatever the uniform block holds, which for a
-      // draw that expected the record may be another node's transform.
+      // Out of GPU records: upload this node's own block for the plain path.
+      // It must not inherit whatever transform was last bound.
+      const u32 off = UploadVertexBlockFromStaged(q.record_index);
+      if (off == ~0u) {
+        ++i;
+        continue;
+      }
+      fallback_vertex_offset = off;
     }
 
     const bool two_pass = q.prepass_pipeline && q.color_pipeline;
     QueuedDraw d = q;
+    if (fallback_vertex_offset != ~0u)
+      d.constant_offsets[0] = fallback_vertex_offset;
     if (two_pass)
       d.pipeline = q.color_pipeline;
     if (d.pipeline != prev) { ++pipeline_binds; prev = d.pipeline; }

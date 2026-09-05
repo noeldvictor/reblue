@@ -71,6 +71,7 @@
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
 #include "gpu/scene/native_texture_binding.h"
+#include "gpu/host_upload.h"
 #include "gpu/scene/scene_recipe_residency.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/sampler_cache.h"
@@ -1229,6 +1230,15 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     auto &st = store();
     std::lock_guard lock(st.mutex);
     st.never[KeyOf(tag)] = FrameStatFrameCount();
+    return;
+  }
+  // Frame-local UP/overlay bytes need a native dynamic producer, never an
+  // immutable cross-frame draw recipe with a pointer into staging storage.
+  bool transient_stream = q.indexed && IsHostUploadBuffer(q.index_view.buffer.ref);
+  for (const auto &view : q.vertex_views)
+    transient_stream |= IsHostUploadBuffer(view.buffer.ref);
+  if (transient_stream) {
+    p.replayable = false;
     return;
   }
   const auto *dev = bd::mem::try_at<const D3DDevice>(device_guest);

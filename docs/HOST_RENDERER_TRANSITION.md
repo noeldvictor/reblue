@@ -81,8 +81,17 @@ The native binding checkpoint, compound-recipe lifetime fixes and 120-frame
 flat capture are recorded in
 `research/20260904_1946_native-material-texture-bindings.md`. Its capture has no
 jumps above 6% or cyan patches, but the longer run later exhausted a 32 MiB
-constant-buffer slot. That overflow remains unresolved; this is not a clean
-long-session qualification. Desktop multiview still needs this revision checked.
+constant-buffer slot. That checkpoint was not a clean long-session qualification;
+the wrapping hazard is addressed by the upload separation below.
+
+Resource staging now uses bounded, fence-reclaimed **host upload pages**,
+independent of the shader-register buffer. Native textures and the native UI
+use the host API directly; compatibility bulk adapters share it. Shader storage
+no longer wraps on exhaustion, and transient vertex streams cannot be cached
+as immutable cross-frame geometry. See [the upload contract](HOST_UPLOAD_ARENA.md)
+and `research/20260904_1959_host-upload-pages.md`. A longer loading run no longer
+reported overflow, but its later scene still had severe dark/missing-geometry
+frames. This remains a correctness failure, not full transition qualification.
 
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.

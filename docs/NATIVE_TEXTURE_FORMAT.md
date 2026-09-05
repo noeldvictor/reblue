@@ -79,6 +79,12 @@ recording; callers reacquire by asset through the renderer lock, not by promotin
 weak references concurrently with reclamation. Each padded upload subresource
 is limited to 64 MiB of staging scratch.
 
+GPU copy sources now use [host upload pages](HOST_UPLOAD_ARENA.md), not the
+shader-register ring. Native texture uploads cannot wrap over shader constants
+or earlier subresources in a loading burst. Per-slot fences cover page reuse
+and retirement; the shared 256 MiB staging budget is separate from image
+residency and CPU asset budgets.
+
 Standalone tests exercise that same residency implementation, with instrumented
 image destruction and descriptor lifetime. This does **not** replace the guest
 draw/pass producers or supply asset-level native scene loading.

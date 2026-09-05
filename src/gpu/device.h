@@ -119,6 +119,7 @@ public:
   // BeginCommandList force-dirties every stream slot, so a view left naming a
   // retired buffer would re-bind through it. Takes s.mutex.
   static void ScrubBufferBindings(plume::RenderBuffer *buffer);
+  static void ScrubBufferBindingsLocked(plume::RenderBuffer *buffer);
 
   // Per-stage float constant block (device+0x700 / device+0x1700).
   // FlushRenderState gates the CBV upload + root descriptor bind on these.
@@ -271,7 +272,7 @@ public:
   // and mirrors it into device->viewport at D3DDevice byte offset 0x3058.
   static void SetDefaultViewport(D3DDevice *device, GuestTexture *surface);
   // Rebinds the vertex constants with a per-eye skew, for stereo's second view.
-  static void BindEyeVertexConstants(u32 device_guest, float eye_skew,
+  static bool BindEyeVertexConstants(u32 device_guest, float eye_skew,
                                      float eye_shift);
 
   static void FlushViewport();

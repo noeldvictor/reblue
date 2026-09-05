@@ -16,7 +16,7 @@
 
 #include "core/logging.h"
 #include "gpu/backend.h"
-#include "gpu/constant_buffers.h"
+#include "gpu/host_upload.h"
 #include "gpu/device.h"
 
 #if defined(REBLUE_D3D12)
@@ -105,16 +105,16 @@ bool ImGuiOverlayDrawer::UploadRGBA8Texture(
   const u32 bytes_per_row = w * 4;
   const u32 row_pitch =
       (bytes_per_row + (kRowPitchAlign - 1)) & ~(kRowPitchAlign - 1);
-  ConstantAllocation up;
+  HostUploadAllocation up;
   if (row_pitch == bytes_per_row) {
-    up = UploadHostBytes(rgba, row_pitch * h, 0x200);
+    up = UploadHostData(rgba, row_pitch * h, 0x200);
   } else {
     std::vector<u8> padded(static_cast<size_t>(row_pitch) * h, 0);
     for (u32 y = 0; y < h; ++y) {
       std::memcpy(padded.data() + static_cast<size_t>(y) * row_pitch,
                   rgba + static_cast<size_t>(y) * bytes_per_row, bytes_per_row);
     }
-    up = UploadHostBytes(padded.data(), row_pitch * h, 0x200);
+    up = UploadHostData(padded.data(), row_pitch * h, 0x200);
   }
   if (!up.memory) {
     BD_WARN("ImGui overlay: pixel upload allocation failed ({}x{})", w, h);
@@ -337,7 +337,7 @@ void ImGuiOverlayDrawer::BeginDrawBatch(const rex::ui::ImmediateDrawBatch &b) {
 
   const u32 vbytes =
       u32(sizeof(rex::ui::ImmediateVertex)) * u32(b.vertex_count);
-  ConstantAllocation va = UploadHostBytes(b.vertices, vbytes, 16);
+  HostUploadAllocation va = UploadHostData(b.vertices, vbytes, 16);
   if (!va.memory)
     return;
   const plume::RenderVertexBufferView vbv(va.ref, va.size);
@@ -345,7 +345,7 @@ void ImGuiOverlayDrawer::BeginDrawBatch(const rex::ui::ImmediateDrawBatch &b) {
 
   if (b.indices && b.index_count > 0) {
     const u32 ibytes = u32(sizeof(u16)) * u32(b.index_count);
-    ConstantAllocation ia = UploadHostBytes(b.indices, ibytes, 4);
+    HostUploadAllocation ia = UploadHostData(b.indices, ibytes, 4);
     if (!ia.memory)
       return;
     const plume::RenderIndexBufferView ibv(ia.ref, ia.size,
