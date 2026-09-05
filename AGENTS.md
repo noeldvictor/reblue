@@ -158,6 +158,9 @@ The owner explicitly requested disk cleanup and space-conscious work on
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
   twice. Measure actual free-space change before claiming savings.
+  Inspect existing evidence before producing more. Documentation-only changes
+  do not justify rebuilding or recapturing merely to stamp a new commit hash;
+  record the actual tested binary and source revision instead.
 - Cook or convert assets in bounded batches, reusing unchanged native outputs.
   Avoid extracting the whole game or retaining every intermediate format for a
   small test. Budget overlapping source, temporary and final representations;
@@ -171,8 +174,12 @@ The owner explicitly requested disk cleanup and space-conscious work on
 - Bound captures explicitly. A 120-frame RGBA sequence costs about 0.93 GiB
   at 1920x1080 or 2.04 GiB for stacked 1440x1584 eyes. Keep active raw capture
   evidence around 10 GiB, with documented exceptions for unresolved regressions
-  or required qualification. Do not leave repeated long captures enabled during
-  unrelated diagnostics; set frame counts and output locations before launch.
+  or required qualification. Before a new capture, budget retained unique raw
+  bytes plus the incoming sequence and analysis exports. If that exceeds the
+  budget, identify superseded outputs for safe cleanup or document the required
+  exception first; do not let every checkpoint become a permanent raw archive.
+  Do not leave repeated long captures enabled during unrelated diagnostics;
+  set frame counts and output locations before launch.
   Bound diagnostic dumps and logs too, especially verbose shader/frame dumps.
   At run completion or interruption, stop only agent-started jobs that are no
   longer needed and restore the owner's profile after temporary overrides.
