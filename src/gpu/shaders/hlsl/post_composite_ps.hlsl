@@ -21,8 +21,8 @@
     float4 g_SceneWeight;
     float4 g_BloomWeight;
     uint4 g_Indices0; // depth, first three levels
-    uint4 g_Indices1; // last two levels, atlas, reserved
-    float4 g_Bloom; // threshold, intensity, folded, atlas enabled
+    uint4 g_Indices1; // last two levels, DoF atlas, directional bloom atlas
+    float4 g_Bloom; // threshold, intensity, mask mode (0 external/1 folded/2 paired/3 shared), DoF atlas
     float4 g_Rects[5];
     float4 g_Heat; // amplitudes xy, noise scale, depth exponent
     float4 g_HeatAnimation;
@@ -34,6 +34,22 @@ static uint g_ViewId = 0u;
 float4 Tap(uint index, float2 uv)
 {
     return g_Texture2DDescriptorHeap[index].SampleLevel(g_SamplerDescriptorHeap[0], float3(uv, float(g_ViewId)), 0.0);
+}
+
+float4 Bright(float3 rgb) {
+    const float3 over = max(rgb - g_Bloom.x, 0.0);
+    const float luma = dot(over, float3(0.2125, 0.7154, 0.0722)) * g_Bloom.y;
+    return float4(saturate(min(rgb, 0.25) * 4.0 * luma), 1.0);
+}
+
+float4 DirectionalBloom(float2 uv) {
+    uint width, height, layers;
+    g_Texture2DDescriptorHeap[g_Indices1.w].GetDimensions(width, height, layers);
+    const float2 inset = 0.5 / float2(width, height);
+    const float2 first = clamp(float2(uv.x * 0.5, uv.y), inset, float2(0.5, 1) - inset);
+    const float2 second = first + float2(g_Bloom.z < 2.5 ? 0.5 : 0, 0);
+    // Each original mask has weight 1; g_BloomWeight carries their sum (2).
+    return (Tap(g_Indices1.w, first) + Tap(g_Indices1.w, second)) * 0.5;
 }
 
 // A dof level: its own texture, or its rect of the level atlas,
@@ -112,16 +128,21 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
             dof = TapLevel(4, level[4], scene_uv);
     }
 
-    // Bloom: the mask texture, or (folded) the bright pass of dof level 2.
+    // Quarter-size native preparation is before heat and weighted composition.
+    // Its caller supplies disabled heat; no full-size intermediate is needed.
+    if (g_PushConstants.Param1 == 1.0)
+        return Bright(dof.xyz);
+
+    // Bloom: independent directional masks, external mask, or folded bright level.
     float4 bloom;
-    if (g_Bloom.z > 0.5)
+    if (g_Bloom.z > 1.5)
+    {
+        bloom = DirectionalBloom(texCoord);
+    }
+    else if (g_Bloom.z > 0.5)
     {
         const float3 rgb = TapLevel(2, level[2], texCoord).xyz;
-        const float threshold = g_Bloom.x;
-        const float intensity = g_Bloom.y;
-        const float3 over = max(rgb - threshold, 0.0);
-        const float luma = dot(over, float3(0.2125, 0.7154, 0.0722)) * intensity;
-        bloom = float4(saturate(min(rgb, 0.25) * 4.0 * luma), 1.0);
+        bloom = Bright(rgb);
     }
     else
     {

@@ -44,6 +44,7 @@ REXCVAR_DECLARE(bool, bd_native_scanline_preview);
 REXCVAR_DECLARE(bool, bd_ntsc_filter);
 REXCVAR_DECLARE(int32_t, bd_native_grade_preview);
 REXCVAR_DECLARE(bool, bd_native_heat_preview);
+REXCVAR_DECLARE(int32_t, bd_native_bloom_preview);
 
 namespace bd::gpu {
 namespace {
@@ -62,6 +63,7 @@ struct Stats {
   uint64_t scanline_frames = 0, scanline_checks = 0, scanline_noisy_frames = 0;
   uint64_t grade_scopes = 0, grade_frames = 0, grain_frames = 0, grade_checks = 0;
   uint64_t heat_frames = 0, heat_checks = 0;
+  uint64_t directional_bloom_frames = 0, directional_bloom_iterations = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -95,6 +97,10 @@ void Report() {
   BD_INFO("[native-post] native heat shimmer {} authored checks {}; preview {}; "
           "depth-aware scene distortion fused before unwarped bloom; no guest phase writes",
           stats.heat_frames, stats.heat_checks, REXCVAR_GET(bd_native_heat_preview));
+  BD_INFO("[native-post] native directional bloom {} iterations {}; preview {}; "
+          "independent horizontal/vertical masks, no guest mask cache or resolves",
+          stats.directional_bloom_frames, stats.directional_bloom_iterations,
+          REXCVAR_GET(bd_native_bloom_preview));
 }
 bool Words(uint64_t address, uint64_t bytes) {
   if (!address || (address & 3) || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -325,11 +331,22 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   const auto mode = bd::mem::load<int32_t>(owner + 12648 + bank * 4);
   bloom = MakeBloomParameters(bd::mem::load<float>(owner + 736 + bank * 4),
       bd::mem::load<float>(owner + 748 + bank * 4), composed, mode);
-  // Comparison currently samples the existing folded composite's two inputs.
-  // The original mode-1 third mask needs separate GPU qualification.
-  if (mode == 1 && composed) {
-    ++stats.effects;
-    return false;
+  if (bloom.directional.enabled) {
+    // sub_8221B1D8 and the property serializer use these buffered scalar
+    // descriptors. Import intent only, never the mutable blur object or cache.
+    bloom.directional.sigma = bd::mem::load<float>(owner + 12612 + bank * 4);
+    bloom.directional.gain = bd::mem::load<float>(owner + 12624 + bank * 4);
+    bloom.directional.iterations = uint32_t(std::max(0,
+        bd::mem::load<int32_t>(owner + 12636 + bank * 4)));
+  }
+  const auto bloom_preview = REXCVAR_GET(bd_native_bloom_preview);
+  if (bloom_preview != 0) {
+    if (bloom_preview < 1 || bloom_preview > 2 || REXCVAR_GET(bd_native_post_verify))
+      throw std::runtime_error("Native bloom preview is 1..2 and cannot qualify authored parameters");
+    // Native-only coverage: paired masks, or the zero-iteration shared bright
+    // image. Never modify authored properties to force an event.
+    bloom = MakeBloomParameters(.04f, 8, true, 1);
+    bloom.directional = {3, 1, bloom_preview == 1 ? 2u : 0u, true};
   }
   return true;
 }
@@ -550,6 +567,9 @@ REX_HOOK_RAW(sub_8221B1D8) {
         stats.grade_frames += tail.grade.Active();
         stats.grain_frames += tail.grade.grain;
         stats.heat_frames += tail.heat.enabled;
+        stats.directional_bloom_frames += bloom.directional.enabled;
+        if (bloom.directional.enabled)
+          stats.directional_bloom_iterations += bloom.directional.iterations;
         ++stats.native;
         Report();
         return;

@@ -22,6 +22,44 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.passes = (root / "src/gpu/post_passes.h").read_text(encoding="utf-8")
         cls.heat = (root / "src/gpu/post_heat.h").read_text(encoding="utf-8")
         cls.composite_shader = (root / "src/gpu/shaders/hlsl/post_composite_ps.hlsl").read_text(encoding="utf-8")
+        cls.bloom = (root / "src/gpu/post_bloom.h").read_text(encoding="utf-8")
+        cls.bloom_shader = (root / "src/gpu/shaders/hlsl/post_bloom_direction_ps.hlsl").read_text(encoding="utf-8")
+
+    def test_directional_bloom_imports_intent_without_original_mask_production(self):
+        body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        for offset in (12612, 12624, 12636):
+            self.assertIn(f"owner + {offset} + bank * 4", body)
+        self.assertNotIn("if (mode == 1 && composed)", body)
+        self.assertIn("bloom.directional.enabled", body)
+        for name in ("__imp__", "sub_8221E700(", "sub_8221E758(", "REX_STORE", "psFloatConstants"):
+            self.assertNotIn(name, body)
+        for name in ("PPCContext", "bd::mem::", "plume::", "REX_"):
+            self.assertNotIn(name, self.bloom)
+
+    def test_directional_bloom_precedes_heat_and_uses_private_non_aliasing_atlases(self):
+        body = self.post.split("BloomMaskView BuildDirectionalBloom(", 1)[1].split("bool RenderLensFlare(", 1)[0]
+        self.assertIn("MakeBloomAtlasStep(iteration, direction)", body)
+        self.assertIn("atlases[step.input]->slot, step.source_half", body)
+        self.assertIn("sizeof(kernel) == 32", body)
+        self.assertIn("bright, parameters, {}, nullptr, 0, {}, true", body)
+        self.assertIn("if (directional.iterations == 0) return {atlases[0], false}", body)
+        for name in ("s.render_target", "s.textures[", "GuestPixelConstant", "ResolveRtToTexture", "copyTexture"):
+            self.assertNotIn(name, body)
+        render = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]
+        self.assertIn("output->format, 5 + i, output->layers", render)
+        self.assertLess(render.index("BuildDirectionalBloom("), render.index("HostComposite("))
+        self.assertIn("DirectionalBloom(texCoord)", self.composite_shader)
+
+    def test_directional_bloom_shader_clamps_each_half_and_selects_its_eye(self):
+        shader = self.bloom_shader
+        self.assertIn("SV_ViewID", shader)
+        self.assertIn("int(position.x) % half_width + origin", shader)
+        self.assertEqual(shader.count("viewId, 0)"), 3)
+        self.assertIn("clamp(p + direction * int(i), lo, hi)", shader)
+        self.assertIn("clamp(p - direction * int(i), lo, hi)", shader)
+        for name in ("g_PSC", "g_VSC", "g_vSampleWeights", "g_vSampleOffsets"):
+            self.assertNotIn(name, shader)
+        self.assertIn("float2(0.5, 1) - inset", self.composite_shader)
 
     def test_heat_has_native_parameters_animation_and_no_guest_submission(self):
         body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
@@ -143,7 +181,7 @@ class NativePostBoundaryTest(unittest.TestCase):
                      "HostPostIntercept", "ResolveRtToTexture", "TrackResolveSource"):
             self.assertNotIn(name, body)
         self.assertLess(body.index("DrawQueueFlush("), body.index("BuildDofPyramid("))
-        self.assertIn("HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler)", body)
+        self.assertIn("HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler, directional)", body)
         self.assertIn("s.draw_framebuffer_bound = false", body)
 
     def test_composite_consumes_typed_native_parameters(self):

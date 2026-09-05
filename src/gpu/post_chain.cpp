@@ -78,6 +78,7 @@
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_grade_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_bloom_direction_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
@@ -90,6 +91,7 @@
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_grade_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_bloom_direction_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -122,6 +124,7 @@ enum class Shader : u32 {
   Adjust = 7,
   Scanline = 8,
   Grade = 9,
+  BloomDirection = 10,
   Count
 };
 
@@ -167,6 +170,11 @@ struct Scratch {
   plume::RenderTextureLayout layout = plume::RenderTextureLayout::UNKNOWN;
   // Two per size: a blur is two passes and the second reads the first.
   u32 role = 0;
+};
+
+struct BloomMaskView {
+  Scratch *atlas = nullptr;
+  bool paired = false;
 };
 
 // What the dof draw bound, kept for the composite at the ms_tex draw.
@@ -236,6 +244,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(post_scanline_ps), "main", kHostShaderFormat);
   c.shaders[u32(Shader::Grade)] = s.device->createShader(
       REBLUE_SHADER_BLOB(post_grade_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::BloomDirection)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_bloom_direction_ps), "main", kHostShaderFormat);
   if (!c.flare_vs) {
     c.failed = true;
     return false;
@@ -624,7 +634,8 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
                    GuestTexture *bloom, const PostAttachment &rt,
                    const BloomParameters &parameters,
                    const HeatShimmerParameters &heat = {}, GuestTexture *heat_image = nullptr,
-                   u32 heat_sampler = 0) {
+                   u32 heat_sampler = 0, const BloomMaskView &directional = {},
+                   bool bright_stage = false) {
 #if defined(REBLUE_D3D12)
   (void)s; (void)c; (void)scene; (void)bloom; (void)rt; (void)parameters;
   return false; // the parameter block rides the Vulkan dynamic UBO binding
@@ -676,6 +687,10 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   k.bloom[0] = parameters.threshold;
   k.bloom[1] = parameters.intensity;
   k.bloom[2] = fold ? 1.0f : 0.0f;
+  if (directional.atlas) {
+    k.indices1[3] = directional.atlas->slot;
+    k.bloom[2] = directional.paired ? 2.0f : 3.0f;
+  }
   k.bloom[3] = c.dof.atlas ? 1.0f : 0.0f;
   if (c.dof.atlas) {
     k.indices1[2] = c.dof.atlas->slot;
@@ -715,7 +730,7 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
                 float(REXCVAR_GET(bd_host_post_debug_depth)
                           ? 1
                           : REXCVAR_GET(bd_host_post_debug)),
-                0.0f},
+                bright_stage ? 1.0f : 0.0f},
        /*keep_bound=*/true);
   if (c.composite_frames++ < 3)
     BD_INFO("[post] composite into {}x{}: dof ({:.3g}, {:.3g}, focus {:.3g}) "
@@ -724,6 +739,46 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
             k.w1[0]);
   return true;
 #endif
+}
+
+BloomMaskView BuildDirectionalBloom(VideoState &s, Chain &c, GuestTexture *scene,
+                                    const BloomParameters &parameters,
+                                    const std::array<Scratch *, 2> &atlases) {
+  const auto &directional = parameters.directional;
+  if (!directional.enabled) return {};
+  auto bright = Attachment(atlases[0]);
+  bright.width /= 2; // only the left half is initialized; both directions start here
+  Transition(s, atlases[0]->texture.get(), atlases[0]->layout,
+             plume::RenderTextureLayout::COLOR_WRITE);
+  if (!HostComposite(s, c, scene, nullptr, bright, parameters, {}, nullptr, 0, {}, true))
+    throw std::runtime_error("Native directional bloom preparation failed");
+  s.command_list->setFramebuffer(nullptr);
+  Transition(s, atlases[0]->texture.get(), atlases[0]->layout,
+             plume::RenderTextureLayout::SHADER_READ);
+  if (directional.iterations == 0) return {atlases[0], false};
+  const auto kernel = MakeBloomKernel(directional.sigma, directional.gain);
+  static_assert(sizeof(kernel) == 32);
+  const auto allocation = UploadHostConstants(kernel.data(), sizeof(kernel));
+  auto *pipeline = Pipeline(s, c, Shader::BloomDirection, bright.format, bright.layers > 1);
+  if (!allocation.memory || !pipeline)
+    throw std::runtime_error("Native directional bloom kernel failed");
+  const u32 offsets[3] = {s.constant_dyn_offsets[0], allocation.dynamicOffset,
+                          s.constant_dyn_offsets[2]};
+  s.command_list->setGraphicsDescriptorSetDynamic(s.constant_descriptor_set.get(),
+      kConstantDescriptorSetIndex, offsets, 3);
+  for (u32 iteration = 0; iteration < directional.iterations; ++iteration) {
+    auto *output = atlases[(iteration + 1) & 1u];
+    Transition(s, output->texture.get(), output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    for (u32 direction = 0; direction < 2; ++direction) {
+      const auto step = MakeBloomAtlasStep(iteration, direction);
+      PassAt(s, pipeline, output->framebuffer.get(), direction * bright.width, 0,
+          bright.width, bright.height,
+          PostPush{atlases[step.input]->slot, step.source_half, float(direction), 0},
+          direction == 0);
+    }
+    Transition(s, output->texture.get(), output->layout, plume::RenderTextureLayout::SHADER_READ);
+  }
+  return {atlases[directional.iterations & 1u], true};
 }
 
 bool RenderLensFlare(VideoState &s, Chain &c, const PostAttachment &output,
@@ -815,6 +870,18 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   };
   if (grade.grain && !prepare_noise(grain_image, grain_sampler)) return false;
   if (heat.enabled && !prepare_noise(heat_image, heat_sampler)) return false;
+  std::array<Scratch *, 2> bloom_atlases{};
+  if (bloom.directional.enabled) {
+    if (bloom.directional.iterations != 0 &&
+        (!std::isfinite(bloom.directional.sigma) || !std::isfinite(bloom.directional.gain)))
+      return false;
+    const u32 count = bloom.directional.iterations == 0 ? 1 : 2;
+    for (u32 i = 0; i < count; ++i) {
+      bloom_atlases[i] = GetScratch(s, c, std::max(1u, output->width / 4) * 2,
+          std::max(1u, output->height / 4), output->format, 5 + i, output->layers);
+      if (!bloom_atlases[i]) return false;
+    }
+  }
   // Ordered native passes ping-pong between at most two private images. The
   // composite writes the first input directly; no full-image seed copies.
   const auto plan = MakePostPasses(adjustments.Active(), scanline.enabled, grade.Active());
@@ -837,6 +904,7 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   HostTargetDropLinks(s, output);
   if (!BuildDofPyramid(s, c, scene, depth, dof) || !c.dof.valid)
     throw std::runtime_error("Native post atlas production failed");
+  const auto directional = BuildDirectionalBloom(s, c, source, bloom, bloom_atlases);
   const auto write_attachment = [&](u32 index) {
     if (index == PostPasses::kOutput)
       Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
@@ -845,7 +913,7 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                  plume::RenderTextureLayout::COLOR_WRITE);
   };
   write_attachment(plan.composite_output);
-  if (!HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler))
+  if (!HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler, directional))
     throw std::runtime_error("Native post composite failed");
   if (!RenderLensFlare(s, c, composed, flare, flare_images))
     throw std::runtime_error("Native lens-flare submission failed");
@@ -1063,9 +1131,12 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
     BloomParameters parameters;
     parameters.threshold = GuestPixelConstant(device_guest, 27, 0);
     parameters.intensity = GuestPixelConstant(device_guest, 27, 1);
+    const auto input_count = GuestPixelConstant(device_guest, 26, 0);
     for (u32 lane = 0; lane < 4; ++lane) {
       parameters.scene_weight[lane] = GuestPixelConstant(device_guest, 13, lane);
-      parameters.bloom_weight[lane] = GuestPixelConstant(device_guest, 14, lane);
+      parameters.bloom_weight[lane] = input_count > 1 ? GuestPixelConstant(device_guest, 14, lane) : 0;
+      if (input_count == 3)
+        parameters.bloom_weight[lane] += GuestPixelConstant(device_guest, 15, lane);
     }
     VerifyNativePostParameters(parameters);
     const bool composed = HostComposite(s, c, scene, bloom, Attachment(s, s.render_target), parameters);

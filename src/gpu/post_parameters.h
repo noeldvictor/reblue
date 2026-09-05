@@ -6,6 +6,7 @@
  */
 #pragma once
 #include "gpu/scene/native_transform.h"
+#include "gpu/post_bloom.h"
 #include <algorithm>
 #include <cstdint>
 
@@ -21,14 +22,16 @@ struct BloomParameters {
   float threshold = 0, intensity = 0;
   std::array<float, 4> scene_weight{4, 4, 4, 4};
   std::array<float, 4> bloom_weight{};
+  DirectionalBloom directional;
 };
 
 // Mode 1 adds two directional masks; other authored modes add one. The
-// native folded filter uses the atlas for both, retaining their total weight.
+// native composite averages those independent masks and uses their total weight.
 inline BloomParameters MakeBloomParameters(float threshold, float intensity,
                                            bool enabled, int32_t mode) {
   const float weight = enabled ? (mode == 1 ? 2.0f : 1.0f) : 0.0f;
-  return {threshold, intensity, {4, 4, 4, 4}, {weight, weight, weight, 0}};
+  return {threshold, intensity, {4, 4, 4, 4}, {weight, weight, weight, 0},
+          {1, 1, 0, enabled && mode == 1}};
 }
 
 // Keep the authored curve, but produce its inputs without a shader-register

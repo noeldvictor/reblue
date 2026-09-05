@@ -124,6 +124,10 @@ int main() {
   assert((off.bloom_weight == std::array<float, 4>{0, 0, 0, 0}));
   const auto dual = MakeBloomParameters(0.25f, 10, true, 1);
   assert((dual.bloom_weight == std::array<float, 4>{2, 2, 2, 0}));
+  assert(dual.directional.enabled && dual.directional.iterations == 0);
+  assert(!bloom.directional.enabled && !off.directional.enabled);
+  assert(!MakeBloomParameters(0.25f, 10, false, 1).directional.enabled);
+  assert(!MakeBloomParameters(0.25f, 10, true, 2).directional.enabled);
   assert(MakeBloomParameters(0.25f, 10, true, 2).bloom_weight == bloom.bloom_weight);
   const scene::RenderMatrix identity{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
   assert((ProjectLensFlare({2, 3, 4}, identity, identity) == std::array<float, 2>{.5f, -.75f}));
