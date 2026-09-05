@@ -108,6 +108,8 @@ exceed 6%, at destination frames 40, 41, 43, 44, 46 and 104, 105, 107, 108, 110.
 That retains the 64-frame cadence; native sorting and self-pointer relocation
 do not solve it. No cyan patches. Inspected both eyes of frames 0/16/17:
 distant blurred ground and horizontal banding remain visible.
+Frames 40/41 were also inspected across a detected jump: both eyes change
+between the more legible ground plane and the banded/blurred result.
 
 Stereo check returned exit 2, INCONCLUSIVE: only the 44% image band had a
 bounded match (-1 pixel); fewer than two textured depth bands were usable.
@@ -126,4 +128,46 @@ successful entry bytes are unchanged. The later run below uses that build.
 
 The final binary launched at 20:57:12, log 659, with autoplay/perf CSV and
 270-second capture delay, minimum 30 draws, 120 frames; all five settings took
-effect. Capture inspection and cleanup are still pending at this checkpoint.
+effect. The recorder held at the threshold while the transition had only 20
+draws. Sequence 119 completed at 21:02:42, frame 14799. Isolated output:
+`out/verification/host_deferred_late`, 120 frames at 1920x1080.
+
+79/119 pairs exceed 6%; no cyan patches (median 0%, maximum 0.01%). Actual
+frames 0/44/45/119 were inspected: nearly empty dark frames, damaged text,
+block-like black/red silhouettes and badly incomplete scenery persist. This
+is the same class of failure as the pre-change late baseline (77/119 jumps),
+not a successful later-scene qualification. The difference of two flagged
+pairs is not a measured improvement/regression attribution across differently
+timed scene captures. The stale self-reference was real, but fixing it did
+not fix the whole visual failure.
+
+The last periodic report recorded 3487233 allocated entries, 2513539 host
+batches, 13213 ordered lists / 765452 items, zero allocation/sort refusals.
+Host uploads peaked at 37748736 reserved bytes / 26362624 in one slot, with
+zero failures; shader constants peaked at 4460384 of 33554432 bytes. No
+error/critical, Vulkan-error, overflow or retirement-race matches were present.
+The failing pixels remain authoritative despite those clean counters.
+
+All three renderer processes have been stopped with exact-path validation
+and process-exit confirmation; the final one exited at 21:03:24. The original
+five-setting profile is restored (60 seconds, minimum 600 draws, 120 frames,
+autoplay/perf CSV enabled). No generated source, game data, saves, derived
+assets, captures, binaries or profiles are committed. Implementation was
+pushed as `8cc274f`; this final evidence is a separate documentation checkpoint.
+
+The complete host renderer, representative scene coverage, both-eye depth and
+animated-effects verification remain incomplete. No Quest run or performance
+claim was made.
+
+## Next producer boundary
+
+`sub_8227EFC8` receives entry, world matrix, mesh and a fixed-depth selector in
+r3/r4/r5/r6. For the ordinary path it multiplies world and the current view
+matrix, transforms the mesh sphere centre at +20/+24/+28, adds radius +32 to
+view-space Z and negates it. The view matrix is built from the global base
+`(lis -32034, addi -19936) + 65536 - 10816`. Its vector dot products are emitted
+as `simde_mm_dp_ps`; preserve their arithmetic ordering when comparing a host
+implementation. Special/fixed-depth cases must be represented explicitly, not
+inferred from an old numeric key. Host object bounds and live transforms should
+produce depth for both initial submission and subsequent replay; sorting a
+captured key is not that conversion. This remains unimplemented here.

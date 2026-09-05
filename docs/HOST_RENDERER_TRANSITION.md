@@ -81,6 +81,9 @@ core has standalone capacity, ordering and relocation tests. This still
 publishes big-endian entry images to the guest draw loop; captured depth,
 material/pass records, visual switches and the list consumer remain required
 conversion work. See `research/20260904_2055_host-deferred-work.md`.
+Its short flat check passes, but multiview still shows 10/119 jumps and the
+later scene 79/119 with missing scenery/damaged text. Neither allocation/sort
+conversion nor pointer relocation resolves those visual failures.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free
