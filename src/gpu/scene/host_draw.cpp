@@ -77,6 +77,7 @@
 #include "gpu/scene/native_lighting_bridge.h"
 #include "gpu/scene/native_shadow.h"
 #include "gpu/scene/native_texture_binding.h"
+#include "gpu/scene/native_texture_binding_bridge.h"
 #include "gpu/scene/reflection_texture_import.h"
 #include "gpu/host_upload.h"
 #include "gpu/scene/scene_recipe_residency.h"
@@ -364,19 +365,6 @@ void RefreshTemplates(Store &st) {
             "templates {} retired {} (cumulative, compatibility imports)",
             st.native_binding_draws, st.native_binding_slots,
             st.native_sampler_slots, st.templates.size(), st.templates_retired);
-}
-
-NativeTextureBinding CaptureNativeTexture(const GuestTexture *t) {
-  if (!REXCVAR_GET(bd_native_texture_bindings) || !t || (t->type != ResourceType::Texture &&
-             t->type != ResourceType::VolumeTexture) || !t->nativeGpu ||
-      t->nativeGpu->descriptor == ~0u ||
-      t->sourceSurface || t->aliasOf || t->resolvedTexture ||
-      t->descriptorIndex != t->nativeGpu->descriptor ||
-      (t->companion2D && !t->companion2D->nativeGpu) ||
-      (t->companionCube && !t->companionCube->nativeGpu))
-    return {};
-  return {t->nativeGpu, t->companion2D ? t->companion2D->nativeGpu : nullptr,
-          t->companionCube ? t->companionCube->nativeGpu : nullptr};
 }
 
 std::optional<u32> ReadReflectionWord(u64 address) {

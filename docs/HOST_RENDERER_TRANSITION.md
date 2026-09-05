@@ -30,6 +30,15 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Scene-image producer checkpoint (2026-09-05): current/next scene-table selection
+and the complete scene-image binding callback now execute on the host, with
+explicit native image handles, live dynamic adapters and counted null no-ops.
+Both bindings are preflighted outside the video lock before publication.
+All 15 material/texture/state CTests pass. Producer comparison is underway;
+scene-table production, persistent scene associations, retained replay recipes,
+the wrapper's blend/constants and full visual qualification remain. See
+`research/20260905_0301_native-scene-textures.md`.
+
 Reflection binding checkpoint (2026-09-05): supported direct phase-0 draws now
 decode explicit selection and enable recipes, resolve current pass/table inputs
 before submission, and discard the retained slot-5 image. All sub-draw bindings
