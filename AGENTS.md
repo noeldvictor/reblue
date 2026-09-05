@@ -150,6 +150,9 @@ The owner explicitly requested disk cleanup and space-conscious work on
 2026-09-05. Treat storage as a budget, not an unlimited experiment archive.
 Minimize retained and peak temporary bytes even when the drive has free space;
 available capacity is not a reason to keep unnecessary outputs.
+Storage cleanup is part of completing each checkpoint, not a separate future
+task. Leave only the outputs needed for continued work and required evidence;
+apply the protection and cleanup rules below before removing anything.
 
 - Check actual volume free space before builds, asset cooking, downloads and
   captures. Estimate peak additional space first: final outputs plus overlapping
@@ -161,6 +164,13 @@ available capacity is not a reason to keep unnecessary outputs.
   Give each large producer an explicit output location, byte or file-count
   limit, stop condition and retention/cleanup plan. Retries share the original
   job's cumulative storage budget; failed runs do not reset the allowance.
+- Keep one cumulative storage ledger in the checkpoint worklog for all large
+  producers: starting free space, planned peak growth, bytes produced, measured
+  bytes reclaimed, retained outputs and ending free space. Include concurrent
+  jobs, retries, automatic captures, caches and temporary files in the same
+  budget. Do not credit the same cleanup savings twice or carry an already-used
+  allowance into a new checkpoint. Reconcile the ledger with actual free space
+  before starting another large producer; investigate unexplained growth first.
 - Reuse configured build trees, dependencies and installed game data. Do not
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
