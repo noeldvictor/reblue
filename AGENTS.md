@@ -3,7 +3,7 @@
 This is the canonical, shared instruction file for coding agents in this
 repository. `CLAUDE.md` imports it. Keep enduring rules here, current progress in
 [`docs/HOST_RENDERER_TRANSITION.md`](docs/HOST_RENDERER_TRANSITION.md), and dated
-evidence in `research/`. Updated 2026-09-04.
+evidence in `research/`. Updated 2026-09-05.
 
 ## Goal and boundaries
 
@@ -141,6 +141,41 @@ interpreter mentioned in research is distinct from CPU emulation.
   `adb uninstall` (it deletes game data), never run concurrent device measurements,
   and use `MSYS_NO_PATHCONV=1` with adb under Git Bash. Device captures must come
   from the app; `adb screencap` cannot establish compositor-layer correctness.
+
+## Disk-space discipline
+
+The owner explicitly requested disk cleanup and space-conscious work on
+2026-09-05. Treat storage as a budget, not an unlimited experiment archive.
+
+- Check actual volume free space before builds, asset cooking, downloads and
+  captures. Estimate the output first, including temporary/linker space. Warn
+  below 20 GiB free; below 10 GiB, reclaim space before starting a large job.
+  Keep that reserve after the estimated job, not just at its start.
+- Reuse configured build trees, dependencies and installed game data. Do not
+  make full backups/copies of builds or assets for a small change. Check for
+  junctions and hard links: logical directory sizes can count the same bytes
+  twice. Measure actual free-space change before claiming savings.
+- Bound captures explicitly. A 120-frame RGBA sequence costs about 0.93 GiB
+  at 1920x1080 or 2.04 GiB for stacked 1440x1584 eyes. Keep active raw capture
+  evidence around 10 GiB, with documented exceptions for unresolved regressions
+  or required qualification. Do not leave repeated long captures enabled during
+  unrelated diagnostics; restore the owner's profile after temporary overrides.
+- Keep the current baseline, current flat/VR verification and evidence needed
+  for unresolved failures. For superseded experiments, retain small reports,
+  logs and representative images; losslessly compress or remove redundant raw
+  outputs once their investigation no longer needs the complete sequence.
+  Storage limits must not silently reduce the renderer's verification gate.
+- Prefer lossless compression when a complete historical sequence is still
+  useful. Validate hashes before/after and avoid compression work during GPU
+  timing measurements. Hard links isolate a run without duplicating payloads,
+  but deleting one link alone may reclaim no space.
+- Cleanup may remove identified, reproducible temporary/verification outputs,
+  not game data, discs, saves, profiles, source, dependency checkouts or active
+  build trees. Inspect exact targets, references and running processes first.
+  Never recursively delete a workspace/build root or follow junctions into
+  other data. Record what was removed, whether it can be regenerated, and the
+  measured bytes recovered; note when historical raw evidence is no longer
+  available. Ask before deleting anything whose ownership or value is unclear.
 
 ## Git and documentation
 
