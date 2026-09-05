@@ -46,6 +46,8 @@ Optional cel shading and tourist mode do not displace the renderer priority.
 
 1. Inspect `git status` and the relevant source before changing anything. Preserve
    unrelated user changes, game data, saves, profiles and existing build trees.
+   Before producing large outputs, check the disk-space rules below and the
+   retained artifacts from prior checkpoints; a new turn does not reset the budget.
 2. Read the transition document for renderer work and the relevant dated research
    for the subsystem. Do not load every old experiment as standing guidance.
 3. Use the repository skills when applicable, reading the entire `SKILL.md` first:
@@ -180,9 +182,13 @@ The owner explicitly requested disk cleanup and space-conscious work on
   regressions or required qualification. Historical and superseded sequences
   still count; moving or relabeling a directory does not reclaim its bytes.
   Before a new capture, budget retained unique raw bytes plus the incoming
-  sequence and analysis exports. If that exceeds the
-  budget, identify superseded outputs for safe cleanup or document the required
-  exception first; do not let every checkpoint become a permanent raw archive.
+  sequence and analysis exports. If that exceeds the budget, clean up eligible
+  superseded outputs or document the required exception before launching.
+  Each exception must name the retained sets, their unique byte count, the
+  verification or unresolved failure requiring them, a maximum additional byte
+  allowance, and a concrete review/cleanup trigger. An over-budget historical
+  archive is not a blanket exemption for new captures. Recheck exceptions at
+  the next checkpoint; do not let every checkpoint become a permanent raw archive.
   Do not leave repeated long captures enabled during unrelated diagnostics;
   set frame counts and output locations before launch.
   Bound diagnostic dumps and logs too, especially verbose shader/frame dumps.
