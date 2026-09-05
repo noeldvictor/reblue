@@ -53,7 +53,7 @@ not replace the host-renderer goal.
 
 ## Current state
 
-Snapshot: 2026-09-04.
+Snapshot: 2026-09-05.
 
 This is an unfinished renderer migration, not a fully native-rendering or
 Quest-ready release.
@@ -70,15 +70,18 @@ Quest-ready release.
 | Raster state | Native depth, cull/fill, colour-write and stencil intent; host setter execution and no normal per-draw raster-cache translation | Sampler and other-state producers, engine getter shadows, complete material/pass recipes and unexercised stencil GPU paths |
 | Blend state | Native RGB/alpha blend intent and eight host setters; no normal per-draw Xenos blend-register import | Native material/pass producers, removal of getter shadows, blend constants and separate-alpha/operation GPU coverage |
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
-| Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
+| Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Native mesh tests pass; a 120-frame flat-view correctness sequence showed no jumps over 6% or cyan patches | A 64-frame lighting defect persists in the retained template path with native meshes enabled or disabled; the distant diorama captures do not establish stereo depth |
+| Desktop verification | All 11 upload/state/packet tests pass; latest 120-frame flat and final-eye multiview sequences have 0/119 jumps over 6% and no cyan patches after fixing packet state ownership | Stereo depth remains inconclusive; actual eyes are 936x1030, not the target; later-scene and full-game correctness remain unqualified |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
 [the native mesh research note](research/20260904_1713_native-mesh-assets-and-capture-ownership.md);
 [the native material note](research/20260904_1748_native-material-properties.md)
 records material-source checks and flat/multiview correctness comparisons.
+The following notes describe earlier checkpoints; the latest packet-ownership
+result below supersedes their short-field flicker findings, not their remaining
+ownership or full-game coverage limitations.
 The persistent material contract and standalone cooker are documented in
 [Native material assets](docs/NATIVE_MATERIAL_FORMAT.md).
 The [native texture contract](docs/NATIVE_TEXTURE_FORMAT.md) covers texture
@@ -121,6 +124,14 @@ Its final desktop multiview sequence still shows flicker/banding and an
 inconclusive stereo-depth result; the alpha conversion does not qualify VR.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
+
+The [native draw-packet fix](research/20260904_2348_native-draw-intent.md) stops
+engine shader/declaration and render-state history from overwriting host packet
+intent during dispatch. Replay stays enabled. The latest short flat and final-eye
+multiview sequences have no large jumps or cyan patches, and inspected eyes no
+longer show broad horizontal banding. Blur/letterboxing, inconclusive depth,
+below-target eye sizing and the prior later-scene failure still require work.
+This fixes packet consumption, not the retained recipe or scene/pass producers.
 
 ## Project documentation
 

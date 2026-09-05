@@ -506,6 +506,11 @@ struct VideoState {
   // pixel blocks (host byte order), the 32 fetch constants and the 8 bool
   // words. Null for every guest draw. The uploads read through this.
   const MaterialOverride *material_override = nullptr;
+  // Explicit host draw packet. Its pipeline is bound by the native producer;
+  // engine shader/declaration and render-state history cannot overwrite it.
+  // Kept separate from constant overrides so dispatch can classify the draw
+  // before uploading constants or selecting a framebuffer/post pass.
+  const PipelineState *native_draw_pipeline = nullptr;
 
   // Surfaces currently in a write layout, so they can all be flipped to
   // SHADER_READ in one batch when the render target changes. See

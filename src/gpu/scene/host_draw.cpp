@@ -2495,6 +2495,7 @@ bool HostDrawReplay(const NodeTag &tag) {
     {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;
+      s.native_draw_pipeline = &d.pipelineState;
       for (u32 k = 0; k < 16; ++k) {
         if (d.native_textures[k].primary) {
           s.textures[k] = nullptr; // every downstream consumer sees native ownership
@@ -2632,6 +2633,7 @@ bool HostDrawReplay(const NodeTag &tag) {
         e.vertex_count = s.bound_vertex_count;
         e.alpha = Video::AlphaThreshold();
         s.material_override = nullptr;
+        s.native_draw_pipeline = nullptr;
       }
       e.count = d.count;
       e.start_index = d.start_index;
@@ -2663,6 +2665,7 @@ bool HostDrawReplay(const NodeTag &tag) {
     // host state back and check its draws at capture.
     std::lock_guard lock(s.mutex);
     s.material_override = nullptr;
+    s.native_draw_pipeline = nullptr;
     s.pipelineState = saved.pipelineState;
     std::memcpy(s.textures, saved.textures, sizeof(s.textures));
     std::memcpy(s.vertex_views, saved.vertex_views, sizeof(s.vertex_views));
@@ -2685,6 +2688,7 @@ bool HostDrawReplay(const NodeTag &tag) {
     // current, which is right only if the host state is the shadow's.
     std::lock_guard lock(s.mutex);
     s.material_override = nullptr;
+    s.native_draw_pipeline = nullptr;
     s.pipelineState = saved.pipelineState;
     std::memcpy(s.textures, saved.textures, sizeof(s.textures));
     std::memcpy(s.vertex_views, saved.vertex_views, sizeof(s.vertex_views));

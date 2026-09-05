@@ -37,6 +37,7 @@
 #include <xxhash.h>
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/draw_intent.h"
 #include "gpu/format.h"
 #include "gpu/frag_census.h"
 #include "gpu/frame_stats.h"
@@ -149,7 +150,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // connected (TRACY_ON_DEMAND).
   char zone_name[64] = "Draw";
   if (BD_PROFILER_CONNECTED()) {
-    const auto *ps = bd::gpu::state().pixel_shader;
+    const auto *ps = bd::gpu::DrawPixelShader(bd::gpu::state());
     const u64 ps_hash =
         (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0;
     std::snprintf(zone_name, sizeof(zone_name), "Draw pass=%u ps=%016llX",
@@ -167,7 +168,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // The fragment census's path census: this draw's pixel shader and the
   // boolean constant words that steer it (bd_frag_census).
   if (const auto *dev = bd::mem::at<const bd::gpu::D3DDevice>(device_guest)) {
-    const auto *ps = bd::gpu::state().pixel_shader;
+    const auto *ps = bd::gpu::DrawPixelShader(bd::gpu::state());
     const u32 bools[4] = {
         u32(dev->psBoolConstants[0]), u32(dev->psBoolConstants[1]),
         u32(dev->psBoolConstants[2]), u32(dev->psBoolConstants[3])};
@@ -183,7 +184,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   // (2026-09-02, for the host-owned post chain).
   if (const i32 dump_frames = REXCVAR_GET(bd_dump_post_draws); dump_frames > 0) {
     auto &vs = bd::gpu::state();
-    const auto *ps = vs.pixel_shader;
+    const auto *ps = bd::gpu::DrawPixelShader(vs);
     const u64 ps_hash =
         (ps && ps->shaderCacheEntry) ? ps->shaderCacheEntry->hash : 0;
     static const struct {
@@ -320,9 +321,9 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
                                        s.pipelineState.specConstants, want);
   }
 
-  const u64 ps_hash = (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
-                          ? s.pixel_shader->shaderCacheEntry->hash
-                          : 0;
+  const auto *draw_pixel_shader = bd::gpu::DrawPixelShader(s);
+  const u64 ps_hash = (draw_pixel_shader && draw_pixel_shader->shaderCacheEntry)
+                          ? draw_pixel_shader->shaderCacheEntry->hash : 0;
   // A guest producer draw of the post chain is dropped before its target is
   // bound: the bind seeds a fresh target from its predecessor, and those
   // copies were ten of the frame's fourteen (2026-09-02).
@@ -835,8 +836,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const char *name,
   const bool census_here =
       !s.deferring_draw && cmd_list && s.plume_framebuffer_bound;
   const u64 census_ps =
-      (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
-          ? s.pixel_shader->shaderCacheEntry->hash
+      (draw_pixel_shader && draw_pixel_shader->shaderCacheEntry)
+          ? draw_pixel_shader->shaderCacheEntry->hash
           : 0ull;
   const bool census_open =
       census_here && bd::gpu::FragCensusBegin(
@@ -1022,9 +1023,9 @@ void LedgerNote(const bd::gpu::scene::NodeTag &tag, const bd::gpu::QueuedDraw &q
     tp.tex[k] = st.textures[k];
   tp.pipeline = q.pipeline;
   const u64 tex_h = XXH3_64bits(&tp, sizeof(tp));
-  const u64 ps_hash = (st.pixel_shader && st.pixel_shader->shaderCacheEntry)
-                          ? st.pixel_shader->shaderCacheEntry->hash
-                          : 0ull;
+  const auto *draw_pixel_shader = bd::gpu::DrawPixelShader(st);
+  const u64 ps_hash = (draw_pixel_shader && draw_pixel_shader->shaderCacheEntry)
+                          ? draw_pixel_shader->shaderCacheEntry->hash : 0ull;
   out << bd::gpu::FrameStatFrameCount() << ' ' << std::hex << tag.matrix_va
       << ' ' << tag.mesh_va << ' ' << tag.visual_va << std::dec << ' '
       << tag.render_view << ' ' << (tag.from_list ? 1 : 0) << ' ' << path
@@ -1427,7 +1428,7 @@ bool IsIdentityCopyQuad(u32 primitiveType, u32 vertexCount, u32 pVertexData,
   if (!IsScreenSpriteQuad(primitiveType, vertexCount, vertexStride))
     return false;
   auto &s = bd::gpu::state();
-  const auto *ps = s.pixel_shader;
+  const auto *ps = bd::gpu::DrawPixelShader(s);
   constexpr u64 kSimple2DPS = 0xFF2C108217046270ull;
   if (!ps || !ps->shaderCacheEntry || ps->shaderCacheEntry->hash != kSimple2DPS)
     return false;

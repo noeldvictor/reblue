@@ -37,6 +37,7 @@
 #include "core/profiling.h"
 #include "gpu/d3d.h"
 #include "gpu/device.h"
+#include "gpu/draw_intent.h"
 #include "gpu/vertex_pull.h"
 #include "gpu/shadow_fit.h"
 #include "gpu/frame_stats.h"
@@ -1249,20 +1250,14 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
   s.shared.alphaThreshold = bd::gpu::Video::AlphaThreshold();
   s.shared.halfPixelOffsetX = 0.0f;
   s.shared.halfPixelOffsetY = 0.0f;
-  s.shared.swappedTexcoords =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedTexcoords : 0u;
-  s.shared.swappedNormals =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedNormals : 0u;
-  s.shared.swappedBinormals =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedBinormals : 0u;
-  s.shared.swappedTangents =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedTangents : 0u;
-  s.shared.swappedBlendWeights =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedBlendWeights : 0u;
-  s.shared.swappedPositions =
-      vs.vertex_declaration ? vs.vertex_declaration->swappedPositions : 0u;
-  s.shared.sintTexcoords =
-      vs.vertex_declaration ? vs.vertex_declaration->sintTexcoords : 0u;
+  const auto *declaration = DrawVertexDeclaration(vs);
+  s.shared.swappedTexcoords = declaration ? declaration->swappedTexcoords : 0u;
+  s.shared.swappedNormals = declaration ? declaration->swappedNormals : 0u;
+  s.shared.swappedBinormals = declaration ? declaration->swappedBinormals : 0u;
+  s.shared.swappedTangents = declaration ? declaration->swappedTangents : 0u;
+  s.shared.swappedBlendWeights = declaration ? declaration->swappedBlendWeights : 0u;
+  s.shared.swappedPositions = declaration ? declaration->swappedPositions : 0u;
+  s.shared.sintTexcoords = declaration ? declaration->sintTexcoords : 0u;
 
   s.shared.shadowPcfScale = s.shadowPcfScale;
   s.shared.materialTier =

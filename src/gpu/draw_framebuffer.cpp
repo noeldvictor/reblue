@@ -11,6 +11,7 @@
 #include <atomic>
 #include "gpu/foveation.h"
 #include "gpu/draw_queue.h"
+#include "gpu/draw_intent.h"
 #include "gpu/format.h"
 #include "gpu/occlusion_cull.h"
 #include "gpu/frame.h"
@@ -488,7 +489,7 @@ void SeedFreshColorTarget(VideoState &s, GuestTexture *rt, u32 slot,
         for (const GuestTexture *t : s.textures)
           if (t && (t == seed_src || t->sourceSurface == seed_src))
             samples_src = true;
-        const auto *ps = s.pixel_shader;
+        const auto *ps = DrawPixelShader(s);
         BD_INFO("[seed] frame {} {}: {}x{} fmt {} <- {}x{} fmt {} (pending "
                 "clear {}) first draw: {} verts, blend {}, colour mask 0x{:X}, "
                 "ps {:016X}, samples seed source {}",

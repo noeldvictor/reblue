@@ -30,6 +30,29 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Latest checkpoint (2026-09-05): host draw packets now retain authoritative shader,
+declaration and raster/blend/alpha intent throughout dispatch. Engine bind/setter
+history no longer overwrites replay packets, and shared vertex decoding uses the
+packet declaration. The new SDK-independent ownership regression test passes
+alongside the other ten upload/state tests, and the desktop renderer linked
+without rebuilding guest objects.
+
+With replay enabled, the latest short flat and final-eye multiview sequences each
+have 0/119 jumps over 6% and no cyan patches. Inspected eyes no longer have broad
+horizontal banding. This supersedes the short-field flicker findings in earlier
+checkpoints below; it does not qualify other scenes. Stereo depth remains
+INCONCLUSIVE, blur/letterboxing remains, and actual eyes are 936x1030 instead of
+the 1440x1584 target. The prior later-scene failure has not yet been requalified.
+See `research/20260904_2348_native-draw-intent.md` for the replay-off control,
+consumer overwrite trace, normal-path captures and remaining producer boundaries.
+Earlier raster/blend/alpha draw-application counters included replay flushes;
+their zero-mismatch setter checks did not establish packet ownership. The replay
+comparator also did not dispatch its expected packet, so a zero pipeline-state
+mismatch count could not detect this consumer bug.
+
+The subsystem checkpoints below retain their historical verification outcomes.
+Their remaining conversion boundaries still apply unless explicitly superseded.
+
 `gpu/scene/native_mesh*` starts the native geometry asset boundary: loaded
 model indices become triangle lists, GPU-ready vertex streams are persisted,
 and native assets upload into shared host geometry arenas. Existing generated
@@ -228,13 +251,14 @@ The longer baseline was rerun after the final transient-stream lifetime fixes:
 77 of 119 frame pairs exceeded the 6% jump threshold and inspected frames still
 showed broken geometry/text. Upload separation did not solve that scene.
 
-The diorama control exposes a remaining 64-frame lighting flash in the existing
+The earlier diorama control exposed a 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.
-The final upload-page multiview check reproduces that cadence: 10 jumps in
+The upload-page checkpoint's multiview check reproduced that cadence: 10 jumps in
 119 frame pairs, with no upload or constant-storage errors. The presented eyes
 in that distant view still do not establish a stereo-depth verdict.
-Neither limitation is a completed VR qualification or a reason to claim the
-host transition done.
+The native packet-ownership fix above removes those jumps and broad banding in
+its short capture, but still does not establish stereo depth or full-game
+correctness. The host transition is not complete.
 
 Shared working instructions live in [AGENTS.md](../AGENTS.md). The former
 CLAUDE.md is preserved as a [historical snapshot](archive/CLAUDE_2026-09-04.md),

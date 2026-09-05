@@ -29,6 +29,7 @@
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/format.h"
 #include "gpu/frame_stats.h"
+#include "gpu/draw_intent.h"
 #include "gpu/pipeline/pipeline_cache.h"
 #include "gpu/pipeline/pso_precache.h"
 #include "gpu/pipeline/pso_recorder.h"
@@ -154,13 +155,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   // CPU zone: a GPU zone here would add two GPU timestamps per draw.
   BD_CPU_ZONE("FlushRenderState");
 
-  // Fold the Set*-hook mirrors into the pipelineState the PSO lookup reads.
-  SetDirtyValue(s.dirtyStates.pipelineState, s.pipelineState.vertexShader,
-                s.vertex_shader);
-  SetDirtyValue(s.dirtyStates.pipelineState, s.pipelineState.pixelShader,
-                s.pixel_shader);
-  SetDirtyValue(s.dirtyStates.pipelineState, s.pipelineState.vertexDeclaration,
-                s.vertex_declaration);
+  // Native packets already own their complete pipeline. Only engine-origin
+  // draws consume the Set*-hook history and live engine state producers.
+  ApplyEngineDrawIntent(s, [&] { ApplyNativeRenderState(s, device_guest); });
 
   for (u32 i = 0; i < 16; ++i) {
     SetDirtyValue(s.dirtyStates.pipelineState, s.pipelineState.vertexStrides[i],
@@ -180,9 +177,6 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     SetDirtyValue(s.dirtyStates.pipelineState,
                   s.pipelineState.depthStencilFormat, ds_format);
   }
-
-  // Restore live raster/blend intent after any retained pipeline replay.
-  ApplyNativeRenderState(s, device_guest);
 
   // Anything missing here means the engine has not wired the pipeline up yet.
   if (!s.pipelineState.vertexShader || !s.pipelineState.vertexDeclaration) {
@@ -484,9 +478,9 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // overwrites its own views between draws and a queued draw is replayed
     // long after that.
     s.pending.pipeline = s.current_pso;
-    s.pending.ps_hash = (s.pixel_shader && s.pixel_shader->shaderCacheEntry)
-                            ? s.pixel_shader->shaderCacheEntry->hash
-                            : 0ull;
+    const auto *pixel_shader = DrawPixelShader(s);
+    s.pending.ps_hash = (pixel_shader && pixel_shader->shaderCacheEntry)
+                            ? pixel_shader->shaderCacheEntry->hash : 0ull;
     s.pending.prepass_pipeline = s.current_prepass_pso;
     s.pending.color_pipeline = s.current_color_pso;
     s.pending.instanced_pipeline =
