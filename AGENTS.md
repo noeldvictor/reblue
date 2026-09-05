@@ -148,23 +148,39 @@ The owner explicitly requested disk cleanup and space-conscious work on
 2026-09-05. Treat storage as a budget, not an unlimited experiment archive.
 
 - Check actual volume free space before builds, asset cooking, downloads and
-  captures. Estimate the output first, including temporary/linker space. Warn
+  captures. Estimate peak additional space first: final outputs plus overlapping
+  temporary, extraction, conversion and linker files. For a large job, record
+  free space, the estimate and the expected remaining reserve in the worklog.
+  If free space cannot be measured, resolve that before launching the job. Warn
   below 20 GiB free; below 10 GiB, reclaim space before starting a large job.
   Keep that reserve after the estimated job, not just at its start.
 - Reuse configured build trees, dependencies and installed game data. Do not
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
   twice. Measure actual free-space change before claiming savings.
+- Recheck free space between batches and after large jobs. If growth exceeds
+  the estimate or threatens the reserve, safely stop the agent-started producer
+  before it fills the disk. Do not launch another batch until the budget fits.
+  Start storage investigations with scoped output/cache inventories, not a
+  recursive scan of the entire drive or the user's unrelated directories.
 - Bound captures explicitly. A 120-frame RGBA sequence costs about 0.93 GiB
   at 1920x1080 or 2.04 GiB for stacked 1440x1584 eyes. Keep active raw capture
   evidence around 10 GiB, with documented exceptions for unresolved regressions
   or required qualification. Do not leave repeated long captures enabled during
-  unrelated diagnostics; restore the owner's profile after temporary overrides.
+  unrelated diagnostics; set frame counts and output locations before launch.
+  Bound diagnostic dumps and logs too, especially verbose shader/frame dumps.
+  At run completion or interruption, stop only agent-started jobs that are no
+  longer needed and restore the owner's profile after temporary overrides.
 - Keep the current baseline, current flat/VR verification and evidence needed
   for unresolved failures. For superseded experiments, retain small reports,
   logs and representative images; losslessly compress or remove redundant raw
   outputs once their investigation no longer needs the complete sequence.
   Storage limits must not silently reduce the renderer's verification gate.
+- At each experiment checkpoint, identify which artifacts remain the baseline,
+  current verification or unresolved-failure evidence, and which are superseded.
+  Give retained large artifacts a reason and a cleanup condition. Avoid keeping
+  several copied representations of the same capture; export only the images
+  needed for inspection and reports.
 - Prefer lossless compression when a complete historical sequence is still
   useful. Validate hashes before/after and avoid compression work during GPU
   timing measurements. Hard links isolate a run without duplicating payloads,
