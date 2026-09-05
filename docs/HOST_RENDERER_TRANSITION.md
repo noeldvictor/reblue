@@ -95,7 +95,9 @@ frames. This remains a correctness failure, not full transition qualification.
 
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.
-The presented eyes in that distant view do not establish a stereo-depth verdict.
+The final upload-page multiview check reproduces that cadence: 10 jumps in
+119 frame pairs, with no upload or constant-storage errors. The presented eyes
+in that distant view still do not establish a stereo-depth verdict.
 Neither limitation is a completed VR qualification or a reason to claim the
 host transition done.
 

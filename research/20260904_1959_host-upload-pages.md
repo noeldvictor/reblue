@@ -117,6 +117,34 @@ staging report: 8,388,608 reserved, 29,360,128 total peak, 22,247,936 single-slo
 peak, 18 pages created / 16 retired, zero failures. Reported shader-slot peak:
 1,838,944 / 33,554,432 bytes. The process was stopped after the capture.
 
-The independent arena/tests were committed and pushed as `199349d`. Final
-multiview verification is running separately; the longer later-scene failure
-still needs a new run after transient-binding fixes and remains an open gate.
+The independent arena/tests were committed and pushed as `199349d`; the final
+renderer integration is `7347972`. The longer later-scene failure still needs
+a new run after transient-binding fixes and remains an open gate.
+
+## Final multiview check
+
+The same final binary ran as `reblue_651.log`, from 20:10:43 to about 20:12:40.
+All 13 diorama settings audited, matching the first multiview run above.
+Process-local xrsim recommended 1440x1584 per eye; the actual presented-eye
+capture remained stacked 936x2060, or 936x1030 per eye. Instance/session creation
+and the distinct game/head/eye camera report confirm XR composition, not target
+resolution qualification. The 120-frame sequence completed at 20:11:51.285,
+frame 20985, isolated in `out/verification/host_upload_final_vr`.
+
+Analysis of 119 pairs found **10 jumps above 6%**, at 19/20/22/23/25 and
+83/84/86/87/89: the same 64-frame cadence. Cyan analysis found zero patches,
+median/max 0.000%. Inspected `first.png`: both eyes show distant blurred terrain,
+orange sky, letterboxing and dark horizontal bands. The stacked stereo checker
+returned **INCONCLUSIVE**, with only one textured matched band at 44% and zero
+measured disparity. This is not a stereo-depth or VR correctness pass.
+
+No error/critical, Vulkan error, device-loss or retire-race message was found.
+The last periodic staging report was 8,388,608 bytes reserved, 25,165,824 total
+peak, 16,084,224 single-slot peak, 10 pages created / 8 retired and zero failures.
+Shader storage reported 2,344,800 bytes used in the completed slot and a
+2,481,504 / 33,554,432-byte peak. These checks show no upload/constant-storage
+errors in this run; they do not resolve the remaining visual failures.
+
+Stopped the renderer and restored the original five-setting profile. No Quest
+or Thor run was performed. Full desktop scene/transition coverage, the later
+dark/missing-geometry failure and the multiview lighting/depth gates remain open.
