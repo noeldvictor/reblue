@@ -47,6 +47,12 @@ The Cel value reserves the requested optional lighting-model slot. Its native
 shader is not implemented: the current composer refuses that model rather
 than silently shading it as OriginalLit. Runtime imports use OriginalLit.
 
+Receiver-shadow policy is not serialized by version 1. The runtime importer
+currently decodes a model-control record into a separate named policy used by
+supported direct-tree draws. Its command-record index is import metadata, not
+a stable native asset identity. Persisting complete lighting/feature policy
+requires a future versioned asset contract; do not reinterpret v1 flag bits.
+
 ## Cooking and loading
 
 The desktop renderer stores derived files in

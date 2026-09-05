@@ -62,6 +62,7 @@ Quest-ready release.
 | --- | --- | --- |
 | Native mesh assets | Versioned persistent `.bdmesh` cache, triangle lists, shared host GPU buffers and existing generated LOD support; enabled by default | Asset-level discovery/loading, independent native layouts/materials, dynamic geometry and cache streaming/eviction |
 | Material properties | Shared, content-keyed `.bdmat` assets for supported diffuse/specular/reflection recipes, independent cooker/loader and bounded residency; enabled by default | Native texture/lighting definitions, asset-level scene bindings, remaining draw recipes and replacement of the shader-register compatibility boundary |
+| Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Scene submission | Host traversal and draw replay, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
@@ -82,6 +83,10 @@ passed its short flat capture. [Host upload pages](docs/HOST_UPLOAD_ARENA.md)
 remove the subsequent texture/constant-buffer wrapping hazard, but the later
 scene still has unqualified dark/missing-geometry frames; see
 [the upload evidence](research/20260904_1959_host-upload-pages.md).
+The [receiver-shadow checkpoint](research/20260904_2041_native-shadow-receiver-inputs.md)
+passes its short flat sequence and input checks, but reproduces the 64-frame
+multiview defect. Its longer baseline also confirms the later scene remains
+broken after the upload lifetime fixes.
 Passing this desktop slice does not establish full-game coverage or headset
 performance.
 

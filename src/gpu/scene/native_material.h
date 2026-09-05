@@ -7,9 +7,15 @@
 #pragma once
 #include "gpu/scene/native_material_library.h"
 #include "gpu/scene/node_tag.h"
+#include <optional>
 
 namespace bd::gpu::scene {
 NativeMaterialHandle ImportNativeMaterial(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count);
+// Named immutable shadow policy from mesh commands/model controls. This is
+// still discovered through the model bridge, not persisted in .bdmat v1.
+std::optional<bool> ImportMaterialDisablesShadow(
     const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
     uint32_t first_index, uint32_t index_count);
 uint32_t EvaluateNativeMaterial(const NodeTag &tag,

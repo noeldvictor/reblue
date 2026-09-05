@@ -61,6 +61,18 @@ correctness-only comparisons, and
 `research/20260904_1806_persistent-native-material-assets.md` for independent
 loading, cold/warm desktop captures and the persistent-asset tests.
 
+`gpu/scene/native_shadow*` now composes a named receiver-shadow policy from
+current node visibility and decoded model controls, instead of retaining that
+decision in an old draw template. `bd_native_shadow_inputs` is on by default
+for supported direct-tree phase-0 draws. The pure policy and stamp checks have
+standalone tests; sampled and normal desktop checks found no input-composition
+mismatches. This is still an import boundary: the pass enable, visibility stamps
+and frame counters remain guest-produced, and the result still enters the old
+shader ABI. List/phase-1 recipes and persistent shadow policy in native material
+assets remain unconverted. It does not fix the recurring multiview defect.
+See `research/20260904_2041_native-shadow-receiver-inputs.md` for exact coverage,
+flat captures and the failed/inconclusive VR checks.
+
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free
 content IDs. The SDK-independent mip cooker persists missing chains; subsequent
@@ -92,6 +104,9 @@ as immutable cross-frame geometry. See [the upload contract](HOST_UPLOAD_ARENA.m
 and `research/20260904_1959_host-upload-pages.md`. A longer loading run no longer
 reported overflow, but its later scene still had severe dark/missing-geometry
 frames. This remains a correctness failure, not full transition qualification.
+The longer baseline was rerun after the final transient-stream lifetime fixes:
+77 of 119 frame pairs exceeded the 6% jump threshold and inspected frames still
+showed broken geometry/text. Upload separation did not solve that scene.
 
 The diorama control exposes a remaining 64-frame lighting flash in the existing
 template path, present with native meshes or native materials disabled too.

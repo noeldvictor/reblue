@@ -70,6 +70,7 @@
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
+#include "gpu/scene/native_shadow.h"
 #include "gpu/scene/native_texture_binding.h"
 #include "gpu/host_upload.h"
 #include "gpu/scene/scene_recipe_residency.h"
@@ -83,6 +84,7 @@ REXCVAR_DECLARE(bool, bd_host_draw);
 REXCVAR_DECLARE(bool, bd_native_meshes);
 REXCVAR_DECLARE(bool, bd_native_materials);
 REXCVAR_DECLARE(bool, bd_native_materials_verify);
+REXCVAR_DECLARE(bool, bd_native_shadow_inputs);
 REXCVAR_DECLARE(bool, bd_native_texture_bindings);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
@@ -123,6 +125,7 @@ struct FetchDelta {
 // One of a node's draws.
 struct SubDraw {
   NativeMaterialHandle native_material;
+  std::optional<bool> material_disables_shadow;
   std::array<NativeTextureBinding, 16> native_textures;
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
@@ -374,6 +377,7 @@ NativeTextureBinding CaptureNativeTexture(const GuestTexture *t) {
 struct Pending {
   bool valid = false;
   bool replayable = true;
+  std::optional<NativeShadowInputs> shadow_inputs;
   alignas(16) u8 vs[kBlockBytes];
   alignas(16) u8 ps[kBlockBytes];
   u32 fetch[32][6];
@@ -394,6 +398,11 @@ struct Pending {
   bool needs_bones = false; // a draw's vertex shader reads c60..c155
 };
 thread_local Pending t_pending;
+struct ShadowStats {
+  u64 checked = 0, wrong = 0, receiving = 0, replayed = 0, changed = 0;
+  u32 last_report = 0;
+};
+thread_local ShadowStats t_shadow_stats;
 thread_local bool t_replaying = false;
 alignas(16) thread_local u8 t_vs_block[kBlockBytes];
 alignas(16) thread_local u8 t_ps_block[kBlockBytes];
@@ -755,6 +764,7 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
     x.primitive_type = y.primitive_type;
     x.alpha_threshold = y.alpha_threshold;
     x.native_material = y.native_material;
+    x.material_disables_shadow = y.material_disables_shadow;
     // Keep each binding with its original inherited-state snapshot. Replacing
     // only the native half here can pair an old dynamic surface with a newly
     // observed static asset and override the surface on the next replay.
@@ -1007,6 +1017,8 @@ void NoteSamplerSet(u32 slot) {
 
 void HostDrawSnapshotBefore() {
   auto &p = t_pending;
+  p.shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
+      ? ImportNodeShadowInputs(CurrentNodeTag()) : std::nullopt;
   p.valid = false;
   p.replayable = true;
   p.set_mask = 0;
@@ -1341,6 +1353,9 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   d.start_vertex = q.start_vertex;
   d.primitive_type = primitive_type;
   d.alpha_threshold = Video::AlphaThreshold();
+  if (d.indexed && REXCVAR_GET(bd_native_shadow_inputs))
+    d.material_disables_shadow = ImportMaterialDisablesShadow(
+        tag, d.index_va, d.stream_va[0], d.start_index, d.count);
   if (d.indexed && (REXCVAR_GET(bd_native_materials) ||
                     REXCVAR_GET(bd_native_materials_verify))) {
     d.native_material = ImportNativeMaterial(tag, d.index_va, d.stream_va[0],
@@ -1356,6 +1371,27 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     d.bools[4 + i] = static_cast<u32>(dev->psBoolConstants[i]);
     d.bools_set[i] = p.vs_bools_set[i] | (d.bools[i] ^ p.vs_bools_before[i]);
     d.bools_set[4 + i] = p.ps_bools_set[i] | (d.bools[4 + i] ^ p.ps_bools_before[i]);
+  }
+  if (p.shadow_inputs && d.material_disables_shadow) {
+    auto &stats = t_shadow_stats;
+    ++stats.checked;
+    const bool expected = ReceivesNativeShadow(*p.shadow_inputs, *d.material_disables_shadow);
+    stats.receiving += expected;
+    if (expected != bool(d.bools[4] & (1u << 5))) {
+      if (++stats.wrong <= 8)
+        BD_INFO("[native-shadow] mismatch view {} node {}: pass {} filter {} visible {} "
+                "material disables {} -> {} actual {}", tag.render_view, tag.node_index,
+                p.shadow_inputs->pass_enabled, p.shadow_inputs->receiver_filter_enabled,
+                p.shadow_inputs->receiver_visible, *d.material_disables_shadow,
+                expected, bool(d.bools[4] & (1u << 5)));
+    }
+    const u32 frame = FrameStatFrameCount();
+    if (frame - stats.last_report >= 300) {
+      BD_INFO("[native-shadow] receiver inputs checked {} wrong {} receiving {}; "
+              "replays composed {} changed {}", stats.checked, stats.wrong, stats.receiving,
+              stats.replayed, stats.changed);
+      stats.last_report = frame;
+    }
   }
   if (t_verify.active && t_verify.key == KeyOf(tag))
     VerifyAgainstReplay(tag, d, p.needs_bones);
@@ -1868,6 +1904,8 @@ bool HostDrawReplay(const NodeTag &tag) {
   };
   static thread_local std::vector<MaterialValues> native_values;
   const u32 frame = FrameStatFrameCount();
+  const auto shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
+      ? ImportNodeShadowInputs(tag) : std::nullopt;
   bool sampled_verify = false;
   {
     std::lock_guard lock(st.mutex);
@@ -2423,6 +2461,14 @@ bool HostDrawReplay(const NodeTag &tag) {
         bools[0] |= 1u << 31;
       else
         bools[0] &= ~(1u << 31);
+    }
+    if (shadow_inputs && d.material_disables_shadow) {
+      constexpr u32 shadow_bit = 1u << 5; // temporary shader ABI adapter
+      const bool receives = ReceivesNativeShadow(*shadow_inputs, *d.material_disables_shadow);
+      ++t_shadow_stats.replayed;
+      t_shadow_stats.changed += receives != bool(bools[4] & shadow_bit);
+      bools[4] = (bools[4] & ~shadow_bit) |
+          (receives ? shadow_bit : 0u);
     }
     plume::RenderSamplerDesc native_samplers[16];
     ov.native_sampler_mask = 0;

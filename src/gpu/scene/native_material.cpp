@@ -5,6 +5,7 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/native_material.h"
+#include "gpu/scene/native_shadow.h"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -81,11 +82,7 @@ Decoded ReadCommands(uint32_t source) {
   }
   return result;
 }
-} // namespace
-
-NativeMaterialHandle ImportNativeMaterial(
-    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
-    uint32_t first_index, uint32_t index_count) {
+Decoded *FindCommands(const NodeTag &tag) {
   // Technique 11 selects visual-specific colours on texture tokens. Phase 1
   // rewrites colour/shininess commands. Their native recipes remain pending.
   if (tag.from_list || !tag.ctx_va || !tag.mesh_va || tag.tech == 11 ||
@@ -114,24 +111,76 @@ NativeMaterialHandle ImportNativeMaterial(
   }
   if (!it->second.valid)
     return {};
+  return &it->second;
+}
+
+bool Matches(const NativeMaterialRange &range, uint32_t ib, uint32_t vb,
+             uint32_t index_va, uint32_t stream_va,
+             uint32_t first_index, uint32_t index_count) {
+  return range.first_index == first_index && range.index_count == index_count &&
+      range.stream == 0 && range.index_record != 0xffff &&
+      range.vertex_record != 0xffff &&
+      bd::mem::try_load<uint32_t>(ib + range.index_record * 8 + 4) == index_va &&
+      bd::mem::try_load<uint32_t>(vb + 4 + range.vertex_record * 12 + 8) == stream_va;
+}
+} // namespace
+
+NativeMaterialHandle ImportNativeMaterial(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count) {
+  const auto *commands = FindCommands(tag);
+  if (!commands)
+    return {};
   const uint32_t ib = bd::mem::try_load<uint32_t>(tag.mesh_va + 8);
   const uint32_t vb = bd::mem::try_load<uint32_t>(tag.mesh_va + 16);
   if (!ib || !vb)
     return {};
   NativeMaterialHandle found;
-  for (size_t i = 0; i < it->second.ranges.size(); ++i) {
-    const auto &range = it->second.ranges[i];
-    if (range.first_index != first_index || range.index_count != index_count ||
-        range.stream != 0 || range.index_record == 0xffff ||
-        range.vertex_record == 0xffff)
+  for (size_t i = 0; i < commands->ranges.size(); ++i) {
+    if (!Matches(commands->ranges[i], ib, vb, index_va, stream_va, first_index, index_count))
       continue;
-    if (bd::mem::try_load<uint32_t>(ib + range.index_record * 8 + 4) != index_va ||
-        bd::mem::try_load<uint32_t>(vb + 4 + range.vertex_record * 12 + 8) != stream_va)
-      continue;
-    const auto &material = it->second.materials[i];
+    const auto &material = commands->materials[i];
     if (!material || (found && found->id != material->id))
       return {}; // repeated geometry under different materials is ambiguous
     found = material;
+  }
+  return found;
+}
+
+std::optional<bool> ImportMaterialDisablesShadow(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count) {
+  const auto *commands = FindCommands(tag);
+  if (!commands)
+    return {};
+  const uint32_t ib = bd::mem::try_load<uint32_t>(tag.mesh_va + 8);
+  const uint32_t vb = bd::mem::try_load<uint32_t>(tag.mesh_va + 16);
+  const uint32_t graph = bd::mem::try_load<uint32_t>(tag.ctx_va + 4);
+  const auto *table_ptr = graph ? bd::mem::try_at<const be_u32>(graph + 8) : nullptr;
+  if (!ib || !vb || !table_ptr)
+    return {};
+  const uint32_t table = uint32_t(*table_ptr);
+  std::optional<bool> found;
+  for (const auto &range : commands->ranges) {
+    if (!Matches(range, ib, vb, index_va, stream_va, first_index, index_count))
+      continue;
+    bool disables = false;
+    if (table && range.control_record != 0xffff) {
+      // 0x822813CC: E000 selects a 16-byte control record. sub_8228AB40
+      // dispatches sub_8228AAB0 for bit 0; its fourth output byte is the
+      // shadow-disable flag (payload bit 3). An absent table is a no-op.
+      const uint64_t address = uint64_t(table) + uint64_t(range.control_record) * 16;
+      if (address + 4 > std::numeric_limits<uint32_t>::max())
+        return {};
+      const auto *mask = bd::mem::try_at<const be_u32>(uint32_t(address));
+      const auto *flags = bd::mem::try_at<const be_u32>(uint32_t(address + 4));
+      if (!mask || !flags)
+        return {};
+      disables = MaterialControlDisablesShadow(uint32_t(*mask), uint32_t(*flags));
+    }
+    if (found && *found != disables)
+      return {}; // ambiguous geometry under different feature policies
+    found = disables;
   }
   return found;
 }
