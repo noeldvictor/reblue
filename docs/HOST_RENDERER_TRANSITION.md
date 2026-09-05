@@ -38,7 +38,12 @@ All 16 material/texture/state CTests and three source-boundary guards pass.
 The sampled run records 3414 matching scene-input checks and 11613 composed
 scene-role draws; the general replay comparator still fails other inputs.
 The source guard also distinguishes equal images selected by different table
-paths. Its normal late-scene run is underway. Native scene associations, intra-node pass
+paths. Normal execution records 34 matching source checks and 13133 dispatched
+scene-role draws, with no refusal/compatibility calls. Later scenery still fails:
+113/119 large changes and inspected rock-wall popping. Final-eye multiview at
+explicit XR scale 1.0 produces 1440x1584 eyes with 0/119 large changes, but content
+is still 1440x808 letterboxed/blurred and depth is inconclusive. That VR view
+exercises no scene-role draws. Native scene associations, intra-node pass
 sequences, other retained inputs and full visual qualification remain. See
 `research/20260905_0318_native-scene-input-recipes.md`.
 

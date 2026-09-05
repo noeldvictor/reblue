@@ -100,9 +100,100 @@ The complete early flat sequence is isolated in
 endpoints show the field path and village/title transition, not the later
 scenery/text failure. Cyan analysis reports 50/120 frames above 0.30%, median
 0.003%, maximum 1.23%, zero 2-60% patches and zero whole-frame detections.
-Sequence-difference analysis is still running at this second checkpoint.
+Sequence-difference analysis completed after the second checkpoint: 115/119
+pairs exceed 6%. Inspected pairs 064/094 show camera/title movement without
+broad missing-rock flashes; this moving transition is not the normal late
+failure and its high change count is not a count of confirmed rendering faults.
 
 The strengthened normal run (PID 18528, started 03:24:29 EDT, `reblue_706.log`)
 has both comparison modes off and all five settings audited: autoplay/perf,
 270-second delay, minimum 30 draws and 120 frames. Its late-scene result is
-pending; the diagnostic run above must not stand in for it.
+recorded below; the diagnostic run above does not stand in for it.
+
+## Completed normal late scene
+
+PID 18528 ran 03:24:29-03:30:57 EDT with the 03:23:51 binary, code now committed
+as `8bf2240`. `reblue_706.log` shows that the capture correctly held through a
+20-draw loading screen, then completed all 120 frames: 14672-14791,
+03:29:54.483-03:29:57.909. The isolated directory is
+`out/verification/native_scene_roles_late_flat`, from
+`frame_1788593394_0.raw` to `frame_1788593397_119.raw`, 1920x1080.
+
+Normal source/composition coverage:
+
+- Scene inputs: 34 checks, zero wrong/unsupported/refused; 13133 composed and
+  dispatched scene-role draws, 26266 native inputs, zero dynamic inputs.
+- Scene producer: 17 pairs / 34 native inputs; zero comparison, compatibility
+  or refusal calls. Dynamic and null publication paths were not exercised.
+- Reflection: 991895 checks, zero wrong/unsupported/refused; 1855 enabled
+  pass-default cases, no table cases; 2780233 composed native bindings.
+- Lighting: 47355 publications, zero compatibility/refusal/reset calls,
+  969620 matching direct shadow-input checks.
+- Deferred consumer: 3633200 entries, 2843288 replays, 776919 direct draws,
+  zero fallback/refusal. Its other engine adapters remain counted.
+- No error/critical, Vulkan error, overflow or exhaustion lines were found.
+
+Sequence analysis reports 113/119 changes above 6%, with no cyan detections
+(median/max 0%). The first frame is a dark transition and the last shows the
+villagers/platform. Inspected pairs 080 and 104 still show large rock-wall
+surfaces disappearing between frames. Thus scenery correctness still fails;
+the zero source-check mismatches do not qualify these pixels. Prior text
+failures also remain unqualified, not fixed by this capture. No performance
+claim is made from frame timing or the difference count.
+
+## Full-size desktop final eyes
+
+The vrsim guide directed use of the local headless OpenXR runtime and final-eye
+capture. Its existing manifest has an absolute DLL path. PID 24840 ran
+03:31:01-03:33:21 EDT with the same 03:23:51 renderer, `reblue_707.log`.
+Process-only environment: runtime `out/xrsim-build/reblue_xrsim.json`, width
+1440, height 1584, simulated head height 0 metres. All 14 profile settings were
+audited as effective:
+
+```toml
+bd_xr_autoplay = true
+bd_perf_csv = true
+bd_capture_after_s = 60
+bd_capture_min_draws = 450
+bd_capture_frames = 120
+bd_vr_enabled = true
+bd_stereo = false
+bd_stereo_multiview = true
+bd_mv_layered_textures = true
+bd_mv_capture_array = false
+bd_xr_mirror = false
+bd_vr_camera_mode = 2
+bd_vr_diorama_height = 0
+bd_xr_render_scale = 1.0
+```
+
+This deliberately uses scale 1.0 instead of the existing 0.65 default; it is
+not a same-settings performance comparison with earlier VR runs. The log
+confirms a 1440x1584x2 layered swapchain and final direct presentation.
+Scene content is still fitted to 1440x808 and letterboxed, not a full-height
+native VR camera. The default scale was not changed.
+
+All 120 captures are in `out/verification/native_scene_roles_vr_fullsize`,
+`frame_1788593523_0.raw` through `frame_1788593543_119.raw`: 1440x3168 stacked,
+frames 12342-12461, 03:32:03.851-03:32:23.963 EDT. Analysis reports 0/119 changes
+above 6% and no cyan (median/max 0%). Both eyes in both endpoints were inspected:
+no broad banding, but blur and large black bars remain. Both stereo checks are
+INCONCLUSIVE: only 44%/52% bands usable, disparities -1/-2 pixels, spread 1.
+Matching final layer dimensions is not depth, framing, comfort or 72 Hz proof.
+
+This view exercised zero scene-image publications or scene-role draws; the
+selectors ran without comparisons/refusals. It is a general final-eye check,
+not VR GPU coverage of the new callback roles. Reflection has 112307 matching
+disabled pass-default checks and 7532558 composed native bindings. Lighting
+has 37328 publications and 112319 matching direct input checks, no
+compatibility/refusal/reset calls. Consumer: 5037764 entries / 4456617 replays /
+575454 direct draws, zero fallback/refusal. No error/critical, Vulkan error,
+overflow or exhaustion lines were found. Analysis work overlapped the VR run;
+no timing or performance result is claimed.
+
+All owned renderers stopped after their captures completed. The exact original
+five-setting profile is restored: autoplay/perf true, capture delay 60, minimum
+600 draws, 120 frames. No game assets or saves were manually edited or included
+in commits, and no device was used.
+Full desktop scenes, persistent host scene/pass/material producers and the
+Quest gate remain unfinished.

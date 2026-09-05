@@ -65,7 +65,7 @@ Quest-ready release.
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
 | Lighting pass inputs | Host ambient/camera/colour/shadow parameter production and explicit direct-node shadow sampling; short publication/input comparisons pass | Native scene/light/texture associations, other draw recipes and removal of the material staging/shader ABI |
 | Reflection bindings | Explicit model selection/enable recipes and current pass/table resolution for supported direct draws; old slot-5 image handles are not retained | Null-selection inheritance, animated/ordinary texture overrides, deferred/other-phase recipes and persistent native scene associations |
-| Scene-image selection | Host current/next selectors and complete binding callback; 39485 selector and 14 binding comparisons match | Scene-table production, persistent associations, replay recipes, wrapper blend/constants and dynamic/null GPU coverage |
+| Scene-image selection | Host selectors/binding callback and explicit per-draw current/next roles; replay resolves live inputs instead of retaining old images, with matching source checks | Scene-table production, persistent associations, intra-node pass sequences, wrapper blend/constants and dynamic/null GPU coverage |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
@@ -76,7 +76,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests, all 14 upload/state/packet/verification/scene-image tests and two reflection lock-order guards pass; corrected loading transition advances; latest multiview has 0/119 large jumps | Later scenery/text still fail (108/119 large frame changes in the latest normal late run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
+| Desktop verification | Material/skin tests, all 15 upload/state/packet/verification/scene-image tests and three lock-boundary guards pass; latest final-eye multiview has 0/119 large jumps at explicit 1440x1584 sizing | Later scenery still fails (113/119 large frame changes); text is not requalified. VR content remains 1440x808 letterboxed/blurred, with inconclusive depth; the default XR scale remains 0.65 |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -177,9 +177,16 @@ The [scene-image producer](research/20260905_0301_native-scene-textures.md)
 replaces current/next scene selection and its binding callback on the host.
 The desktop comparison has no selection or publication mismatches, but only
 14 callback publications were exercised; all bound images used native handles.
-Its early field/title-transition capture does not requalify the later scenery
-failure, normal comparison-off execution or VR. Scene-table production,
-persistent associations and retained scene-image replay recipes remain.
+Its early field/title-transition capture alone does not requalify later scenes
+or VR. The [scene-input replay checkpoint](research/20260905_0318_native-scene-input-recipes.md)
+now replaces retained bindings with explicit roles and distinguishes different
+selection paths even when their images match. Normal execution has 34 matching
+source checks and 13133 scene-role draws, but still reproduces rock-wall popping.
+The full-size desktop VR check uses `bd_xr_render_scale=1.0`: final layers reach
+1440x1584 per eye with a stable short sequence, but content is letterboxed to
+1440x808, blurred and inconclusive for depth. That VR view does not exercise
+the scene-image callbacks. Native scene associations, pass sequences and other
+material inputs remain; no Quest performance or full-frame completion is claimed.
 
 ## Project documentation
 
