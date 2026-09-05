@@ -8,6 +8,7 @@
 #include "gpu/post_parameters.h"
 #include "gpu/lens_flare.h"
 #include "gpu/post_adjustments.h"
+#include "gpu/post_scanline.h"
 #include "gpu/scene/native_transform_bridge.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/device.h"
@@ -24,11 +25,10 @@
 #include <stdexcept>
 
 REX_EXTERN(__imp__sub_8221B1D8);
-REX_EXTERN(sub_8221E700);
-REX_EXTERN(bdSetRenderState);
 REX_EXTERN(__imp__sub_8221E298);
 REX_EXTERN(__imp__sub_822187D8);
 REX_EXTERN(__imp__sub_82218E88);
+REX_EXTERN(__imp__sub_82219008);
 REXCVAR_DECLARE(bool, bd_native_post);
 REXCVAR_DECLARE(bool, bd_native_post_verify);
 REXCVAR_DECLARE(bool, bd_native_dof);
@@ -36,22 +36,23 @@ REXCVAR_DECLARE(bool, bd_native_dof_verify);
 REXCVAR_DECLARE(bool, bd_host_targets);
 REXCVAR_DECLARE(bool, bd_native_lensflare_preview);
 REXCVAR_DECLARE(int32_t, bd_native_post_adjustment_preview);
+REXCVAR_DECLARE(bool, bd_native_scanline_preview);
+REXCVAR_DECLARE(bool, bd_ntsc_filter);
 
 namespace bd::gpu {
 namespace {
 constexpr uint32_t kThread = (uint32_t(-32035) << 16) - 26664;
 constexpr uint32_t kDepth = (uint32_t(-32136) << 16) + 14888 + 16;
-constexpr uint32_t kState = (uint32_t(-32036) << 16) - 7768;
 constexpr uint32_t kLensSource = (uint32_t(-32137) << 16) + 30160;
 constexpr uint32_t kLensAttenuation = (uint32_t(-32137) << 16) + 12124;
 struct Stats {
   uint64_t native = 0, original = 0, comparisons = 0, wrong = 0;
   uint64_t settings = 0, memory = 0, effects = 0, inputs = 0;
-  uint64_t tail_calls = 0, state_calls = 0;
   uint64_t flare_frames = 0, flare_sprites = 0, flare_inactive = 0;
   uint64_t flare_checks = 0;
   uint64_t flare_refusals = 0;
   uint64_t fisheye_frames = 0, reverse_frames = 0, adjustment_checks = 0;
+  uint64_t scanline_frames = 0, scanline_checks = 0, scanline_noisy_frames = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -62,11 +63,10 @@ void Report() {
   if (frame - stats.frame < 300)
     return;
   BD_INFO("[native-post] frames {} original {} parameter checks {} wrong {}; "
-          "refusals settings {} memory {} effects {} inputs {}; tail effects {} state-308 {}; "
+          "refusals settings {} memory {} effects {} inputs {}; "
           "authored properties, image/output getters, other effects and UI remain",
           stats.native, stats.original, stats.comparisons, stats.wrong,
-          stats.settings, stats.memory, stats.effects, stats.inputs,
-          stats.tail_calls, stats.state_calls);
+          stats.settings, stats.memory, stats.effects, stats.inputs);
   BD_INFO("[native-post] lens flare visible {} inactive {} native sprites {} parameter checks {} refusals {}; "
           "light/visibility and optical-image adapters remain; preview {}",
           stats.flare_frames, stats.flare_inactive, stats.flare_sprites, stats.flare_checks, stats.flare_refusals,
@@ -74,6 +74,10 @@ void Report() {
   BD_INFO("[native-post] native fisheye {} reverse {} adjustment parameter checks {}; preview {}",
           stats.fisheye_frames, stats.reverse_frames, stats.adjustment_checks,
           REXCVAR_GET(bd_native_post_adjustment_preview));
+  BD_INFO("[native-post] native scanline {} noisy {} authored strength checks {}; preview {}; "
+          "no compatibility tail or state setters on the native path",
+          stats.scanline_frames, stats.scanline_noisy_frames, stats.scanline_checks,
+          REXCVAR_GET(bd_native_scanline_preview));
   stats.frame = frame;
 }
 bool Words(uint64_t address, uint64_t bytes) {
@@ -97,17 +101,16 @@ GuestTexture *Texture(uint32_t container) {
     return nullptr;
   return HostResourceHeap::FromGuest<GuestTexture>(handle);
 }
-struct Tail {
+struct PostEffects {
   PostAdjustments adjustments;
-  bool ntsc = false;
-  uint32_t saved_state = 0;
+  ScanlineParameters scanline;
   LensFlareParameters flare;
   std::array<GuestTexture *, 4> flare_images{};
 };
-thread_local const Tail *lens_comparison = nullptr;
+thread_local const PostEffects *lens_comparison = nullptr;
 thread_local uint32_t lens_comparison_owner = 0, lens_comparison_index = 0;
 thread_local uint32_t adjustment_comparison_owner = 0, adjustment_comparison_mask = 0;
-bool ReadLensFlare(uint32_t owner, uint32_t bank, bool enabled, Tail &tail) {
+bool ReadLensFlare(uint32_t owner, uint32_t bank, bool enabled, PostEffects &tail) {
   const auto refuse = [&](const char *reason, uint32_t detail = 0) {
     if (stats.flare_refusals++ < 8)
       BD_WARN("[native-post] lens input refusal {} detail {} owner {:08X} bank {}",
@@ -154,13 +157,13 @@ bool ReadLensFlare(uint32_t owner, uint32_t bank, bool enabled, Tail &tail) {
   return true;
 }
 bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
-              bool &has_dof, Tail &tail) {
+              bool &has_dof, PostEffects &tail) {
   if (!REXCVAR_GET(bd_native_post) || !REXCVAR_GET(bd_host_targets) ||
       !REXCVAR_GET(bd_native_dof) || REXCVAR_GET(bd_native_dof_verify)) {
     ++stats.settings;
     return false;
   }
-  if (!Words(owner, 12756) || !Words(kThread, 4) || !Words(kState + 308, 4) ||
+  if (!Words(owner, 12756) || !Words(kThread, 4) ||
       !rex::system::XThread::GetCurrentThread()) {
     ++stats.memory;
     return false;
@@ -185,7 +188,6 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
     ++stats.inputs;
     return false;
   }
-  tail.saved_state = bd::mem::load<uint32_t>(kState + 308);
   constexpr std::array<uint32_t, 3> flags{40, 64, 72};
   constexpr std::array<uint32_t, 3> strengths{12724, 12740, 12748};
   for (size_t i = 0; i < flags.size(); ++i) {
@@ -206,7 +208,17 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
         tail.adjustments.reverse_strength = bd::mem::load<float>(owner + 9500 + 620 + bank * 4);
         tail.adjustments.reverse_pivot = bd::mem::load<float>(owner + 9500 + 632 + bank * 4);
       }
-    } else tail.ntsc = enabled;
+    } else if (enabled) {
+      tail.scanline = {bd::mem::load<float>(owner + 10172 + 620 + bank * 4),
+          ScanlineFramePhase(bd::mem::load<float>(owner + 10172 + 632 + bank * 4),
+              REXCVAR_GET(bd_ntsc_filter), FrameStatFrameCount()), true};
+    }
+  }
+  if (REXCVAR_GET(bd_native_scanline_preview)) {
+    if (REXCVAR_GET(bd_native_post_verify))
+      throw std::runtime_error("Synthetic scanlines cannot qualify authored parameters");
+    tail.scanline = {1.0f, ScanlineFramePhase(4.0f, REXCVAR_GET(bd_ntsc_filter),
+                                            FrameStatFrameCount()), true};
   }
   const auto preview = REXCVAR_GET(bd_native_post_adjustment_preview);
   if (preview != 0) {
@@ -237,39 +249,14 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   }
   return true;
 }
-void RunTail(PPCContext &ctx, uint8_t *base, uint32_t owner, uint32_t source,
-             const Tail &tail) {
-  if (!tail.ntsc) return;
-  // The scanline/noise filter is still a compatibility producer, after the
-  // native fisheye/reverse pass. Keep its ordering/state and count execution.
-  struct CallFrame {
-    PPCContext &ctx;
-    uint64_t stack;
-    ~CallFrame() { ctx.r1.u64 = stack; ctx.fpscr.disableFlushMode(); }
-  } frame{ctx, ctx.r1.u64};
-  ctx.r1.u32 -= 256;
-  bd::mem::store<uint32_t>(ctx.r1.u32, uint32_t(frame.stack));
-  const auto state = [&](uint32_t value) {
-    ctx.r3.u64 = 308;
-    ctx.r4.u64 = value;
-    bdSetRenderState(ctx, base);
-    ++stats.state_calls;
-  };
-  state(0);
-  ctx.r3.u64 = owner + 10172;
-  ctx.r4.u64 = source;
-  ctx.r5.u64 = source;
-  sub_8221E700(ctx, base);
-  ++stats.tail_calls;
-  state(tail.saved_state);
-}
 void VerifyAdjustmentPublication(uint32_t owner, uint32_t descriptor_offset,
                                   uint32_t register_offset,
-                                  const std::array<float, 2> &expected, uint32_t lanes) {
+                                  const std::array<float, 2> &expected, uint32_t lanes,
+                                  uint32_t first_lane = 0) {
   const auto descriptor = bd::mem::load<uint32_t>(owner + descriptor_offset);
   if (!Words(descriptor, 16)) throw std::runtime_error("Missing adjustment descriptor");
   const uint64_t address = uint64_t(bd::mem::load<uint32_t>(descriptor + 12)) +
-      uint64_t(bd::mem::load<uint32_t>(owner + register_offset)) * 16;
+      uint64_t(bd::mem::load<uint32_t>(owner + register_offset)) * 16 + first_lane * 4;
   if (!Words(address, lanes * 4)) throw std::runtime_error("Missing adjustment publication");
   for (uint32_t lane = 0; lane < lanes; ++lane) {
     const auto actual = bd::mem::load<float>(uint32_t(address) + lane * 4);
@@ -278,7 +265,6 @@ void VerifyAdjustmentPublication(uint32_t owner, uint32_t descriptor_offset,
       throw std::runtime_error("Native post adjustment parameter mismatch");
     }
   }
-  ++stats.adjustment_checks;
 }
 } // namespace
 
@@ -290,6 +276,7 @@ REX_HOOK_RAW(sub_822187D8) {
     if (!lens_comparison->adjustments.fisheye_enabled || (adjustment_comparison_mask & 1))
       throw std::runtime_error("Unexpected original fisheye producer");
     VerifyAdjustmentPublication(owner, 632, 640, {lens_comparison->adjustments.fisheye, 0}, 1);
+    ++stats.adjustment_checks;
     adjustment_comparison_mask |= 1;
   }
 }
@@ -301,7 +288,22 @@ REX_HOOK_RAW(sub_82218E88) {
       throw std::runtime_error("Unexpected original reverse producer");
     VerifyAdjustmentPublication(owner, 656, 664,
         {lens_comparison->adjustments.reverse_strength, lens_comparison->adjustments.reverse_pivot}, 2);
+    ++stats.adjustment_checks;
     adjustment_comparison_mask |= 2;
+  }
+}
+
+REX_HOOK_RAW(sub_82219008) {
+  const auto owner = ctx.r3.u32;
+  __imp__sub_82219008(ctx, base);
+  if (lens_comparison && owner == adjustment_comparison_owner + 10172) {
+    if (!lens_comparison->scanline.enabled || (adjustment_comparison_mask & 4))
+      throw std::runtime_error("Unexpected original scanline producer");
+    // Only authored strength is compared. Native dimensions come from the
+    // image and native phase deliberately does not consume gameplay rand().
+    VerifyAdjustmentPublication(owner, 656, 664, {lens_comparison->scanline.strength, 0}, 1, 2);
+    ++stats.scanline_checks;
+    adjustment_comparison_mask |= 4;
   }
 }
 
@@ -366,9 +368,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
   DofParameters dof;
   BloomParameters bloom;
   bool has_dof = false;
-  Tail tail;
-  if (ctx.r1.u32 >= 256 && Words(uint64_t(ctx.r1.u32) - 256, 328) &&
-      ReadPlan(owner, dof, bloom, has_dof, tail)) {
+  PostEffects tail;
+  if (ReadPlan(owner, dof, bloom, has_dof, tail)) {
     if (REXCVAR_GET(bd_native_post_verify)) {
       if (comparison)
         throw std::runtime_error("Nested native post comparison");
@@ -386,7 +387,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
       if (lens_comparison_index != tail.flare.count)
         throw std::runtime_error("Original lens-flare sprite count differs");
       const auto expected_adjustments = (tail.adjustments.fisheye_enabled ? 1u : 0u) |
-                                        (tail.adjustments.reverse_enabled ? 2u : 0u);
+                                        (tail.adjustments.reverse_enabled ? 2u : 0u) |
+                                        (tail.scanline.enabled ? 4u : 0u);
       if (adjustment_comparison_mask != expected_adjustments)
         throw std::runtime_error("Original adjustment producer count differs");
       lens_comparison = nullptr;
@@ -401,18 +403,20 @@ REX_HOOK_RAW(sub_8221B1D8) {
         ? HostTargetAcquire(HostTargetClass::PostColor, scene->width, scene->height,
                             0x1A2201BF, 1) : nullptr;
     if (target) {
-      if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images, tail.adjustments)) {
+      if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images,
+                         tail.adjustments, tail.scanline)) {
         if (has_dof)
           PublishDofProducerProperties(owner + 3440);
         if (!Video::PublishSceneOutput(target, scene, 1.0f))
           throw std::runtime_error("Native post output publication failed");
         ReleaseResourceAdapter(target->selfVa);
-        RunTail(ctx, base, owner, source, tail);
         stats.flare_frames += tail.flare.count != 0;
         stats.flare_inactive += tail.flare.count == 0;
         stats.flare_sprites += tail.flare.count;
         stats.fisheye_frames += tail.adjustments.fisheye_enabled;
         stats.reverse_frames += tail.adjustments.reverse_enabled;
+        stats.scanline_frames += tail.scanline.enabled;
+        stats.scanline_noisy_frames += tail.scanline.enabled && tail.scanline.phase != 0;
         ++stats.native;
         Report();
         return;

@@ -30,6 +30,23 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native scanline checkpoint (2026-09-05): the supported post scope now owns its
+final four-tap filter and animation on the host. Native image dimensions,
+frame-index noise shared by both eyes, private scratch and explicit output
+replace the guest producer/wrapper, state-308 calls, texture setters and
+emulated resolve. The existing noise-off default remains. All 26 CTests and
+26 source guards pass. The noise-disabled flat preview has 0/31 large changes;
+the combined animated optical/scanline VR preview has 1/31 (6.33%), inspected
+as changing horizontal bands, not counted as a normal stability pass. Normal
+flat and 1440x1584-per-eye VR have 0/119 large changes, no cyan patches and
+correctly crossed first/last VR depth. Both eyes inspected, profile restored,
+all runs stopped; 42.34 GiB free with 8.60 GiB active unique raw evidence.
+Authored activation/parameter comparisons and event coverage remain unqualified.
+Packed/intervening filters, dual masks, image/property/UI adapters, existing
+blur, late-scene failures and full-frame/full-game gates remain. No Quest run.
+See `research/20260905_1527_native-scanline.md` for source, GPU coverage and
+the deliberate separation of effect animation from gameplay RNG.
+
 Native optical-adjustment checkpoint (2026-09-05): fisheye and colour inversion
 now execute in one native layered pass, with explicit parameters and native
 attachment records. Composite/flare render directly into private native input

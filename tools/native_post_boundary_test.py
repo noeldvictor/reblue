@@ -15,6 +15,32 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.flare_shader = (root / "src/gpu/shaders/hlsl/lens_flare_ps.hlsl").read_text(encoding="utf-8")
         cls.adjust_shader = (root / "src/gpu/shaders/hlsl/post_adjust_ps.hlsl").read_text(encoding="utf-8")
         cls.adjust = (root / "src/gpu/post_adjustments.h").read_text(encoding="utf-8")
+        cls.scanline = (root / "src/gpu/post_scanline.h").read_text(encoding="utf-8")
+        cls.scanline_shader = (root / "src/gpu/shaders/hlsl/post_scanline_ps.hlsl").read_text(encoding="utf-8")
+
+    def test_scanline_has_native_animation_and_no_compatibility_tail(self):
+        for name in ("RunTail", "sub_8221E700", "bdSetRenderState", "kState", "ctx.r1"):
+            self.assertNotIn(name, self.scheduler)
+        code = "\n".join(line.split("//", 1)[0] for line in self.scanline.splitlines())
+        for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "rand("):
+            self.assertNotIn(name, code)
+        self.assertIn("ScanlineFramePhase(", self.scheduler)
+        self.assertIn("REXCVAR_GET(bd_ntsc_filter)", self.scheduler)
+        self.assertIn("10172 + 620 + bank * 4", self.scheduler)
+        self.assertIn("10172 + 632 + bank * 4", self.scheduler)
+
+    def test_scanline_is_layered_four_tap_native_output_after_adjustments(self):
+        shader = self.scanline_shader
+        self.assertIn('#include "src/gpu/post_scanline.h"', shader)
+        self.assertIn("source.GetDimensions(width, height, layers)", shader)
+        self.assertEqual(shader.count("source.SampleLevel("), 4)
+        self.assertEqual(shader.count("view_id), 0)"), 4)
+        for name in ("235.0", "159.0", "33.0", "87.0"):
+            self.assertIn(name, shader)
+        body = self.post.split("bool HostPostRender(", 1)[1].split("bool HostPostPrepareDof(", 1)[0]
+        self.assertIn("has_adjustment && scanline.enabled", body)
+        self.assertLess(body.index("Shader::Adjust"), body.index("Shader::Scanline"))
+        self.assertIn("PostPush{scanline_input->slot, 0, scanline.strength, scanline.phase}", body)
 
     def test_adjustments_use_native_input_and_shared_aspect_math(self):
         self.assertIn('#include "src/gpu/post_adjustments.h"', self.adjust_shader)
@@ -24,10 +50,7 @@ class NativePostBoundaryTest(unittest.TestCase):
         self.assertIn("ReverseColor(", self.adjust_shader)
         for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "psFloatConstants"):
             self.assertNotIn(name, self.adjust)
-        tail = self.scheduler.split("void RunTail(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
-        self.assertIn("if (!tail.ntsc) return", tail)
-        self.assertNotIn("6472", tail)
-        self.assertNotIn("9500", tail)
+        self.assertNotIn("RunTail", self.scheduler)
         self.assertNotIn("sub_8221E758", self.scheduler)
 
     def test_adjustment_input_is_private_native_scratch_not_a_seed_copy(self):
@@ -52,7 +75,7 @@ class NativePostBoundaryTest(unittest.TestCase):
         for name in ("s.render_target", "GuestPixelConstant", "D3DDevice_", "s.textures[", "device_guest"):
             self.assertNotIn(name, body)
         self.assertNotIn("filter(8660", self.scheduler)
-        self.assertIn("if (!tail.ntsc) return", self.scheduler)
+        self.assertNotIn("RunTail", self.scheduler)
 
     def test_flare_recipe_has_no_engine_or_register_dependency(self):
         for name in ("PPCContext", "bd::mem::", "plume::", "REX_", "psFloatConstants"):

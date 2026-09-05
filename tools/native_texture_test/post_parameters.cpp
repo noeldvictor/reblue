@@ -2,6 +2,7 @@
 #include "gpu/lens_flare.h"
 #include "gpu/lens_flare_uv.h"
 #include "gpu/post_adjustments.h"
+#include "gpu/post_scanline.h"
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
@@ -12,6 +13,56 @@
 
 int main() {
   using namespace bd::gpu;
+  assert(!ScanlineParameters{}.enabled);
+  assert(ScanlinePhase(1, false, 0, 32767) == 0);
+  assert(ScanlinePhase(1, true, 32767, 32767) == 32767.0f / 65536);
+  assert(ScanlinePhase(2, true, 32767, 1) == 1.0f / 65536);
+  assert(ScanlinePhase(4, true, 16383, 32767) > 0);
+  assert(ScanlinePhase(4, true, 16384, 32767) == 0);
+  assert(ScanlinePhase(-1, true, 32767, 1) == ScanlinePhase(1, true, 32767, 1));
+  assert(ScanlinePhase(std::numeric_limits<float>::infinity(), true, 0, 1) == 0);
+  assert(ScanlinePhase(std::numeric_limits<float>::quiet_NaN(), true, 0, 1) == 0);
+  uint32_t rolls = 0;
+  float previous_phase = -1;
+  uint32_t changes = 0;
+  for (uint32_t frame = 0; frame < 10000; ++frame) {
+    const auto phase = ScanlineFramePhase(4, true, frame);
+    assert(phase == ScanlineFramePhase(4, true, frame)); // both eyes/scopes agree
+    assert(phase >= 0 && phase < .5f);
+    rolls += phase != 0;
+    changes += phase != previous_phase;
+    previous_phase = phase;
+  }
+  assert(rolls > 4800 && rolls < 5200);
+  assert(changes > 6000);
+  // Independent shader-register transcription: signed exp2(log2(abs(sin))*N).
+  // Compare actual sample-coordinate offsets over flat and native eye extents.
+  for (float height : {720.0f, 1080.0f, 1584.0f}) {
+    for (float strength : {-1.0f, .25f, 1.0f, 2.0f}) {
+      for (float phase : {0.0f, .125f, .499f}) {
+        for (int row = 0; row < 128; ++row) {
+          const float y = (float(row) + .5f) / 128;
+          float cycle = (((((y + phase) * height) * strength) * .1f) * phase) *
+              std::bit_cast<float>(0x3E22F983u) + .5f;
+          cycle = (cycle - std::floor(cycle)) * std::bit_cast<float>(0x40C90FDBu) +
+              std::bit_cast<float>(0xC0490FDBu);
+          const float wave = std::sin(cycle);
+          for (float exponent : {235.0f, 159.0f, 33.0f, 87.0f}) {
+            const float reference = wave == 0 ? 0 :
+                (((wave > 0 ? 1.0f : -1.0f) * std::exp2(std::log2(std::abs(wave)) * exponent)) *
+                 strength) * .01f;
+            assert(std::abs(ScanlineOffset(ScanlineWave(y, height, strength, phase),
+                                           strength, exponent) - reference) < 2e-7f);
+          }
+        }
+      }
+    }
+  }
+  assert(ScanlineWave(.5f, 1584, 1, 0) == 0);
+  assert(ScanlineWave(.5f, 1584, 0, .2f) == 0);
+  assert(ScanlineOffset(0, 1, 33) == 0);
+  assert(ScanlineOffset(1, 1, 33) == .01f);
+  assert(ScanlineOffset(-1, 1, 235) == -.01f);
   PostAdjustments adjustments;
   assert(!adjustments.Active());
   adjustments.fisheye_enabled = true;

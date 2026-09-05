@@ -38,6 +38,7 @@
 #include "gpu/post_parameters.h"
 #include "gpu/lens_flare.h"
 #include "gpu/post_adjustments.h"
+#include "gpu/post_scanline.h"
 
 #include <bit>
 #include <cstring>
@@ -71,6 +72,7 @@
 #include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/post_blur_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_bright_ps.hlsl.spirv.h"
@@ -81,6 +83,7 @@
 #include "src/gpu/shaders/hlsl/lens_flare_vs.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/lens_flare_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/post_adjust_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/post_scanline_ps.hlsl.spirv.h"
 #endif
 
 REXCVAR_DECLARE(bool, bd_host_post);
@@ -111,6 +114,7 @@ enum class Shader : u32 {
   Pyramid = 5,
   LensFlare = 6,
   Adjust = 7,
+  Scanline = 8,
   Count
 };
 
@@ -214,6 +218,8 @@ bool EnsureShaders(VideoState &s, Chain &c) {
       REBLUE_SHADER_BLOB(lens_flare_vs), "main", kHostShaderFormat);
   c.shaders[u32(Shader::Adjust)] = s.device->createShader(
       REBLUE_SHADER_BLOB(post_adjust_ps), "main", kHostShaderFormat);
+  c.shaders[u32(Shader::Scanline)] = s.device->createShader(
+      REBLUE_SHADER_BLOB(post_scanline_ps), "main", kHostShaderFormat);
   if (!c.flare_vs) {
     c.failed = true;
     return false;
@@ -734,7 +740,7 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                     const DofParameters &dof, const BloomParameters &bloom,
                     const LensFlareParameters &flare,
                     const std::array<GuestTexture *, 4> &flare_images,
-                    const PostAdjustments &adjustments) {
+                    const PostAdjustments &adjustments, const ScanlineParameters &scanline) {
 #if defined(REBLUE_D3D12)
   return false;
 #else
@@ -763,12 +769,18 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   }
   // Render directly into the input of the combined adjustment, not a copy of
   // the final image. This native scratch has no engine handle or resolve link.
-  Scratch *adjustment_input = adjustments.Active()
+  const bool has_adjustment = adjustments.Active();
+  Scratch *adjustment_input = has_adjustment || scanline.enabled
       ? GetScratch(s, c, output->width, output->height, output->format, 3, output->layers)
       : nullptr;
-  if (adjustments.Active() && !adjustment_input) return false;
+  if ((has_adjustment || scanline.enabled) && !adjustment_input) return false;
+  Scratch *scanline_input = has_adjustment && scanline.enabled
+      ? GetScratch(s, c, output->width, output->height, output->format, 4, output->layers)
+      : adjustment_input;
+  if (scanline.enabled && !scanline_input) return false;
   const auto destination = Attachment(s, output);
   const auto composed = adjustment_input ? Attachment(adjustment_input) : destination;
+  const auto adjusted = scanline.enabled ? Attachment(scanline_input) : destination;
   if (!composed.framebuffer || !destination.framebuffer) return false;
   Video::OpenCommandListLocked();
   if (!s.command_list_open || !s.command_list)
@@ -787,17 +799,31 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
     throw std::runtime_error("Native post composite failed");
   if (!RenderLensFlare(s, c, composed, flare, flare_images))
     throw std::runtime_error("Native lens-flare submission failed");
-  if (adjustment_input) {
+  if (has_adjustment) {
     s.command_list->setFramebuffer(nullptr);
     Transition(s, adjustment_input->texture.get(), adjustment_input->layout,
                plume::RenderTextureLayout::SHADER_READ);
-    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    if (scanline.enabled)
+      Transition(s, scanline_input->texture.get(), scanline_input->layout,
+                 plume::RenderTextureLayout::COLOR_WRITE);
+    else
+      Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
     auto *pipeline = Pipeline(s, c, Shader::Adjust, output->format, output->layers > 1);
     if (!pipeline) throw std::runtime_error("Native post adjustment pipeline failed");
-    Pass(s, pipeline, destination.framebuffer, destination.width, destination.height,
+    Pass(s, pipeline, adjusted.framebuffer, adjusted.width, adjusted.height,
          PostPush{adjustment_input->slot, std::bit_cast<u32>(adjustments.reverse_pivot),
                   adjustments.fisheye_enabled ? adjustments.fisheye : 0.0f,
                   adjustments.reverse_enabled ? adjustments.reverse_strength : 0.0f}, true);
+  }
+  if (scanline.enabled) {
+    s.command_list->setFramebuffer(nullptr);
+    Transition(s, scanline_input->texture.get(), scanline_input->layout,
+               plume::RenderTextureLayout::SHADER_READ);
+    Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+    auto *pipeline = Pipeline(s, c, Shader::Scanline, output->format, output->layers > 1);
+    if (!pipeline) throw std::runtime_error("Native scanline pipeline failed");
+    Pass(s, pipeline, destination.framebuffer, destination.width, destination.height,
+         PostPush{scanline_input->slot, 0, scanline.strength, scanline.phase}, true);
   }
   output->surfaceDrawn = true;
   // The complete source is consumed before publishing the new output alias.
