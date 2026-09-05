@@ -806,6 +806,8 @@ REXCVAR_DEFINE_BOOL(bd_native_scanline_preview, false, kCvarGroup,
 REXCVAR_DEFINE_INT32(bd_native_grade_preview, 0, kCvarGroup,
                     "Native-only grading preview: 0 authored, 1 warm grading, "
                     "2 grading with grain, 3 alternate grain. Not authored event qualification.");
+REXCVAR_DEFINE_BOOL(bd_native_heat_preview, false, kCvarGroup,
+                    "Native-only depth-aware heat shimmer preview; not authored event or VR comfort qualification.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

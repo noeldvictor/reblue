@@ -10,6 +10,7 @@
 #include "gpu/post_adjustments.h"
 #include "gpu/post_scanline.h"
 #include "gpu/post_grade.h"
+#include "gpu/post_heat.h"
 #include "gpu/scene/native_transform_bridge.h"
 #include "gpu/native_texture_mirror.h"
 #include "gpu/device.h"
@@ -31,6 +32,7 @@ REX_EXTERN(__imp__sub_822187D8);
 REX_EXTERN(__imp__sub_82218E88);
 REX_EXTERN(__imp__sub_82219008);
 REX_EXTERN(__imp__sub_82219960);
+REX_EXTERN(__imp__sub_82216AE8);
 REXCVAR_DECLARE(bool, bd_native_post);
 REXCVAR_DECLARE(bool, bd_native_post_verify);
 REXCVAR_DECLARE(bool, bd_native_dof);
@@ -41,6 +43,7 @@ REXCVAR_DECLARE(int32_t, bd_native_post_adjustment_preview);
 REXCVAR_DECLARE(bool, bd_native_scanline_preview);
 REXCVAR_DECLARE(bool, bd_ntsc_filter);
 REXCVAR_DECLARE(int32_t, bd_native_grade_preview);
+REXCVAR_DECLARE(bool, bd_native_heat_preview);
 
 namespace bd::gpu {
 namespace {
@@ -58,6 +61,7 @@ struct Stats {
   uint64_t fisheye_frames = 0, reverse_frames = 0, adjustment_checks = 0;
   uint64_t scanline_frames = 0, scanline_checks = 0, scanline_noisy_frames = 0;
   uint64_t grade_scopes = 0, grade_frames = 0, grain_frames = 0, grade_checks = 0;
+  uint64_t heat_frames = 0, heat_checks = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -88,6 +92,9 @@ void Report() {
           stats.grade_scopes, stats.grade_frames, stats.grain_frames, stats.grade_checks,
           REXCVAR_GET(bd_native_grade_preview));
   stats.frame = frame;
+  BD_INFO("[native-post] native heat shimmer {} authored checks {}; preview {}; "
+          "depth-aware scene distortion fused before unwarped bloom; no guest phase writes",
+          stats.heat_frames, stats.heat_checks, REXCVAR_GET(bd_native_heat_preview));
 }
 bool Words(uint64_t address, uint64_t bytes) {
   if (!address || (address & 3) || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -111,6 +118,8 @@ GuestTexture *Texture(uint32_t container) {
   return HostResourceHeap::FromGuest<GuestTexture>(handle);
 }
 struct PostEffects {
+  HeatShimmerParameters heat;
+  GuestTexture *heat_image = nullptr;
   PostAdjustments adjustments;
   ScanlineParameters scanline;
   GradeParameters grade;
@@ -185,14 +194,27 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   const auto flag = [&](uint32_t offset) {
     return bd::mem::load<uint8_t>(owner + offset + bank) == 1;
   };
-  // The intervening filter still alters the scene between DoF and bloom.
-  for (const auto offset : {16u}) {
-    if (flag(offset)) {
-      if (stats.effects < 8)
-        BD_INFO("[native-post] compatibility effect flag {} bank {}", offset, bank);
-      ++stats.effects;
-      return false;
+  // Heat acts after DoF and bloom-mask preparation, before their composition.
+  // Native coordinate selection distorts only the scene, never the bloom mask.
+  tail.heat.enabled = flag(16);
+  const auto heat_preview = REXCVAR_GET(bd_native_heat_preview);
+  if (heat_preview && REXCVAR_GET(bd_native_post_verify))
+    throw std::runtime_error("Synthetic heat cannot qualify authored parameters");
+  if (tail.heat.enabled || heat_preview) {
+    auto &heat = tail.heat;
+    heat.enabled = true;
+    heat.amplitude_x = bd::mem::load<float>(owner + 2712 + 684 + bank * 4);
+    heat.amplitude_y = bd::mem::load<float>(owner + 2712 + 696 + bank * 4);
+    heat.noise_scale = bd::mem::load<float>(owner + 2712 + 708 + bank * 4);
+    heat.depth_power = bd::mem::load<float>(owner + 2712 + 720 + bank * 4);
+    heat.phase = HeatShimmerFramePhase(FrameStatFrameCount());
+    if (heat_preview) {
+      heat.amplitude_x = heat.amplitude_y = .03f;
+      heat.noise_scale = 1;
+      heat.depth_power = 1;
     }
+    tail.heat_image = ResolveGuestTexture(bd::mem::load<uint32_t>(owner + 2712 + 616));
+    if (!tail.heat_image) { ++stats.inputs; return false; }
   }
   tail.grade_scope = bd::mem::load<uint8_t>(owner + 48 + bank) != 0 ||
       bd::mem::load<uint8_t>(owner + 56 + bank) != 0 ||
@@ -369,6 +391,20 @@ REX_HOOK_RAW(sub_82219008) {
   }
 }
 
+REX_HOOK_RAW(sub_82216AE8) {
+  const auto owner = ctx.r3.u32;
+  __imp__sub_82216AE8(ctx, base);
+  if (lens_comparison && owner == adjustment_comparison_owner + 2712) {
+    const auto &heat = lens_comparison->heat;
+    if (!heat.enabled || (adjustment_comparison_mask & 16))
+      throw std::runtime_error("Unexpected original heat-shimmer producer");
+    VerifyAdjustmentPublication(owner, 664, 672,
+        {heat.amplitude_x, heat.amplitude_y, heat.noise_scale, heat.depth_power}, 4);
+    ++stats.heat_checks;
+    adjustment_comparison_mask |= 16;
+  }
+}
+
 REX_HOOK_RAW(sub_82219960) {
   const auto owner = ctx.r3.u32;
   __imp__sub_82219960(ctx, base);
@@ -479,7 +515,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
       const auto expected_adjustments = (tail.adjustments.fisheye_enabled ? 1u : 0u) |
                                         (tail.adjustments.reverse_enabled ? 2u : 0u) |
                                         (tail.scanline.enabled ? 4u : 0u) |
-                                        (tail.grade_scope ? 8u : 0u);
+                                        (tail.grade_scope ? 8u : 0u) |
+                                        (tail.heat.enabled ? 16u : 0u);
       if (adjustment_comparison_mask != expected_adjustments)
         throw std::runtime_error("Original adjustment producer count differs");
       lens_comparison = nullptr;
@@ -495,7 +532,8 @@ REX_HOOK_RAW(sub_8221B1D8) {
                             0x1A2201BF, 1) : nullptr;
     if (target) {
       if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images,
-                         tail.adjustments, tail.scanline, tail.grade, tail.grain_image)) {
+                         tail.adjustments, tail.scanline, tail.grade, tail.grain_image,
+                         tail.heat, tail.heat_image)) {
         if (has_dof)
           PublishDofProducerProperties(owner + 3440);
         if (!Video::PublishSceneOutput(target, scene, 1.0f))
@@ -511,6 +549,7 @@ REX_HOOK_RAW(sub_8221B1D8) {
         stats.grade_scopes += tail.grade_scope;
         stats.grade_frames += tail.grade.Active();
         stats.grain_frames += tail.grade.grain;
+        stats.heat_frames += tail.heat.enabled;
         ++stats.native;
         Report();
         return;

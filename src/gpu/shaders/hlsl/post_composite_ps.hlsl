@@ -8,18 +8,26 @@
 //   1 ..  2    : lerp(L1, L2, log2 level)
 //   2 ..  4    : lerp(L2, L3, frac(log2 level))     ... up to L5, then L5
 //
-// and bd_pe_ps_ms_tex: saturate(w0 * that + w1 * bloom). The guest's
-// parameters come through the host-filled pixel constant block:
-//   g_PSC[0] = (dofX, dofY, focus, 0)   the dof draw's c27.x, .y, .w
-//   g_PSC[1] = w0, g_PSC[2] = w1        the ms_tex draw's c13, c14
-//   g_PSC[3] = (depth, L1, L2, L3)      bindless indices as uint bits
-//   g_PSC[4] = (L4, L5, 0, 0)
-// Scene and bloom are the push block's two indices.
+// Native heat coordinate selection follows DoF and precedes weighted bloom.
+// Its depth veto prevents foreground bleeding. Bloom stays at original UV.
+// Explicit 224-byte native layout, not a console pixel-register array.
 #include "copy_common.hlsli"
+#include "src/gpu/post_heat.h"
 
 [[vk::binding(0, 0)]] Texture2DArray<float4> g_Texture2DDescriptorHeap[] : register(t0, space0);
 [[vk::binding(0, 1)]] SamplerState     g_SamplerDescriptorHeap[]   : register(s0, space3);
-[[vk::binding(1, 2)]] cbuffer PixelShaderConstantsBuf : register(b1, space4) { float4 g_PSC[224]; };
+[[vk::binding(1, 2)]] cbuffer CompositeConstants : register(b1, space4) {
+    float4 g_Dof;
+    float4 g_SceneWeight;
+    float4 g_BloomWeight;
+    uint4 g_Indices0; // depth, first three levels
+    uint4 g_Indices1; // last two levels, atlas, reserved
+    float4 g_Bloom; // threshold, intensity, folded, atlas enabled
+    float4 g_Rects[5];
+    float4 g_Heat; // amplitudes xy, noise scale, depth exponent
+    float4 g_HeatAnimation;
+    uint4 g_HeatImage; // enabled, image, sampler, reserved
+};
 
 static uint g_ViewId = 0u;
 
@@ -28,14 +36,14 @@ float4 Tap(uint index, float2 uv)
     return g_Texture2DDescriptorHeap[index].SampleLevel(g_SamplerDescriptorHeap[0], float3(uv, float(g_ViewId)), 0.0);
 }
 
-// A dof level: its own texture, or its rect of the level atlas (g_PSC[5].w),
+// A dof level: its own texture, or its rect of the level atlas,
 // the tap kept half a texel inside the rect so levels do not bleed.
 float4 TapLevel(uint i, uint level_index, float2 uv)
 {
-    if (g_PSC[5].w > 0.5)
+    if (g_Bloom.w > 0.5)
     {
-        const uint atlas = asuint(g_PSC[4].z);
-        const float4 r = g_PSC[6 + i];
+        const uint atlas = g_Indices1.z;
+        const float4 r = g_Rects[i];
         uint w, h, layers;
         g_Texture2DDescriptorHeap[atlas].GetDimensions(w, h, layers);
         const float2 inset = 0.5 / float2(max(w, 1u), max(h, 1u));
@@ -45,22 +53,38 @@ float4 TapLevel(uint i, uint level_index, float2 uv)
     return Tap(level_index, uv);
 }
 
+float2 HeatSceneUV(float2 uv) {
+    if (g_HeatImage.x == 0) return uv;
+    float2 noise_sum = 0;
+    [unroll] for (uint i = 0; i < 4; ++i) {
+        const HeatUV noise_uv = HeatShimmerNoiseUV(uv.x, uv.y, g_Heat.z, g_HeatAnimation.x, float(i));
+        noise_sum += g_Texture2DDescriptorHeap[g_HeatImage.y].SampleLevel(
+            g_SamplerDescriptorHeap[g_HeatImage.z], float3(noise_uv.u, noise_uv.v, 0), 0).xy;
+    }
+    const float original_depth = Tap(g_Indices0.x, uv).x;
+    const HeatUV displaced = HeatShimmerDisplace(uv.x, uv.y, noise_sum.x, noise_sum.y,
+        HeatShimmerDepthWeight(original_depth, g_Heat.w), g_Heat.x, g_Heat.y);
+    const float2 displaced_uv = float2(displaced.u, displaced.v);
+    return HeatShimmerAcceptDepth(original_depth, Tap(g_Indices0.x, displaced_uv).x)
+        ? displaced_uv : uv;
+}
+
 float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
             in uint viewId : SV_ViewID) : SV_Target
 {
     g_ViewId = viewId;
-    const float dofX = g_PSC[0].x;
-    const float dofY = g_PSC[0].y;
-    const float focus = g_PSC[0].z;
-    const uint depthIdx = asuint(g_PSC[3].x);
-    const uint level[5] = { asuint(g_PSC[3].y), asuint(g_PSC[3].z), asuint(g_PSC[3].w),
-                            asuint(g_PSC[4].x), asuint(g_PSC[4].y) };
+    const float dofX = g_Dof.x;
+    const float dofY = g_Dof.y;
+    const float focus = g_Dof.z;
+    const uint depthIdx = g_Indices0.x;
+    const uint level[5] = {g_Indices0.y, g_Indices0.z, g_Indices0.w, g_Indices1.x, g_Indices1.y};
+    const float2 scene_uv = HeatSceneUV(texCoord);
 
-    // g_PSC[0].w: the scene's resolve scale when it is an alias of the
+    // g_Dof.w: the scene's resolve scale when it is an alias of the
     // unscaled surface, 0 = 1.
-    const float sceneScale = g_PSC[0].w > 0.0 ? g_PSC[0].w : 1.0;
-    const float4 scene = Tap(g_PushConstants.ResourceDescriptorIndex, texCoord) * sceneScale;
-    const float depth = Tap(depthIdx, texCoord).x;
+    const float sceneScale = g_Dof.w > 0.0 ? g_Dof.w : 1.0;
+    const float4 scene = Tap(g_PushConstants.ResourceDescriptorIndex, scene_uv) * sceneScale;
+    const float depth = Tap(depthIdx, scene_uv).x;
 
     // The guest's pow(x, 1/8) through log2/exp2, with its clamps.
     const float a = 1.0 - exp2(clamp(log2(abs(1.0 - focus)), -126.0, 126.0) * 0.125);
@@ -71,30 +95,30 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
     float4 dof;
     if (lvl < 1.0)
     {
-        dof = lerp(scene, TapLevel(0, level[0], texCoord), lvl);
+        dof = lerp(scene, TapLevel(0, level[0], scene_uv), lvl);
     }
     else
     {
         const float l2 = log2(lvl);
         if (l2 < 1.0)
-            dof = lerp(TapLevel(0, level[0], texCoord), TapLevel(1, level[1], texCoord), l2);
+            dof = lerp(TapLevel(0, level[0], scene_uv), TapLevel(1, level[1], scene_uv), l2);
         else if (l2 < 2.0)
-            dof = lerp(TapLevel(1, level[1], texCoord), TapLevel(2, level[2], texCoord), frac(l2));
+            dof = lerp(TapLevel(1, level[1], scene_uv), TapLevel(2, level[2], scene_uv), frac(l2));
         else if (l2 < 3.0)
-            dof = lerp(TapLevel(2, level[2], texCoord), TapLevel(3, level[3], texCoord), frac(l2));
+            dof = lerp(TapLevel(2, level[2], scene_uv), TapLevel(3, level[3], scene_uv), frac(l2));
         else if (l2 < 4.0)
-            dof = lerp(TapLevel(3, level[3], texCoord), TapLevel(4, level[4], texCoord), frac(l2));
+            dof = lerp(TapLevel(3, level[3], scene_uv), TapLevel(4, level[4], scene_uv), frac(l2));
         else
-            dof = TapLevel(4, level[4], texCoord);
+            dof = TapLevel(4, level[4], scene_uv);
     }
 
     // Bloom: the mask texture, or (folded) the bright pass of dof level 2.
     float4 bloom;
-    if (g_PSC[5].z > 0.5)
+    if (g_Bloom.z > 0.5)
     {
         const float3 rgb = TapLevel(2, level[2], texCoord).xyz;
-        const float threshold = g_PSC[5].x;
-        const float intensity = g_PSC[5].y;
+        const float threshold = g_Bloom.x;
+        const float intensity = g_Bloom.y;
         const float3 over = max(rgb - threshold, 0.0);
         const float luma = dot(over, float3(0.2125, 0.7154, 0.0722)) * intensity;
         bloom = float4(saturate(min(rgb, 0.25) * 4.0 * luma), 1.0);
@@ -110,6 +134,6 @@ float4 main(in float4 position : SV_Position, in float2 texCoord : TEXCOORD,
     if (debug == 2)
         return float4(saturate(lvl / 8.0).xxx, 1.0);
     if (debug == 3)
-        return saturate(scene * g_PSC[1]);
-    return saturate(dof * g_PSC[1] + bloom * g_PSC[2]);
+        return saturate(scene * g_SceneWeight);
+    return saturate(dof * g_SceneWeight + bloom * g_BloomWeight);
 }

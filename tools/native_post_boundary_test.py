@@ -20,6 +20,32 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.grade = (root / "src/gpu/post_grade.h").read_text(encoding="utf-8")
         cls.grade_shader = (root / "src/gpu/shaders/hlsl/post_grade_ps.hlsl").read_text(encoding="utf-8")
         cls.passes = (root / "src/gpu/post_passes.h").read_text(encoding="utf-8")
+        cls.heat = (root / "src/gpu/post_heat.h").read_text(encoding="utf-8")
+        cls.composite_shader = (root / "src/gpu/shaders/hlsl/post_composite_ps.hlsl").read_text(encoding="utf-8")
+
+    def test_heat_has_native_parameters_animation_and_no_guest_submission(self):
+        body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        for offset in (684, 696, 708, 720):
+            self.assertIn(f"2712 + {offset} + bank * 4", body)
+        self.assertIn("tail.heat.enabled = flag(16)", body)
+        self.assertIn("HeatShimmerFramePhase(FrameStatFrameCount())", body)
+        for token in ("__imp__", "sub_82216AE8(", "sub_82216D08(", "REX_STORE", "psFloatConstants"):
+            self.assertNotIn(token, body)
+        for token in ("PPCContext", "bd::mem::", "plume::", "REX_", "rand("):
+            self.assertNotIn(token, self.heat)
+
+    def test_heat_fuses_scene_coordinates_without_warping_bloom(self):
+        shader = self.composite_shader
+        for token in ("g_PSC", "g_VSC", "g_vSampleOffsets", "g_vSampleWeights"):
+            self.assertNotIn(token, shader)
+        self.assertIn("const float2 scene_uv = HeatSceneUV(texCoord)", shader)
+        self.assertIn("HeatShimmerAcceptDepth(original_depth, Tap(g_Indices0.x, displaced_uv).x)", shader)
+        bloom = shader.split("// Bloom:", 1)[1].split("// Param0:", 1)[0]
+        self.assertIn("TapLevel(2, level[2], texCoord)", bloom)
+        self.assertNotIn("scene_uv", bloom)
+        self.assertIn("float3(noise_uv.u, noise_uv.v, 0)", shader)
+        self.assertIn("float3(uv, float(g_ViewId))", shader)
+        self.assertIn("sizeof(CompositeConstants) == 224", self.post)
 
     def test_grade_uses_authored_inputs_and_not_packed_draw_state(self):
         body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
@@ -28,7 +54,6 @@ class NativePostBoundaryTest(unittest.TestCase):
             self.assertIn(name, body)
         for name in ("__imp__", "sub_82219960(", "sub_82219758(", "D3DDevice_", "psFloatConstants"):
             self.assertNotIn(name, body)
-        self.assertIn("for (const auto offset : {16u})", body)
         for name in ("PPCContext", "bd::mem::", "REX_", "plume::"):
             self.assertNotIn(name, self.grade)
 
@@ -118,7 +143,7 @@ class NativePostBoundaryTest(unittest.TestCase):
                      "HostPostIntercept", "ResolveRtToTexture", "TrackResolveSource"):
             self.assertNotIn(name, body)
         self.assertLess(body.index("DrawQueueFlush("), body.index("BuildDofPyramid("))
-        self.assertIn("HostComposite(s, c, source, nullptr, composed, bloom)", body)
+        self.assertIn("HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler)", body)
         self.assertIn("s.draw_framebuffer_bound = false", body)
 
     def test_composite_consumes_typed_native_parameters(self):

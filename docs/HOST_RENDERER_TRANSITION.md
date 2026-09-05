@@ -30,6 +30,23 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native heat-shimmer checkpoint (2026-09-05): flag-16 filtering now selects
+depth-aware scene/DoF coordinates inside the native composite, with four
+noise samples and unwarped bloom. Existing cooked images, shared-eye host
+animation and an explicit 224-byte composite layout replace the producer,
+mutable guest phase array, submission and another intermediate/resolve.
+All 28 CTests and 30 source guards pass. Strong synthetic flat/VR previews
+show coherent animated distortion but have 31/31 large changes, not normal
+stability passes. Normal flat/VR have 0/119, no cyan and correctly crossed
+first/last VR depth; both eyes inspected. Authored heat events/comparisons,
+VR comfort, dual-mask bloom, image/property/UI adapters and full-frame/game
+gates remain. Three input refusals per run remain. Runs stopped and profile
+restored; no Quest. Three superseded normal raw sets removed, retaining
+reports/images, recovered 3.89 GiB; after new verification the net saving
+is 87.27 MiB with 49.49 GiB free. The historical archive remains over budget
+under a frozen inventory and explicit review triggers. Exact evidence:
+`research/20260905_1644_native-heat-shimmer.md`.
+
 Native colour-grading checkpoint (2026-09-05): discolor, animated grain and
 gamma/saturation/gain/bias/target correction now use native parameters,
 explicit layered images and an 80-byte shader layout. The supported path

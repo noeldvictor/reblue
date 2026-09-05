@@ -40,6 +40,7 @@
 #include "gpu/post_adjustments.h"
 #include "gpu/post_scanline.h"
 #include "gpu/post_grade.h"
+#include "gpu/post_heat.h"
 #include "gpu/post_passes.h"
 #include "gpu/sampler_cache.h"
 
@@ -146,7 +147,14 @@ struct CompositeConstants {
   float bloom[4];
   // The five levels' rects in the atlas, as UV (x, y, w, h).
   float rects[5][4];
+  float heat[4]; // amplitudes xy, noise scale, depth exponent
+  float heat_animation[4]; // render-frame phase
+  u32 heat_image[4]; // enabled, native image, explicit sampler, reserved
 };
+static_assert(sizeof(CompositeConstants) == 224);
+static_assert(offsetof(CompositeConstants, heat) == 176);
+static_assert(offsetof(CompositeConstants, heat_animation) == 192);
+static_assert(offsetof(CompositeConstants, heat_image) == 208);
 
 struct Scratch {
   std::unique_ptr<plume::RenderTexture> texture;
@@ -614,7 +622,9 @@ PostAttachment Attachment(Scratch *target) {
 }
 bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
                    GuestTexture *bloom, const PostAttachment &rt,
-                   const BloomParameters &parameters) {
+                   const BloomParameters &parameters,
+                   const HeatShimmerParameters &heat = {}, GuestTexture *heat_image = nullptr,
+                   u32 heat_sampler = 0) {
 #if defined(REBLUE_D3D12)
   (void)s; (void)c; (void)scene; (void)bloom; (void)rt; (void)parameters;
   return false; // the parameter block rides the Vulkan dynamic UBO binding
@@ -642,6 +652,18 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   if (!depth)
     return bail("depth not readable");
   CompositeConstants k{};
+  if (heat.enabled) {
+    const auto *noise = Source(s, heat_image);
+    if (!noise || !heat_sampler) return bail("heat noise image/sampler");
+    k.heat[0] = heat.amplitude_x;
+    k.heat[1] = heat.amplitude_y;
+    k.heat[2] = heat.noise_scale;
+    k.heat[3] = heat.depth_power;
+    k.heat_animation[0] = heat.phase;
+    k.heat_image[0] = 1;
+    k.heat_image[1] = noise->descriptorIndex;
+    k.heat_image[2] = heat_sampler;
+  }
   k.dof[0] = c.dof.parameters.aperture;
   k.dof[1] = c.dof.parameters.blur_scale;
   k.dof[2] = c.dof.parameters.focus_depth;
@@ -749,7 +771,8 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                     const LensFlareParameters &flare,
                     const std::array<GuestTexture *, 4> &flare_images,
                     const PostAdjustments &adjustments, const ScanlineParameters &scanline,
-                    const GradeParameters &grade, GuestTexture *grain_image) {
+                    const GradeParameters &grade, GuestTexture *grain_image,
+                    const HeatShimmerParameters &heat, GuestTexture *heat_image) {
 #if defined(REBLUE_D3D12)
   return false;
 #else
@@ -777,8 +800,9 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
       if (flare.sprites[i].texture >= flare_images.size()) return false;
   }
   u32 grain_sampler = 0;
-  if (grade.grain) {
-    auto *asset = Content(grain_image);
+  u32 heat_sampler = 0;
+  const auto prepare_noise = [&](GuestTexture *image, u32 &sampler) {
+    auto *asset = Content(image);
     if (asset && asset->texture) BindTextureSRVLocked(s, asset);
     if (!Readable(asset) || asset == output || asset->layers != 1) return false;
     plume::RenderSamplerDesc recipe;
@@ -786,9 +810,11 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
     recipe.mipmapMode = plume::RenderMipmapMode::LINEAR;
     recipe.addressU = recipe.addressV = plume::RenderTextureAddressMode::WRAP;
     recipe.addressW = plume::RenderTextureAddressMode::CLAMP;
-    grain_sampler = ResolveSlotLocked(recipe);
-    if (!grain_sampler) return false; // no silent clamp/linear substitution
-  }
+    sampler = ResolveSlotLocked(recipe);
+    return sampler != 0; // no silent clamp/linear substitution
+  };
+  if (grade.grain && !prepare_noise(grain_image, grain_sampler)) return false;
+  if (heat.enabled && !prepare_noise(heat_image, heat_sampler)) return false;
   // Ordered native passes ping-pong between at most two private images. The
   // composite writes the first input directly; no full-image seed copies.
   const auto plan = MakePostPasses(adjustments.Active(), scanline.enabled, grade.Active());
@@ -819,7 +845,7 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                  plume::RenderTextureLayout::COLOR_WRITE);
   };
   write_attachment(plan.composite_output);
-  if (!HostComposite(s, c, source, nullptr, composed, bloom))
+  if (!HostComposite(s, c, source, nullptr, composed, bloom, heat, heat_image, heat_sampler))
     throw std::runtime_error("Native post composite failed");
   if (!RenderLensFlare(s, c, composed, flare, flare_images))
     throw std::runtime_error("Native lens-flare submission failed");

@@ -22,6 +22,7 @@ struct LensFlareParameters;
 struct PostAdjustments;
 struct ScanlineParameters;
 struct GradeParameters;
+struct HeatShimmerParameters;
 
 // Whole native atlas + folded bloom/composite + instanced optical sprites.
 // The caller supplies an explicit attachment and native optical image mirrors.
@@ -32,7 +33,8 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
                     const LensFlareParameters &flare,
                     const std::array<GuestTexture *, 4> &flare_images,
                     const PostAdjustments &adjustments, const ScanlineParameters &scanline,
-                    const GradeParameters &grade, GuestTexture *grain_image);
+                    const GradeParameters &grade, GuestTexture *grain_image,
+                    const HeatShimmerParameters &heat, GuestTexture *heat_image);
 
 // Authored-property adapters shared by direct scheduling and the transitional
 // DoF entry pair. No original rendering code executes in these functions.
