@@ -30,6 +30,20 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+View-cache checkpoint (2026-09-05): complete camera/frustum-cache execution
+and native cached-shape ownership now use host inverse/unprojection,
+roll-free orientation and native transform values. Normal production does
+not import engine planes or clip points. All 22 CTests and seven source
+guards pass; the corrected desktop comparison records 15341 matching full
+publications, zero fallback/matrix imports/cache bootstraps and a stable
+120-frame sequence with no large jumps or cyan patches. Float cofactor and
+trigonometric ordering corrections are documented, not hidden by a wider
+tolerance. Comparison-off flat/final-eye checks follow this checkpoint.
+Engine camera sources, invalidation/settings, getter publications and broader
+scene/frame ownership remain. Cache-hit/alternate-selection GPU coverage and
+later scenery/text are not qualified. See
+`research/20260905_0717_native-view-cache.md`.
+
 Scene lifecycle checkpoint (2026-09-05): both scene begin/end bodies now run
 on the host with explicit persistent colour/depth roles, typed native pass
 entry/exit and explicit-source output publication. The supported path no
@@ -40,7 +54,8 @@ no begin/end fallback and 0/119 large capture jumps or cyan patches. Initial
 VR validation exposed one-layer depth outputs; creation now preserves both
 eyes. The corrected full-size final-eye sequence also has 0/119 large jumps,
 no cyan patches and 124147 matching ownership checks without fallback.
-Camera/projection/cache execution, state 308, engine descriptors/getters,
+The camera/cache execution boundary is converted by the checkpoint above;
+state 308, engine camera sources/descriptors/getters,
 shared MSAA/scale copies and downstream post/UI tile-chain adapters remain.
 This is not a completed scene producer set or fully native frame. VR remains
 blurred/letterboxed and depth-inconclusive; later scenery/text are not

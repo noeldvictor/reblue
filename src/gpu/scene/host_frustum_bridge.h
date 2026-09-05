@@ -11,4 +11,6 @@ namespace bd::gpu::scene {
 // No engine plane import: returns only a volume produced natively this frame
 // on the submitting thread. Other views/missing producers remain explicit.
 bool GetNativeSceneFrustum(RenderFrustum &frustum);
+// Publish an already constructed native volume without importing engine planes.
+void PublishNativeSceneFrustum(const RenderFrustum &frustum);
 }

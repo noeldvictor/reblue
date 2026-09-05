@@ -6,6 +6,7 @@
  */
 #include "gpu/scene/native_scene_pass.h"
 #include "gpu/scene/native_pass_bridge.h"
+#include "gpu/scene/native_view_bridge.h"
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/device.h"
@@ -70,7 +71,7 @@ void Report() {
     return;
   BD_INFO("[native-scene] begins {} ends {} active {}; compatibility begin {} end {} "
           "refused {}; explicit outputs {} null {} empty clears {}; ownership checks {} wrong {}; "
-          "remaining engine camera-cache calls {} state-308 adapters {} parameter adapters {}; "
+          "view-cache entries {} state-308 adapters {} parameter adapters {}; "
           "post-chain/getter/resource adapters and engine traversal remain",
           stats.begins, stats.ends, scenes.size(), stats.compatibility_begin,
           stats.compatibility_end, stats.refused, stats.outputs, stats.null_outputs,
@@ -219,10 +220,11 @@ bool Begin(PPCContext &ctx, uint8_t *base, uint32_t source) {
   bd::mem::store<float>(kEngine + 54616, z);
   bd::mem::store<float>(kEngine + 54612, y);
   ctx.r3.u64 = 0;
-  sub_82186840(ctx, base); // remaining engine camera/projection/frustum cache
+  sub_82186840(ctx, base); // native complete camera/frustum-cache producer
   ++stats.camera_calls;
   if (bd::mem::load<uint32_t>(settings + 7136) &&
-      bd::mem::load<uint32_t>(kViewCache + 56)) {
+      bd::mem::load<uint32_t>(kViewCache + 56) &&
+      !PublishCachedViewFrustum(ctx, 1)) {
     ctx.fpscr.disableFlushMode();
     for (uint32_t i = 0; i < 13; ++i)
       bd::mem::store<float>(kFrustum + i * 4,

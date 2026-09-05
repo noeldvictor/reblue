@@ -45,6 +45,7 @@ struct Stats {
   uint64_t nonfinite = 0;
 };
 thread_local Stats stats;
+thread_local std::optional<RenderTransforms> native_transforms;
 void Report() {
   const auto frame = FrameStatFrameCount();
   if (frame - stats.frame < 300)
@@ -203,6 +204,7 @@ void Compare(const Publication &publication) {
         cache_wrong, constants_wrong, mask_wrong);
 }
 void Publish(const Publication &publication) {
+  native_transforms = publication.transforms;
   if (publication.nonfinite_mask && ++stats.nonfinite <= 8)
     BD_WARN("[native-transforms] preserving nonfinite engine values on host; "
             "mask {} (world=1 view=2 projection=4 derived=8)",
@@ -233,6 +235,10 @@ void Publish(const Publication &publication) {
 }
 } // namespace
 
+const RenderTransforms *GetNativeRenderTransforms() {
+  return native_transforms ? &*native_transforms : nullptr;
+}
+
 void UpdateRenderTransforms(PPCContext &ctx, uint8_t *base,
                             const float *view_override) {
   if (REXCVAR_GET(bd_native_transforms)) {
@@ -247,6 +253,7 @@ void UpdateRenderTransforms(PPCContext &ctx, uint8_t *base,
     }
   }
   ++stats.compatibility;
+  native_transforms.reset();
   Original(ctx, base, view_override);
   Report();
 }

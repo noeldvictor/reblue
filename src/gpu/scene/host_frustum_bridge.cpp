@@ -37,7 +37,7 @@ void Report() {
   BD_INFO("[host-frustum] built {} scene {}; compatibility {} refused {}; "
           "checked {} wrong {}; native walks {} missing {} shadow checks {}; "
           "exceptional inputs {}; "
-          "engine camera/projection/cache and other-view tables remain",
+          "camera source/getter adapters and other-view tables remain",
           stats.built, stats.scene, stats.compatibility, stats.refused,
           stats.checked, stats.wrong, stats.reads, stats.missing, stats.shadows,
           stats.exceptional);
@@ -168,6 +168,12 @@ void Produce(PPCContext &ctx, uint8_t *base) {
   }
 }
 } // namespace
+
+void PublishNativeSceneFrustum(const RenderFrustum &frustum) {
+  scene_frustum.Publish(FrameStatFrameCount(), frustum);
+  ++stats.built;
+  ++stats.scene;
+}
 
 bool GetNativeSceneFrustum(RenderFrustum &frustum) {
   const auto *current = REXCVAR_GET(bd_host_frustum)
