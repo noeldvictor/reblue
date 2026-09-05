@@ -153,14 +153,19 @@ available capacity is not a reason to keep unnecessary outputs.
 Storage cleanup is part of completing each checkpoint, not a separate future
 task. Leave only the outputs needed for continued work and required evidence;
 apply the protection and cleanup rules below before removing anything.
+Ignored files still consume disk: a clean `git status` is not a storage check.
+Count build outputs, caches, captures, logs, asset intermediates and Git history,
+including temporary outputs that exist only while a job is running.
 
 - Check actual volume free space before builds, asset cooking, downloads and
   captures. Estimate peak additional space first: final outputs plus overlapping
   temporary, extraction, conversion and linker files. For a large job, record
   free space, the estimate and the expected remaining reserve in the worklog.
-  If free space cannot be measured, resolve that before launching the job. Warn
-  below 20 GiB free; below 10 GiB, reclaim space before starting a large job.
-  Keep that reserve after the estimated job, not just at its start.
+  If free space cannot be measured, resolve that before launching the job. Plan
+  to keep at least 20 GiB free throughout the job, including its peak overlap.
+  If the estimate would breach that reserve, reduce the batch, safely reclaim
+  eligible outputs or ask the owner before proceeding. Below 10 GiB free, do
+  not start a large job until space has been reclaimed and the estimate fits.
   Give each large producer an explicit output location, byte or file-count
   limit, stop condition and retention/cleanup plan. Retries share the original
   job's cumulative storage budget; failed runs do not reset the allowance.
@@ -175,6 +180,9 @@ apply the protection and cleanup rules below before removing anything.
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
   twice. Measure actual free-space change before claiming savings.
+  Never commit large generated outputs as a temporary backup: deleting them
+  in a later commit leaves their payloads in Git history. Review staged file
+  sizes as well as paths, and keep disposable outputs outside version control.
   Inspect existing evidence before producing more. Documentation-only changes
   do not justify rebuilding or recapturing merely to stamp a new commit hash;
   record the actual tested binary and source revision instead.
