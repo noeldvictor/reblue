@@ -67,6 +67,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/draw_verify.h"
 #include "gpu/scene/deferred_list.h"
 #include "gpu/scene/deferred_depth_import.h"
 #include "gpu/scene/deferred_entry_bridge.h"
@@ -445,8 +446,8 @@ struct Verify {
   u32 wrong_vs = 0, wrong_ps = 0, wrong_fetch = 0, wrong_tex = 0,
       wrong_state = 0, wrong_geom = 0, wrong_bools = 0, wrong_world = 0;
   u32 wrong_at_node_start = 0;
-  u32 told = 0;
-  u32 told_regs = 0, told_bools = 0, told_texset = 0;
+  DrawVerifyLogBudget log_budget;
+  u32 wrong_declared_vs = 0, wrong_declared_ps = 0, wrong_draw_count = 0;
   u32 tex_inherited = 0; // slots the node never set differ: noise, counted
   u32 last_report_frame = 0;
   // Which registers differ, over the run: the histogram names the culprit.
@@ -1015,7 +1016,8 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
   const u32 idx = vf.next++;
   ++vf.draws;
   if (idx >= vf.expected.size()) {
-    if (vf.told++ < 24)
+    if (vf.log_budget.Take(FrameStatFrameCount(), tag.render_view,
+                           DrawVerifyKind::Structure))
       BD_INFO("[verify] node {:016X} sub {}: the interpreter issued more draws "
               "than the replay has ({})", KeyOf(tag), idx, vf.expected.size());
     ++vf.draws_wrong;
@@ -1025,6 +1027,12 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
   const VerifyDraw &e = vf.expected[idx];
   std::string why;
   u32 n_vs = 0, n_ps = 0, n_fetch = 0, n_tex = 0, n_world = 0;
+  auto cache = [](const GuestShader *shader) {
+    return shader ? shader->shaderCacheEntry : nullptr;
+  };
+  const auto *vs = cache(d.pipelineState.vertexShader);
+  const auto *ps = cache(d.pipelineState.pixelShader);
+  u32 n_declared_vs = 0, n_declared_ps = 0;
   auto f4 = [](const u8 *b, u32 r) {
     float v[4];
     std::memcpy(v, b + r * 16, 16);
@@ -1034,6 +1042,8 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
     if (std::memcmp(t_vs_block + r * 16, e.vs + r * 16, 16) == 0)
       continue;
     const bool world = r >= 20 && r < 24;
+    const bool declared = DeclaresDrawRegister(vs ? vs->constantRegisterMask : nullptr, r);
+    n_declared_vs += declared;
     if (world)
       ++n_world;
     else {
@@ -1041,16 +1051,22 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
       ++vf.vs_reg_hits[r];
     }
     if (n_vs + n_world <= 6)
-      why += fmt::format(" vs c{} interp {} replay {};", r, f4(t_vs_block, r),
+      why += fmt::format(" vs c{}({}) interp {} replay {};", r,
+                         declared ? "declared" : vs ? "undeclared" : "unknown",
+                         f4(t_vs_block, r),
                          f4(e.vs, r));
   }
   for (u32 r = 0; r < 256; ++r) {
     if (std::memcmp(t_ps_block + r * 16, e.ps + r * 16, 16) == 0)
       continue;
     ++n_ps;
+    const bool declared = DeclaresDrawRegister(ps ? ps->constantRegisterMask : nullptr, r);
+    n_declared_ps += declared;
     ++vf.ps_reg_hits[r];
     if (n_ps <= 6)
-      why += fmt::format(" ps c{} interp {} replay {};", r, f4(t_ps_block, r),
+      why += fmt::format(" ps c{}({}) interp {} replay {};", r,
+                         declared ? "declared" : ps ? "undeclared" : "unknown",
+                         f4(t_ps_block, r),
                          f4(e.ps, r));
   }
   for (u32 k = 0; k < 32; ++k) {
@@ -1099,22 +1115,83 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
   }
   const bool state_diff =
       std::memcmp(&d.pipelineState, &e.pipelineState, sizeof(PipelineState)) != 0;
-  const bool geom_diff =
-      std::memcmp(d.vertex_views, e.vertex_views, sizeof(d.vertex_views)) != 0 ||
-      std::memcmp(d.input_slots, e.input_slots, sizeof(d.input_slots)) != 0 ||
-      std::memcmp(&d.index_view, &e.index_view, sizeof(d.index_view)) != 0 ||
+  bool bindings_diff = !SameDrawIndexView(d.index_view, e.index_view);
+  for (u32 slot = 0; slot < 16; ++slot)
+    bindings_diff |= !SameDrawVertexView(d.vertex_views[slot], e.vertex_views[slot]) ||
+                     !SameDrawInputSlot(d.input_slots[slot], e.input_slots[slot]);
+  const bool geom_diff = bindings_diff ||
       d.vertex_first != e.vertex_first || d.vertex_count != e.vertex_count ||
       d.count != e.count || d.start_index != e.start_index ||
       d.base_vertex != e.base_vertex || d.start_vertex != e.start_vertex ||
       d.indexed != e.indexed || d.primitive_type != e.primitive_type ||
       d.alpha_threshold != e.alpha;
   const bool bools_diff = std::memcmp(d.bools, e.bools, sizeof(d.bools)) != 0;
-  if (state_diff)
+  if (state_diff) {
     why += " pipelineState differs;";
-  if (geom_diff)
+    const auto &a = d.pipelineState;
+    const auto &b = e.pipelineState;
+    auto field = [&](const char *name, auto actual, auto expected) {
+      if (actual == expected)
+        return;
+      if constexpr (std::is_enum_v<decltype(actual)>)
+        why += fmt::format(" {} {}/{};", name, u32(actual), u32(expected));
+      else if constexpr (std::is_pointer_v<decltype(actual)>)
+        why += fmt::format(" {} {}/{};", name, fmt::ptr(actual), fmt::ptr(expected));
+      else
+        why += fmt::format(" {} {}/{};", name, actual, expected);
+    };
+    field("VS", a.vertexShader, b.vertexShader);
+    field("PS", a.pixelShader, b.pixelShader);
+    field("declaration", a.vertexDeclaration, b.vertexDeclaration);
+    field("depth test", a.zEnable, b.zEnable);
+    field("depth write", a.zWriteEnable, b.zWriteEnable);
+    field("depth compare", a.zFunc, b.zFunc);
+    field("depth bias", a.depthBias, b.depthBias);
+    field("slope bias", a.slopeScaledDepthBias, b.slopeScaledDepthBias);
+    field("cull", a.cullMode, b.cullMode);
+    field("front face", a.frontFace, b.frontFace);
+    field("blend", a.alphaBlendEnable, b.alphaBlendEnable);
+    field("blend source", a.srcBlend, b.srcBlend);
+    field("blend dest", a.destBlend, b.destBlend);
+    field("blend op", a.blendOp, b.blendOp);
+    field("write mask", a.colorWriteEnable, b.colorWriteEnable);
+    field("topology", a.primitiveTopology, b.primitiveTopology);
+    field("colour format", a.renderTargetFormat, b.renderTargetFormat);
+    field("depth format", a.depthStencilFormat, b.depthStencilFormat);
+    field("samples", a.sampleCount, b.sampleCount);
+    field("coverage", a.enableAlphaToCoverage, b.enableAlphaToCoverage);
+    field("specialization", a.specConstants, b.specConstants);
+    field("multiview", a.multiview, b.multiview);
+  }
+  if (geom_diff) {
     why += fmt::format(" geometry differs (count {}/{} start {}/{} base {}/{});",
                        d.count, e.count, d.start_index, e.start_index,
                        d.base_vertex, e.base_vertex);
+    why += fmt::format(" indexed {}/{} primitive {}/{} start vertex {}/{} alpha {:.9g}/{:.9g};",
+        d.indexed, e.indexed, d.primitive_type, e.primitive_type,
+        d.start_vertex, e.start_vertex, d.alpha_threshold, e.alpha);
+    why += fmt::format(" vertex range {}+{}/{}+{} index {}@{}+{} fmt {}/{}@{}+{} fmt {};",
+        d.vertex_first, d.vertex_count, e.vertex_first, e.vertex_count,
+        fmt::ptr(d.index_view.buffer.ref), d.index_view.buffer.offset,
+        d.index_view.size, u32(d.index_view.format), fmt::ptr(e.index_view.buffer.ref),
+        e.index_view.buffer.offset, e.index_view.size, u32(e.index_view.format));
+    for (u32 slot = 0; slot < 16; ++slot) {
+      const auto &a = d.vertex_views[slot];
+      const auto &b = e.vertex_views[slot];
+      const auto &ai = d.input_slots[slot];
+      const auto &bi = e.input_slots[slot];
+      if (a.buffer == b.buffer && a.size == b.size && ai.index == bi.index &&
+          ai.stride == bi.stride && ai.classification == bi.classification)
+        continue;
+      const auto *decl = d.pipelineState.vertexDeclaration;
+      why += fmt::format(" vb{}(declared {}) {}@{}+{} slot {} stride {} class {}/"
+                         "{}@{}+{} slot {} stride {} class {};",
+          slot, decl && decl->vertexStreams[slot], fmt::ptr(a.buffer.ref),
+          a.buffer.offset, a.size, ai.index, ai.stride, u32(ai.classification),
+          fmt::ptr(b.buffer.ref), b.buffer.offset, b.size, bi.index, bi.stride,
+          u32(bi.classification));
+    }
+  }
   if (bools_diff)
     why += fmt::format(" bools interp {:08X}/{:08X} replay {:08X}/{:08X};",
                        d.bools[0], d.bools[4], e.bools[0], e.bools[4]);
@@ -1129,21 +1206,28 @@ void VerifyAgainstReplay(const NodeTag &tag, const SubDraw &d) {
   vf.wrong_state += state_diff ? 1 : 0;
   vf.wrong_geom += geom_diff ? 1 : 0;
   vf.wrong_bools += bools_diff ? 1 : 0;
-  // A dozen examples per kind, so a rare kind is not drowned by a common one.
+  vf.wrong_declared_vs += n_declared_vs ? 1 : 0;
+  vf.wrong_declared_ps += n_declared_ps ? 1 : 0;
+  // Recurring examples retain later-scene evidence without unbounded logging.
+  const u32 frame = FrameStatFrameCount();
   bool tell = false;
-  if ((n_vs || n_ps || n_world || n_fetch) && vf.told_regs++ < 16)
+  if ((n_vs || n_ps || n_world || n_fetch) &&
+      vf.log_budget.Take(frame, tag.render_view, DrawVerifyKind::Registers))
     tell = true;
-  if (bools_diff && !(n_vs || n_ps) && vf.told_bools++ < 12)
+  if (bools_diff && vf.log_budget.Take(frame, tag.render_view, DrawVerifyKind::Booleans))
     tell = true;
-  if (n_tex && vf.told_texset++ < 600)
+  if (n_tex && vf.log_budget.Take(frame, tag.render_view, DrawVerifyKind::Textures))
     tell = true;
-  if ((state_diff || geom_diff) && vf.told++ < 12)
+  if ((state_diff || geom_diff) &&
+      vf.log_budget.Take(frame, tag.render_view, DrawVerifyKind::Structure))
     tell = true;
   if (tell)
     BD_INFO("[verify] frame {} node {:016X} (visual {:08X} view {} list {}) "
-            "sub {}: vs {} world {} ps {} fetch {} tex {}:{}",
+            "sub {} shaders {:016X}/{:016X}: vs {} world {} ps {} "
+            "declared vs/ps {}/{} fetch {} tex {}:{}",
             FrameStatFrameCount(), KeyOf(tag), tag.visual_va, tag.render_view,
-            tag.from_list ? 1 : 0, idx, n_vs, n_world, n_ps, n_fetch, n_tex,
+            tag.from_list ? 1 : 0, idx, vs ? vs->hash : 0, ps ? ps->hash : 0,
+            n_vs, n_world, n_ps, n_declared_vs, n_declared_ps, n_fetch, n_tex,
             why);
 }
 
@@ -1157,10 +1241,12 @@ void VerifyReport(Verify &vf) {
   }
   BD_INFO("[verify] {} nodes verified, {} wrong; {} draws, {} wrong: vs {} "
           "world {} ps {} fetch {} tex(set) {} (inherited slots differ on {}) "
-          "state {} geometry {} bools {} | vs regs{} | ps regs{}",
+          "state {} geometry {} bools {} declared vs/ps {}/{} draw-count nodes {} "
+          "| vs regs{} | ps regs{}",
           vf.nodes, vf.nodes_wrong, vf.draws, vf.draws_wrong, vf.wrong_vs,
           vf.wrong_world, vf.wrong_ps, vf.wrong_fetch, vf.wrong_tex,
           vf.tex_inherited, vf.wrong_state, vf.wrong_geom, vf.wrong_bools,
+          vf.wrong_declared_vs, vf.wrong_declared_ps, vf.wrong_draw_count,
           vs_hist.empty() ? " none" : vs_hist.c_str(),
           ps_hist.empty() ? " none" : ps_hist.c_str());
 }
@@ -1382,10 +1468,16 @@ void HostDrawCommit(const NodeTag &tag) {
     Verify &vf = t_verify;
     vf.active = false;
     ++vf.nodes;
-    if (vf.next != vf.expected.size() && vf.told++ < 24)
-      BD_INFO("[verify] node {:016X}: interpreter issued {} draws, replay {}",
-              vf.key, vf.next, vf.expected.size());
-    if (vf.draws_wrong != vf.wrong_at_node_start)
+    if (vf.next != vf.expected.size()) {
+      ++vf.wrong_draw_count;
+      if (vf.log_budget.Take(FrameStatFrameCount(), tag.render_view,
+                             DrawVerifyKind::Structure))
+        BD_INFO("[verify] frame {} node {:016X}: compared {} interpreter draws, "
+                "replay {} (capture refusals may reduce compared count)",
+                FrameStatFrameCount(), vf.key, vf.next, vf.expected.size());
+    }
+    if (DrawVerificationNodeWrong(vf.wrong_at_node_start, vf.draws_wrong,
+                                  vf.expected.size(), vf.next))
       ++vf.nodes_wrong;
     vf.wrong_at_node_start = vf.draws_wrong;
     const u32 frame = FrameStatFrameCount();

@@ -9,7 +9,9 @@
 #endif
 #include "gpu/scene/draw_verify.h"
 #include <cassert>
+#include <cstring>
 #include <iostream>
+#include <plume_render_interface_types.h>
 
 int main() {
   using namespace bd::gpu::scene;
@@ -41,5 +43,38 @@ int main() {
   assert(DrawVerificationNodeWrong(7, 7, 2, 1)); // fewer, even no draw mismatch
   assert(DrawVerificationNodeWrong(7, 7, 2, 3));
   assert(DrawVerificationNodeWrong(7, 7, 2, 0));
+  plume::RenderVertexBufferView a, b;
+  // Seed distinct padding, then initialize all semantic members identically.
+  std::memset(&a, 0x11, sizeof(a));
+  std::memset(&b, 0x22, sizeof(b));
+  a.buffer = b.buffer = plume::RenderBufferReference(nullptr, 12);
+  a.size = b.size = 48;
+  assert(SameDrawVertexView(a, b));
+  ++b.size;
+  assert(!SameDrawVertexView(a, b));
+  b.size = a.size;
+  ++b.buffer.offset;
+  assert(!SameDrawVertexView(a, b));
+  plume::RenderIndexBufferView ia(a.buffer, 48, plume::RenderFormat::R16_UINT);
+  auto ib = ia;
+  assert(SameDrawIndexView(ia, ib));
+  ib.format = plume::RenderFormat::R32_UINT;
+  assert(!SameDrawIndexView(ia, ib));
+  ib = ia;
+  ++ib.size;
+  assert(!SameDrawIndexView(ia, ib));
+  ib = ia;
+  ++ib.buffer.offset;
+  assert(!SameDrawIndexView(ia, ib));
+  plume::RenderInputSlot sa(0, 16), sb = sa;
+  assert(SameDrawInputSlot(sa, sb));
+  ++sb.stride;
+  assert(!SameDrawInputSlot(sa, sb));
+  sb = sa;
+  ++sb.index;
+  assert(!SameDrawInputSlot(sa, sb));
+  sb = sa;
+  sb.classification = plume::RenderInputSlotClassification::UNKNOWN;
+  assert(!SameDrawInputSlot(sa, sb));
   std::cout << "Draw verification diagnostics passed\n";
 }

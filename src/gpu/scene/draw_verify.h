@@ -43,4 +43,17 @@ inline bool DrawVerificationNodeWrong(uint32_t wrong_before, uint32_t wrong_afte
                                       size_t expected, size_t actual) {
   return wrong_before != wrong_after || expected != actual;
 }
+
+// Buffer views contain padding on 64-bit hosts. Compare their contract, not
+// object representation; retain checks for every slot, including unused ones.
+template <class View> bool SameDrawVertexView(const View &a, const View &b) {
+  return a.buffer == b.buffer && a.size == b.size;
+}
+template <class View> bool SameDrawIndexView(const View &a, const View &b) {
+  return a.buffer == b.buffer && a.size == b.size && a.format == b.format;
+}
+template <class Slot> bool SameDrawInputSlot(const Slot &a, const Slot &b) {
+  return a.index == b.index && a.stride == b.stride &&
+         a.classification == b.classification;
+}
 } // namespace bd::gpu::scene

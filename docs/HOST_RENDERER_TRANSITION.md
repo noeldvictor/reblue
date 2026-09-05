@@ -30,6 +30,15 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Verification follow-up (2026-09-05): replay diagnostics now retain bounded
+examples in later scenes, report declared shader-input differences separately,
+compare buffer fields without padding noise and flag incomplete compared-draw
+counts. All 12 standalone upload/state/verification tests pass. Recurring reports
+identify camera and animated-UV input mismatches; the sampled late baseline
+still loses background surfaces and has damaged text. This is a diagnostic
+checkpoint, not a new native producer or a fix for those pixels. See
+`research/20260905_0053_recurring-draw-verification.md` for exact scope and runs.
+
 Latest skin checkpoint (2026-09-05): explicit per-draw joint bindings now come
 from model commands or deferred-entry indices. The host gathers each draw's
 current palette before submission; matrix-value identity guessing and the

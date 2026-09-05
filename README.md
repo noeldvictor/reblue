@@ -73,7 +73,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests and all 11 upload/state/packet tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (110/119 large frame changes); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
+| Desktop verification | Material/skin tests and all 12 upload/state/packet/verification tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (110/119 large frame changes in the normal run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -142,6 +142,12 @@ palette-source checks have zero mismatches; inspected late-scene characters no
 longer stretch across the frame with replay enabled. Background surfaces and
 text still fail, and the stable short multiview sequence remains inconclusive
 for stereo depth. Animation evaluation and pose sources are still engine-owned.
+
+The [recurring replay diagnostics](research/20260905_0053_recurring-draw-verification.md)
+preserve later-scene examples, distinguish declared shader inputs, compare buffer
+fields without padding noise and flag incomplete draw comparisons. They expose
+remaining camera/material input differences; they do not fix or qualify the
+later scenery/text failure.
 
 ## Project documentation
 
