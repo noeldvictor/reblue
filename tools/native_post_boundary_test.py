@@ -206,10 +206,34 @@ class NativePostBoundaryTest(unittest.TestCase):
         self.assertIn("parameters.threshold", body)
 
     def test_native_scheduler_has_explicit_completed_output(self):
-        body = self.scheduler.split("if (HostPostRender(", 1)[1].split("++stats.inputs", 1)[0]
+        body = self.scheduler.split("bool RenderPostPlan(", 1)[1].split("bool AcquirePostTargets(", 1)[0]
         self.assertIn("Video::PublishSceneOutput(target, scene, 1.0f)", body)
         for name in ("__imp__", "sub_8221E758", "sub_8221CB38", "sub_822166E8"):
             self.assertNotIn(name, body)
+
+    def test_native_sequence_uses_explicit_depth_without_global_publication(self):
+        body = self.scheduler.split("bool RunEffectSequence(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        for name in ("Texture(depth_container)", "Texture(color_container)",
+                     "targets.images[sequence->Output(i)]", "RenderPostPlan(plan, scene, depth,"):
+            self.assertIn(name, body)
+        for name in ("Texture(kDepth)", "sub_82184790(", "sub_8221CC90(",
+                     "REX_CALL", "__imp__", "bd::mem::store", "ctx.r1", "SetTexture("):
+            self.assertNotIn(name, body)
+        self.assertIn("REX_HOOK_RAW(bdEffectSlotArrayApply)", self.scheduler)
+
+    def test_native_sequence_preflights_unknown_callbacks_and_preserves_ordered_focus(self):
+        body = self.scheduler.split("bool RunEffectSequence(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
+        self.assertIn('callback != 0x8221B1D8u', body)
+        self.assertIn('MakePostSequence(uint32_t(std::max(0, signed_count)))', body)
+        self.assertIn('bd::mem::load<uint32_t>(list + 16)', body)
+        self.assertLess(body.index('callback !='), body.index('AcquirePostTargets('))
+        self.assertLess(body.index('ReadPlan('), body.index('RenderPostPlan('))
+        self.assertLess(body.index('ReadDofProducerParameters('), body.index('RenderPostPlan('))
+        self.assertIn('if (i) throw std::runtime_error', body)
+        self.assertIn('phase != 3', body)
+        acquisition = self.scheduler.split('bool AcquirePostTargets(', 1)[1].split('bool RunEffectSequence(', 1)[0]
+        self.assertIn('HostTargetClass::PostColorAlternate', acquisition)
+        self.assertIn('ReleaseResourceAdapter(image->selfVa)', self.scheduler)
 
     def test_native_prepare_has_no_console_parameter_or_resource_producer(self):
         body = self.post.split("bool HostPostPrepareDof(", 1)[1].split("bool HostPostProducerSkip(", 1)[0]

@@ -6,6 +6,7 @@
  */
 #include "gpu/post_chain.h"
 #include "gpu/post_parameters.h"
+#include "gpu/post_sequence.h"
 #include "gpu/lens_flare.h"
 #include "gpu/post_adjustments.h"
 #include "gpu/post_scanline.h"
@@ -25,8 +26,10 @@
 #include <rex/ppc/context.h>
 #include <rex/system/xthread.h>
 #include <stdexcept>
+#include <vector>
 
 REX_EXTERN(__imp__sub_8221B1D8);
+REX_EXTERN(__imp__bdEffectSlotArrayApply);
 REX_EXTERN(__imp__sub_8221E298);
 REX_EXTERN(__imp__sub_822187D8);
 REX_EXTERN(__imp__sub_82218E88);
@@ -53,6 +56,7 @@ constexpr uint32_t kDepth = (uint32_t(-32136) << 16) + 14888 + 16;
 constexpr uint32_t kLensSource = (uint32_t(-32137) << 16) + 30160;
 constexpr uint32_t kLensAttenuation = (uint32_t(-32137) << 16) + 12124;
 constexpr uint32_t kPostOwner = (uint32_t(-32137) << 16) + 31212;
+constexpr uint32_t kPhase = (uint32_t(-32137) << 16) + 16476;
 struct Stats {
   uint64_t native = 0, original = 0, comparisons = 0, wrong = 0;
   uint64_t settings = 0, memory = 0, effects = 0, inputs = 0;
@@ -64,6 +68,8 @@ struct Stats {
   uint64_t grade_scopes = 0, grade_frames = 0, grain_frames = 0, grade_checks = 0;
   uint64_t heat_frames = 0, heat_checks = 0;
   uint64_t directional_bloom_frames = 0, directional_bloom_iterations = 0;
+  uint64_t sequences = 0, sequence_roots = 0, sequence_empty = 0;
+  uint64_t sequence_original = 0, sequence_refused = 0, sequence_max = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -107,6 +113,10 @@ void Report() {
           "independent horizontal/vertical masks, no guest mask cache or resolves",
           stats.directional_bloom_frames, stats.directional_bloom_iterations,
           REXCVAR_GET(bd_native_bloom_preview));
+  BD_INFO("[native-post] effect sequences {} roots {} empty {} max roots {}; "
+          "original sequences {} refused {}; direct depth, no global depth publication",
+          stats.sequences, stats.sequence_roots, stats.sequence_empty, stats.sequence_max,
+          stats.sequence_original, stats.sequence_refused);
 }
 bool Words(uint64_t address, uint64_t bytes) {
   if (!address || (address & 3) || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -139,6 +149,20 @@ struct PostEffects {
   GuestTexture *grain_image = nullptr;
   LensFlareParameters flare;
   std::array<GuestTexture *, 4> flare_images{};
+};
+struct PostPlan {
+  uint32_t owner = 0; // authored-property/getter adapter, not the GPU stage identity
+  DofParameters dof;
+  BloomParameters bloom;
+  bool has_dof = false;
+  PostEffects tail;
+};
+struct PostTargets {
+  std::array<GuestTexture *, 2> images{};
+  ~PostTargets() {
+    for (auto *image : images)
+      if (image) ReleaseResourceAdapter(image->selfVa);
+  }
 };
 thread_local const PostEffects *lens_comparison = nullptr;
 thread_local uint32_t lens_comparison_owner = 0, lens_comparison_index = 0;
@@ -354,6 +378,114 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   }
   return true;
 }
+bool RenderPostPlan(const PostPlan &plan, GuestTexture *scene, GuestTexture *depth,
+                    GuestTexture *target) {
+  const auto &tail = plan.tail;
+  if (HostPostRender(scene, depth, target, plan.dof, plan.bloom, tail.flare, tail.flare_images,
+                     tail.adjustments, tail.scanline, tail.grade, tail.grain_image,
+                     tail.heat, tail.heat_image)) {
+    if (plan.has_dof)
+      PublishDofProducerProperties(plan.owner + 3440);
+    if (!Video::PublishSceneOutput(target, scene, 1.0f))
+      throw std::runtime_error("Native post output publication failed");
+    stats.flare_frames += tail.flare.count != 0;
+    stats.flare_inactive += tail.flare.count == 0;
+    stats.flare_sprites += tail.flare.count;
+    stats.fisheye_frames += tail.adjustments.fisheye_enabled;
+    stats.reverse_frames += tail.adjustments.reverse_enabled;
+    stats.scanline_frames += tail.scanline.enabled;
+    stats.scanline_noisy_frames += tail.scanline.enabled && tail.scanline.phase != 0;
+    stats.grade_scopes += tail.grade_scope;
+    stats.grade_frames += tail.grade.Active();
+    stats.grain_frames += tail.grade.grain;
+    stats.heat_frames += tail.heat.enabled;
+    stats.directional_bloom_frames += plan.bloom.directional.enabled;
+    if (plan.bloom.directional.enabled)
+      stats.directional_bloom_iterations += plan.bloom.directional.iterations;
+    ++stats.native;
+    return true;
+  }
+  return false;
+}
+bool AcquirePostTargets(GuestTexture *scene, GuestTexture *depth, uint32_t count,
+                        PostTargets &targets) {
+  if (!scene || !scene->texture || !depth || !depth->texture || !count || count > 2)
+    return false;
+  constexpr std::array roles{HostTargetClass::PostColor, HostTargetClass::PostColorAlternate};
+  for (uint32_t i = 0; i < count; ++i) {
+    targets.images[i] = HostTargetAcquire(roles[i], scene->width, scene->height, 0x1A2201BF, 1);
+    if (!targets.images[i]) return false;
+  }
+  return true;
+}
+bool RunEffectSequence(uint32_t list, uint32_t color_container, uint32_t depth_container) {
+  if (!REXCVAR_GET(bd_native_post) || REXCVAR_GET(bd_native_post_verify) ||
+      !REXCVAR_GET(bd_host_targets) || !REXCVAR_GET(bd_native_dof) ||
+      REXCVAR_GET(bd_native_dof_verify))
+    return false;
+  const auto refuse = [&](const char *reason, uint32_t detail = 0) {
+    if (stats.sequence_refused++ < 8)
+      BD_WARN("[native-post] sequence refusal {} detail {:08X} frame {}",
+              reason, detail, FrameStatFrameCount());
+    return false;
+  };
+  if (!Words(list, 48) || !Words(kPhase, 4)) return refuse("list memory", list);
+  if (!bd::mem::load<uint8_t>(list + 12)) {
+    ++stats.sequence_empty;
+    return true;
+  }
+  // The original leaves its temporary depth getter empty. Do not suppress
+  // release/cleanup of a pre-existing compatibility scope or nested publication.
+  if (bd::mem::load<uint32_t>(list + 16)) return refuse("active depth getter", list);
+  const auto signed_count = bd::mem::load<int32_t>(list + 8);
+  const auto sequence = MakePostSequence(uint32_t(std::max(0, signed_count)));
+  if (!sequence) return refuse("capacity", uint32_t(signed_count));
+  if (!sequence->count) {
+    ++stats.sequence_empty;
+    return true;
+  }
+  const auto array = bd::mem::load<uint32_t>(list);
+  if (!Words(array, uint64_t(sequence->count) * 4)) return refuse("entry memory", array);
+  const auto phase = bd::mem::load<int32_t>(kPhase);
+  std::vector<PostPlan> plans(sequence->count);
+  // Snapshot and validate the complete ordered list before executing any root.
+  // Unknown callbacks cannot be skipped or replayed after a partial native list.
+  for (uint32_t i = 0; i < sequence->count; ++i) {
+    auto &plan = plans[i];
+    plan.owner = bd::mem::load<uint32_t>(array + i * 4);
+    if (!Words(plan.owner, 4)) return refuse("owner memory", plan.owner);
+    const auto vtable = bd::mem::load<uint32_t>(plan.owner);
+    if (!Words(vtable, 4)) return refuse("callback memory", vtable);
+    const auto callback = bd::mem::load<uint32_t>(vtable);
+    if (callback != 0x8221B1D8u) return refuse("unsupported callback", callback);
+    if (phase == 3 && !ReadPlan(plan.owner, plan.dof, plan.bloom, plan.has_dof, plan.tail))
+      return refuse("authored plan", plan.owner);
+  }
+  if (phase != 3) { // all validated whole-post callbacks are no-ops in other phases
+    ++stats.sequence_empty;
+    return true;
+  }
+  auto *scene = Texture(color_container);
+  auto *depth = Texture(depth_container);
+  PostTargets targets;
+  if (!AcquirePostTargets(scene, depth, sequence->target_count, targets))
+    return refuse("image targets");
+  for (uint32_t i = 0; i < sequence->count; ++i) {
+    auto &plan = plans[i];
+    // A preceding local-focus root publishes the shared authored focus getter.
+    // Later roots must observe that ordered update, not their preflight value.
+    if (i && plan.has_dof && !ReadDofProducerParameters(plan.owner + 3440, plan.dof))
+      throw std::runtime_error("Native effect sequence lost its preflighted focus input");
+    if (!RenderPostPlan(plan, scene, depth, targets.images[sequence->Output(i)])) {
+      if (i) throw std::runtime_error("Native effect sequence refused after a completed root");
+      return refuse("first root image preflight");
+    }
+  }
+  ++stats.sequences;
+  stats.sequence_roots += sequence->count;
+  stats.sequence_max = std::max(stats.sequence_max, uint64_t(sequence->count));
+  return true;
+}
 void VerifyAdjustmentPublication(uint32_t owner, uint32_t descriptor_offset,
                                   uint32_t register_offset,
                                   const std::array<float, 4> &expected, uint32_t lanes,
@@ -512,10 +644,12 @@ REX_HOOK_RAW(sub_8221B1D8) {
   if (ctx.r5.s32 != 3) // the original has no render work in other phases
     return;
   const auto owner = ctx.r3.u32, source = ctx.r4.u32;
-  DofParameters dof;
-  BloomParameters bloom;
-  bool has_dof = false;
-  PostEffects tail;
+  PostPlan plan;
+  plan.owner = owner;
+  auto &dof = plan.dof;
+  auto &bloom = plan.bloom;
+  auto &has_dof = plan.has_dof;
+  auto &tail = plan.tail;
   if (ReadPlan(owner, dof, bloom, has_dof, tail)) {
     if (REXCVAR_GET(bd_native_post_verify)) {
       if (comparison)
@@ -548,46 +682,29 @@ REX_HOOK_RAW(sub_8221B1D8) {
     }
     auto *scene = Texture(source);
     auto *depth = Texture(kDepth);
-    auto *target = scene && scene->texture && depth && depth->texture
-        ? HostTargetAcquire(HostTargetClass::PostColor, scene->width, scene->height,
-                            0x1A2201BF, 1) : nullptr;
-    if (target) {
-      if (HostPostRender(scene, depth, target, dof, bloom, tail.flare, tail.flare_images,
-                         tail.adjustments, tail.scanline, tail.grade, tail.grain_image,
-                         tail.heat, tail.heat_image)) {
-        if (has_dof)
-          PublishDofProducerProperties(owner + 3440);
-        if (!Video::PublishSceneOutput(target, scene, 1.0f))
-          throw std::runtime_error("Native post output publication failed");
-        ReleaseResourceAdapter(target->selfVa);
-        stats.flare_frames += tail.flare.count != 0;
-        stats.flare_inactive += tail.flare.count == 0;
-        stats.flare_sprites += tail.flare.count;
-        stats.fisheye_frames += tail.adjustments.fisheye_enabled;
-        stats.reverse_frames += tail.adjustments.reverse_enabled;
-        stats.scanline_frames += tail.scanline.enabled;
-        stats.scanline_noisy_frames += tail.scanline.enabled && tail.scanline.phase != 0;
-        stats.grade_scopes += tail.grade_scope;
-        stats.grade_frames += tail.grade.Active();
-        stats.grain_frames += tail.grade.grain;
-        stats.heat_frames += tail.heat.enabled;
-        stats.directional_bloom_frames += bloom.directional.enabled;
-        if (bloom.directional.enabled)
-          stats.directional_bloom_iterations += bloom.directional.iterations;
-        ++stats.native;
-        Report();
-        return;
-      }
-      ReleaseResourceAdapter(target->selfVa);
+    PostTargets targets;
+    if (AcquirePostTargets(scene, depth, 1, targets) &&
+        RenderPostPlan(plan, scene, depth, targets.images[0])) {
+      Report();
+      return;
     }
     if (stats.inputs < 8)
       BD_WARN("[native-post] render refusal frame {} scene {:08X} depth {:08X} target {}",
               FrameStatFrameCount(), scene ? scene->selfVa : 0, depth ? depth->selfVa : 0,
-              target != nullptr);
+              targets.images[0] != nullptr);
     ++stats.inputs;
   }
   ++stats.original;
   __imp__sub_8221B1D8(ctx, base);
+  Report();
+}
+REX_HOOK_RAW(bdEffectSlotArrayApply) {
+  if (!RunEffectSequence(ctx.r3.u32, ctx.r4.u32, ctx.r5.u32)) {
+    ++stats.sequence_original;
+    __imp__bdEffectSlotArrayApply(ctx, base);
+  }
+  // The original has no defined result; bdRenderViewSubmit overwrites r3
+  // immediately. No guest stack frame or global depth getter is needed here.
   Report();
 }
 } // namespace bd::gpu

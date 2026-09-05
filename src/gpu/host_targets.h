@@ -29,6 +29,7 @@ enum class HostTargetClass : u8 {
   ReflectionColor,
   ReflectionDepth,
   PostColor,
+  PostColorAlternate,
   Count
 };
 
