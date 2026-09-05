@@ -122,3 +122,45 @@ native raster recipes. No error/critical, Vulkan error/failure, overflow,
 exhaustion or retirement-race matches. Exact-path validated process stopped
 and confirmed exited at 22:41:58. This short field check does not requalify the
 known damaged later scene or all stencil paths.
+
+### Normal desktop multiview, log 674
+
+Integration `d8166ec` was committed and pushed before this run. PID 19944
+launched 22:43:26 EDT with the same final source binary. All 13 temporary
+settings applied: autoplay/perf CSV, 60-second capture delay, minimum 450
+draws, 120 frames; VR on, legacy stereo off, multiview/layered textures on,
+scene-array capture off, mirror off, camera mode 2 and diorama height 0.
+The process-local simulator requested 1440x1584 per eye, head height 0.
+OpenXR created a session and actual 936x1030x2 swapchain; eye and game cameras
+differed. This is not a full-resolution target or headset performance check.
+
+Sequence 119 completed 22:44:34.287 at frame 20836, 936x2060 stacked eyes.
+Isolated output: `out/verification/native_raster_vr`. 10/119 pairs exceeded
+6%, at destination frames 30, 31, 33, 34, 36 and 94, 95, 97, 98, 100. The
+known 64-frame cadence persists. No cyan patches (median/maximum 0.000%).
+Both eyes in the first/last frames and the 29-to-30 jump pair were inspected:
+blur/banding and large black bars remain, with the jump changing scene
+sharpness/appearance in both eyes. The stereo check exited 2, INCONCLUSIVE,
+with only one bounded textured band; its output image was inspected too.
+The native raster conversion does not resolve the existing VR failure.
+
+Last report at 22:45:15.081: 5246909 native setter updates, 4597555 unchanged,
+14357554 ordinary native draw flushes, one bootstrap import; zero diagnostic
+calls/checks, refused setters or legacy raster draws. Other-state compatibility
+calls: 28513657. No error/critical, Vulkan error/failure, overflow, exhaustion
+or retirement-race matches. Exact-path validated process stopped and confirmed
+exited at 22:45:19. All renderer processes are stopped; the original five-setting
+profile is restored. The final eight-test rerun passed in 0.48 seconds.
+
+## Next boundaries
+
+Remaining-state telemetry in the normal flat run observed offsets 60, 72, 76,
+96, 100, 104, 304, 308, 324, 328 and 332. These identify the next setter/input
+sources to inspect, not permission to drop their effects. Replace blend/alpha/
+sampler and material/pass production with native records, including inline
+writers, and retire the temporary cache/register publication adapter as its
+readers disappear. Retained replay recipes and the known multiview/later-scene
+failures still need correction. No later-scene capture was repeated here.
+The repository skills kept testing on desktop and required sequence and eye
+inspection; no Quest or Thor work was performed. The all-rendering/full-game
+acceptance gate remains open.

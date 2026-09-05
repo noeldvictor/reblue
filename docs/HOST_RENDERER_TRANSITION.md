@@ -144,6 +144,9 @@ fields at draw time, removing the per-draw engine raster-cache read/conversion.
 `bd_native_raster` defaults on; diagnostic comparison defaults off. The live
 comparison recorded 1491692 setter checks and 3070903 ordinary draw-state
 checks, with zero publication mismatches/cache drift and one bootstrap import.
+The normal flat sequence has 0/119 jumps and no cyan patches. Normal desktop
+multiview still has 10/119 jumps at the 64-frame cadence, blurred/banded eyes
+and an inconclusive stereo-depth result; it does not qualify VR correctness.
 See `research/20260904_2238_native-raster-intent.md` for tests and captures.
 Getter/cache/register shadows remain explicit engine adapters; blend still
 imports registers written inline by the engine. Alpha, sampler, other-state
