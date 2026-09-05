@@ -1190,9 +1190,9 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
         continue;
       }
       sc.native_valid = false;
-      // X360 stores sampler state in fetchConstants[N].dword[*]. The
-      // SetSamplerState_* setters are unhooked and run their recompiled bodies,
-      // so the address mode bits there are valid.
+      // Temporary import: seven sampler setters and scene defaults execute on
+      // the host, but remaining setters and inline material writers still
+      // update fetchConstants. A setter-only native store would miss overrides.
       if (device_p) {
         ++compatibility_samplers;
         const auto &fc_be = device_p->fetchConstants[i];

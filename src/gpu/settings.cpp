@@ -652,18 +652,14 @@ REXCVAR_DEFINE_BOOL(bd_depth_prepass, false, kCvarGroup,
                     "pass, then shade with depth writes off (needs "
                     "bd_draw_defer).");
 
-// The early-out half of bdSetSamplerState, done host-side. ~23,000 guest calls
-// a frame, the vast majority of which exist only to discover they have nothing
-// to do - and each pays a recompiled prologue to find out. The slow path still
-// runs the guest body, so this cannot change behaviour.
-// Default OFF: measured SLOWER than the guest it replaces. See the note in
-// gpu/hooks/scene_node.cpp - two within-run A/Bs put it at +1.4% and +3.1% on
-// us/draw. Kept because it is correct and because the finding matters more than
-// the code: the recompiled early-out is already cheap enough that a host
-// wrapper cannot beat it.
-REXCVAR_DEFINE_BOOL(bd_host_sampler_state, false, kCvarGroup,
-                    "Take bdSetSamplerState's unchanged-value early-out in "
-                    "host code instead of in recompiled guest code.");
+// Complete scene sampler defaults and seven changed-state setters now execute
+// on the host. Inline material writers and per-draw fetch import remain tracked.
+REXCVAR_DEFINE_BOOL(bd_host_sampler_state, true, kCvarGroup,
+                    "Execute scene sampler defaults and supported sampler "
+                    "setters on the host, retaining temporary engine shadows.");
+REXCVAR_DEFINE_BOOL(bd_host_sampler_verify, false, kCvarGroup,
+                    "Compare host sampler publications with one original "
+                    "execution; correctness only, not normal host execution.");
 
 // 337 of 530 field-scene draws blend AND write depth - 64% of the frame,
 // counted on the desktop, not inferred. On a Xenon that was free: EDRAM had no
