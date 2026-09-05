@@ -63,6 +63,7 @@ Quest-ready release.
 | Native mesh assets | Versioned persistent `.bdmesh` cache, triangle lists, shared host GPU buffers and existing generated LOD support; enabled by default | Asset-level discovery/loading, independent native layouts/materials, dynamic geometry and cache streaming/eviction |
 | Material properties | Shared, content-keyed `.bdmat` assets for supported diffuse/specular/reflection recipes, independent cooker/loader and bounded residency; enabled by default | Native texture/lighting definitions, asset-level scene bindings, remaining draw recipes and replacement of the shader-register compatibility boundary |
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
+| Lighting pass inputs | Host ambient/camera/colour/shadow parameter production and explicit direct-node shadow sampling; short publication/input comparisons pass | Native scene/light/texture associations, other draw recipes and removal of the material staging/shader ABI |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
@@ -73,7 +74,7 @@ Quest-ready release.
 | Alpha policy | Native cutout/reference/compare/coverage intent, four host setters, shared CPU/shader comparison contract and live ordinary-draw composition | Native material/pass producers, removal of getter/replay adapters, non-GE GPU coverage and multisample/custom coverage qualification |
 | Scene submission | Host traversal/replay, authoritative native packet pipelines, frustum/occlusion culling, instancing, vertex pulling and indirect submissions | Replace retained guest draw templates and material/constant producers; remove remaining guest resource dependencies |
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
-| Desktop verification | Material/skin tests and all 12 upload/state/packet/verification tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (110/119 large frame changes in the normal run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
+| Desktop verification | Material/skin tests and all 13 upload/state/packet/verification tests pass; latest multiview sequence has 0/119 large jumps; inspected late-scene character stretching is fixed | Later scenery/text still fail (107/119 large frame changes in the latest normal run); stereo depth remains inconclusive and actual eyes are 936x1030, not the target |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
 The mesh/capture evidence and its limits are recorded in
@@ -148,6 +149,15 @@ preserve later-scene examples, distinguish declared shader inputs, compare buffe
 fields without padding noise and flag incomplete draw comparisons. They expose
 remaining camera/material input differences; they do not fix or qualify the
 later scenery/text failure.
+
+The [host lighting producer](research/20260905_0121_native-lighting-pass.md)
+replaces lighting setup execution and supplies direct-node shadow sampling
+parameters from explicit host records. The short comparison has no publication
+or direct-node input mismatches. Normal late and multiview runs have no lighting
+fallbacks or direct-node source mismatches, but later scenery/text still fail
+and stereo depth remains inconclusive. Engine scene/texture associations,
+material staging and other retained inputs remain; this is not complete frame
+ownership.
 
 ## Project documentation
 

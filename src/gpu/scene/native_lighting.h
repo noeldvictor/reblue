@@ -22,6 +22,7 @@ struct NativeLightingInputs {
   int32_t light_count = 0;
   LightingVector ambient{}, camera_position{}, color_scale{};
   float shadow_bias = 0, shadow_threshold = 0;
+  float shadow_kernel_scale = 0.25f;
   std::optional<LightingExtent> sample_extent;
   std::array<float, 3> scene_origin{};
   float scene_range = 1;
@@ -40,8 +41,8 @@ inline NativeLightingPass ComposeNativeLighting(NativeLightingInputs inputs) {
   NativeLightingPass result{inputs};
   result.shadow_sampling = {inputs.shadow_bias, inputs.shadow_threshold, 0, 0};
   if (inputs.sample_extent) {
-    result.shadow_sampling[2] = float(inputs.sample_extent->width) * 0.5f;
-    result.shadow_sampling[3] = float(inputs.sample_extent->height) * 0.5f;
+    result.shadow_sampling[2] = float(inputs.sample_extent->width) * inputs.shadow_kernel_scale;
+    result.shadow_sampling[3] = float(inputs.sample_extent->height) * inputs.shadow_kernel_scale;
   }
   result.scene_sampling = {inputs.scene_origin[0], inputs.scene_origin[1],
                            inputs.scene_origin[2], 1.0f / inputs.scene_range};

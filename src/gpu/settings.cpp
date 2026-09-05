@@ -500,6 +500,10 @@ REXCVAR_DEFINE_BOOL(bd_native_transforms, true, kCvarGroup,
                     "Compose and publish object/pass transforms on the host.");
 REXCVAR_DEFINE_BOOL(bd_native_transforms_verify, false, kCvarGroup,
                     "Compare native transform cache/constants with original execution before publishing.");
+REXCVAR_DEFINE_BOOL(bd_native_lighting, true, kCvarGroup,
+                   "Produce native lighting passes and live direct-node shadow sampling inputs.");
+REXCVAR_DEFINE_BOOL(bd_native_lighting_verify, false, kCvarGroup,
+                   "Compare native lighting publication with the original producer.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
 // when the interpreter issues them and when the host replays them, so the
 // two can be diffed.

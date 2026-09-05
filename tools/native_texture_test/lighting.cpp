@@ -24,9 +24,9 @@ int main() {
   const auto first = ComposeNativeLighting(inputs);
   assert((first.shadow_sampling == LightingVector{0, 0.5f, 0, 0}));
   assert((first.scene_sampling == LightingVector{2, 3, 4, 0.125f}));
-  inputs.sample_extent = LightingExtent{960, 540};
+  inputs.sample_extent = LightingExtent{1920, 1080};
   const auto large = ComposeNativeLighting(inputs);
-  inputs.sample_extent = LightingExtent{32, 36};
+  inputs.sample_extent = LightingExtent{64, 72};
   const auto small = ComposeNativeLighting(inputs);
   assert((large.shadow_sampling == LightingVector{0, 0.5f, 480, 270}));
   assert((small.shadow_sampling == LightingVector{0, 0.5f, 16, 18}));
@@ -34,7 +34,10 @@ int main() {
   inputs.sample_extent.reset();
   assert(ComposeNativeLighting(inputs).shadow_sampling == first.shadow_sampling);
   inputs.sample_extent = LightingExtent{1, 3};
+  assert(ComposeNativeLighting(inputs).shadow_sampling[3] == 0.75f);
+  inputs.shadow_kernel_scale = 0.5f;
   assert(ComposeNativeLighting(inputs).shadow_sampling[3] == 1.5f);
+  inputs.shadow_kernel_scale = 0.25f;
   for (int count : {-1, 0, 1, 2, 3}) {
     inputs.light_count = count;
     inputs.receiver_filter = 2;

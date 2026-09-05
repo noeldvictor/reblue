@@ -74,6 +74,7 @@
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
+#include "gpu/scene/native_lighting_bridge.h"
 #include "gpu/scene/native_shadow.h"
 #include "gpu/scene/native_texture_binding.h"
 #include "gpu/host_upload.h"
@@ -255,8 +256,11 @@ constexpr u32 kPassVsRegs = 2;
 // tried on 2026-09-05 and is wrong: host-issued draws went 521 -> 544 and
 // drift 15 -> 2, but the ground's shadowing flips between consecutive frames
 // (28 sequence jumps over 6% against 0, the camera barely moving, the diff
-// map showing the terrain lit in one frame and shadowed in the next). Whatever
-// c9 carries, it is not uniform across a pass's draws.
+// map showing the terrain lit in one frame and shadowed in the next). The
+// traced lighting producer now supplies direct phase-0 nodes explicitly:
+// bias, threshold, and selected texture dimensions times the kernel scale.
+// Never restore the last-interpreted-draw heuristic for this input. Other
+// recipes still require their own source conversion.
 constexpr u32 kPassPsRegs = 2; // c0, c1
 struct PassRegs {
   u32 vs[kPassVsRegs][4] = {};
@@ -378,6 +382,7 @@ struct Pending {
   bool valid = false;
   bool replayable = true;
   std::optional<NativeShadowInputs> shadow_inputs;
+  std::optional<LightingVector> shadow_sampling;
   alignas(16) u8 vs[kBlockBytes];
   alignas(16) u8 ps[kBlockBytes];
   u32 fetch[32][6];
@@ -985,6 +990,7 @@ void HostDrawSnapshotBefore() {
   auto &p = t_pending;
   p.shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
       ? ImportNodeShadowInputs(CurrentNodeTag()) : std::nullopt;
+  p.shadow_sampling = NativeNodeShadowSampling(CurrentNodeTag());
   p.valid = false;
   p.replayable = true;
   p.set_mask = 0;
@@ -1412,6 +1418,8 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
   d.start_vertex = q.start_vertex;
   d.primitive_type = primitive_type;
   d.alpha_threshold = Video::AlphaThreshold();
+  if (p.shadow_sampling)
+    CheckNativeShadowSampling(*p.shadow_sampling, t_ps_block);
   if (d.indexed && REXCVAR_GET(bd_native_shadow_inputs))
     d.material_disables_shadow = ImportMaterialDisablesShadow(
         tag, d.index_va, d.stream_va[0], d.start_index, d.count);
@@ -1951,6 +1959,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   const u32 frame = FrameStatFrameCount();
   const auto shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
       ? ImportNodeShadowInputs(tag) : std::nullopt;
+  const auto shadow_sampling = NativeNodeShadowSampling(tag);
   bool sampled_verify = false;
   {
     std::lock_guard lock(st.mutex);
@@ -2075,6 +2084,8 @@ bool HostDrawReplay(const NodeTag &tag) {
       for (const RegDelta &r : d.ps_delta) {
         if (r.reg < kPassPsRegs)
           continue;
+        if (r.reg == 9 && shadow_sampling)
+          continue; // explicit producer, not this visual's last interpreted draw
         if (r.reg >= 3 && r.reg <= 5 &&
             (native_values[di].mask & (1u << (r.reg - 3))))
           continue; // this material's decoded property, not a sibling register
@@ -2436,6 +2447,8 @@ bool HostDrawReplay(const NodeTag &tag) {
     for (const RegDelta &r : d.ps_delta) {
       if (r.reg < kPassPsRegs)
         continue;
+      if (r.reg == 9 && shadow_sampling)
+        continue;
       if (r.reg >= 3 && r.reg <= 5 &&
           (native_values[di].mask & (1u << (r.reg - 3))))
         continue;
@@ -2447,6 +2460,10 @@ bool HostDrawReplay(const NodeTag &tag) {
                     native_values[di].values[field].data(), 16);
     if (native_values[di].mask)
       NativeMaterialNoteReplay(native_values[di].mask);
+    if (shadow_sampling) {
+      std::memcpy(t_ps_block + 9 * 16, shadow_sampling->data(), 16);
+      NoteNativeShadowSamplingReplay();
+    }
     // A render-list draw's own pixel constants, straight from its entry.
     //
     // The loop uploads them itself - SetPixelShaderConstantFN(device, 0,

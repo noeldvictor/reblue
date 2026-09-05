@@ -30,6 +30,21 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Lighting checkpoint (2026-09-05): the complete lighting setup producer and its
+reset/dimension helper execution now run on the host. Address-free records hold
+ambient/camera/colour and shadow sampling inputs; supported direct phase-0
+replays use the explicit shadow sampling record instead of retained constants.
+The corrected short run has 13538 matching full publications and 200650 matching
+direct-node input checks, with 0/119 large frame jumps. All 13 standalone
+upload/state/verification/lighting tests pass. Engine scene/light descriptors,
+texture associations, material staging/flush, other draw recipes and full-game
+verification remain. The normal late run has 43580 host publications with zero
+compatibility/reset calls and 700323 matching direct-node checks, but still
+loses scenery and damages text (107/119 large frame changes). Normal multiview
+has 0/119 large jumps but blurred/letterboxed eyes, inconclusive depth and the
+same below-target 936x1030 eyes. See
+`research/20260905_0121_native-lighting-pass.md`.
+
 Verification follow-up (2026-09-05): replay diagnostics now retain bounded
 examples in later scenes, report declared shader-input differences separately,
 compare buffer fields without padding noise and flag incomplete compared-draw
