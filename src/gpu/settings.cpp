@@ -666,6 +666,12 @@ REXCVAR_DEFINE_BOOL(bd_host_parameters, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_parameters_verify, false, kCvarGroup,
                     "Compare host parameter publications with one original "
                     "execution; correctness only, not normal host execution.");
+REXCVAR_DEFINE_BOOL(bd_host_frustum, true, kCvarGroup,
+                    "Construct view planes on the host and use the native "
+                    "current-frame scene frustum for default-view culling.");
+REXCVAR_DEFINE_BOOL(bd_host_frustum_verify, false, kCvarGroup,
+                    "Compare native planes with one original construction and "
+                    "check the scene getter shadow at culling consumption.");
 
 // 337 of 530 field-scene draws blend AND write depth - 64% of the frame,
 // counted on the desktop, not inferred. On a Xenon that was free: EDRAM had no

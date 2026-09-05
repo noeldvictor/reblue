@@ -2,9 +2,8 @@
  * @file    gpu/scene/host_walk.cpp
  * @brief   The scene tree walk on the host: bdSceneNodeCullTraverse
  *          replaced by a host function that reads the guest's draw nodes,
- *          culls them and hands the survivors to the per-node draw. Stage 2a
- *          of "The direction" in CLAUDE.md: the traversal is ours, the
- *          per-node interpreter (bdSceneNodeDrawSingle) is still the guest's.
+ *          culls them and hands survivors to native draw submission with
+ *          explicitly retained engine node/material adapters.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.
@@ -31,12 +30,9 @@
 //   }
 //   recurse into node.child, then continue with node.sibling
 //
-// This file does exactly that, iteratively, with the two host hooks and the
-// guest's own visibility test called the way the guest calls them, so the
-// flat path is bit-identical and the census counters keep counting. What it
-// buys is ownership: the walk is host code now, and culling, LOD and the
-// host-issued draw (stage 2b) attach here instead of inside 1,935 guest
-// instructions.
+// The iterative host walk uses native current-frame planes for default views;
+// other-view tables retain the original visibility adapter. Engine scene-node
+// discovery and unsupported draw recipes remain tracked in the transition doc.
 
 #include <cstring>
 #include <vector>
@@ -54,6 +50,7 @@
 #include "gpu/resources.h"
 #include "gpu/scene/guest_scene.h"
 #include "gpu/scene/host_draw.h"
+#include "gpu/scene/host_frustum_bridge.h"
 #include "gpu/scene/node_tag.h"
 #include "gpu/shadow_fit.h"
 #include <cmath>
@@ -130,10 +127,9 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   // path: the cull-off switch clear and a render view other than 0, 1, 4, 5,
   // 7, 8, 9 (those take their own tables), it builds (x, y, z, r) and asks
   // sub_821CE028 whether dot((x, y, z, 1), plane) > r for any of the six
-  // planes at the global table. The addresses are the function's own
-  // lis/addi constants; the planes are read once per walk, not per node.
+  // planes. The scene producer now supplies the native current-frame volume;
+  // this walk no longer imports the global engine plane table.
   const u32 cull_switch_va = u32(u32(-32036) << 16) + u32(-5536) + 520u;
-  const u32 plane_table_va = u32(u32(-32033) << 16) + u32(-30608);
   bool host_cull = REXCVAR_GET(bd_host_cull) &&
                    bd::mem::try_load<u32>(cull_switch_va) == 0;
   // Occlusion culling applies to the camera's drawing pass, render view 3
@@ -142,22 +138,13 @@ void Walk(PPCContext &ctx, uint8_t *base, u32 root, u32 ctx_va) {
   // (gpu/occlusion_cull.h).
   const bool occlusion = REXCVAR_GET(bd_occlusion_cull) &&
                          bd::mem::try_load<u32>(kRenderViewIdVa) == 3;
-  float planes[6][4];
+  RenderFrustum frustum;
+  const auto &planes = frustum.planes;
   if (host_cull) {
     const u32 view = bd::mem::try_load<u32>(kRenderViewIdVa);
     host_cull = !(view == 0 || view == 1 || view == 4 || view == 5 ||
                   view == 7 || view == 8 || view == 9);
-    const auto *pp = host_cull
-                         ? bd::mem::try_at<const be_u32>(plane_table_va + 64)
-                         : nullptr;
-    if (!pp)
-      host_cull = false;
-    else
-      for (u32 i = 0; i < 6; ++i)
-        for (u32 k = 0; k < 4; ++k) {
-          const u32 bits = static_cast<u32>(pp[i * 4 + k]);
-          std::memcpy(&planes[i][k], &bits, sizeof(float));
-        }
+    host_cull = host_cull && GetNativeSceneFrustum(frustum);
   }
   ++g_cull_walks;
   if (host_cull)
