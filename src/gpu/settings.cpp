@@ -783,6 +783,12 @@ REXCVAR_DEFINE_BOOL(bd_host_post, true, kCvarGroup,
                     "Host-owned post chain: the bloom and depth-of-field "
                     "pyramids are built by host passes; the guest's producer "
                     "draws are skipped.");
+REXCVAR_DEFINE_BOOL(bd_native_dof, true, kCvarGroup,
+                    "Replace complete DoF preparation and submission with "
+                    "native parameters and atlas production (Vulkan).");
+REXCVAR_DEFINE_BOOL(bd_native_dof_verify, false, kCvarGroup,
+                    "Diagnostic: execute original DoF preparation and compare "
+                    "native parameters; retains original submission for this run.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

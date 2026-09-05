@@ -14,14 +14,13 @@
  *   ms_weight x2   13-tap blur of the mask, twice
  *   ms_tex         full-res composite: scene (slot 0) + mask (slot 1)
  *
- * The host does all of it in nine passes, none through the tile and none
- * resolved: at the dof draw one dual-filter downsample per level into the
- * very texture objects slots 2-6 name, and at the ms_tex draw the bright
- * mask, two blur directions, and one composite that is bd_pe_ps_dof and
- * bd_pe_ps_ms_tex folded together, written straight into the frame. Every
- * guest post draw is dropped. The guest's parameters are read from its live
- * constant block at the draw it would have made (c27 at dof, c13/c14 at
- * ms_tex).
+ * The normal Vulkan path replaces complete DoF preparation/submission with
+ * explicit scene/depth images, native parameters and five rectangles in one
+ * host-owned blur atlas. No DoF level allocation, quad or intermediate resolve
+ * executes. The later combined DoF/bloom composite still enters at the ms_tex
+ * draw; bloom parameters, its producer execution and outer scheduling remain
+ * compatibility boundaries. Alternative diagnostic paths retain the old draw
+ * intercept and per-level textures explicitly.
  *
  * The first host chain (same day, earlier) kept the guest's two composites
  * and only produced their inputs: the Quest measured 38.0 ms against 37.5,
@@ -34,6 +33,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/post_chain.h"
+#include "gpu/post_parameters.h"
 
 #include <cstring>
 #include <memory>
@@ -151,7 +151,7 @@ struct DofInputs {
   Scratch *atlas = nullptr;
   float rects[5][4] = {};
   float scene_scale = 1.0f; // what the composite multiplies the scene tap by
-  float params[4] = {0, 0, 0, 0}; // c27.x, .y, .z, .w
+  DofParameters parameters;
   bool valid = false;
 };
 
@@ -400,9 +400,10 @@ float GuestPixelConstant(u32 device_guest, u32 reg, u32 lane) {
 // The dof draw samples depth in slot 0, the scene in slot 1 and five blurred
 // levels in slots 2-6 (1/2, 1/4, 1/8, 1/16, 1/16). One dual-filter pass per
 // level, each from the previous.
-bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
+bool BuildDofPyramid(VideoState &s, Chain &c, GuestTexture *scene_texture,
+                     GuestTexture *depth_texture, const DofParameters &parameters) {
   c.dof = DofInputs{};
-  GuestTexture *scene = Source(s, s.textures[1]);
+  GuestTexture *scene = Source(s, scene_texture);
   if (!scene)
     return false;
   const bool layered = scene->layers > 1;
@@ -416,10 +417,10 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
                                 scene->format, 2, scene->layers);
     if (!pyr || !atlas)
       return false;
-    const float level_scale = SourceScale(s.textures[1]);
+    const float level_scale = SourceScale(scene_texture);
     c.dof.scene_scale = level_scale;
     c.dof.scene_src = scene;
-    c.dof.scene_tex = s.textures[1];
+    c.dof.scene_tex = scene_texture;
     Transition(s, atlas->texture.get(), atlas->layout, plume::RenderTextureLayout::COLOR_WRITE);
     u32 x = 0;
     for (u32 level = 0; level < 5; ++level) {
@@ -440,9 +441,8 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
     c.dof.atlas = atlas;
     for (u32 i = 0; i < 5; ++i)
       c.dof.levels[i] = nullptr;
-    c.dof.depth = s.textures[0];
-    for (u32 i = 0; i < 4; ++i)
-      c.dof.params[i] = GuestPixelConstant(device_guest, 27, i);
+    c.dof.depth = depth_texture;
+    c.dof.parameters = parameters;
     c.dof.valid = Readable(Content(c.dof.depth));
     if (c.dof_frames++ < 3)
       BD_INFO("[post] dof atlas {}x{} from the {}x{} scene in one pass, depth {}",
@@ -456,10 +456,10 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   u32 prev_slot = scene->descriptorIndex;
   // Param1 of the first level: the scene's resolve scale when the scene is an
   // alias of the unscaled surface. 0 means 1 to the shader.
-  float level_scale = SourceScale(s.textures[1]);
+  float level_scale = SourceScale(scene_texture);
   c.dof.scene_scale = level_scale;
   c.dof.scene_src = scene;
-  c.dof.scene_tex = s.textures[1];
+  c.dof.scene_tex = scene_texture;
   u32 filled = 0;
   for (u32 slot = 2; slot <= 6; ++slot) {
     GuestTexture *dst = s.textures[slot];
@@ -492,15 +492,15 @@ bool BuildDofPyramid(VideoState &s, Chain &c, u32 device_guest) {
   // A missing tail repeats the last level, so the composite always has five.
   for (u32 i = filled; i < 5; ++i)
     c.dof.levels[i] = c.dof.levels[filled - 1];
-  c.dof.depth = s.textures[0];
-  for (u32 i = 0; i < 4; ++i)
-    c.dof.params[i] = GuestPixelConstant(device_guest, 27, i);
+  c.dof.depth = depth_texture;
+  c.dof.parameters = parameters;
   c.dof.valid = Readable(Content(c.dof.depth));
   if (c.dof_frames++ < 3)
     BD_INFO("[post] dof pyramid: {} levels from the {}x{} scene, depth {}, "
             "params ({:.3g}, {:.3g}, {:.3g}, {:.3g})",
             filled, scene->width, scene->height, c.dof.valid ? "yes" : "no",
-            c.dof.params[0], c.dof.params[1], c.dof.params[2], c.dof.params[3]);
+            parameters.aperture, parameters.blur_scale, parameters.authored_range,
+            parameters.focus_depth);
   return true;
 }
 
@@ -576,9 +576,9 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   if (!depth)
     return bail("depth not readable");
   CompositeConstants k{};
-  k.dof[0] = c.dof.params[0];
-  k.dof[1] = c.dof.params[1];
-  k.dof[2] = c.dof.params[3];
+  k.dof[0] = c.dof.parameters.aperture;
+  k.dof[1] = c.dof.parameters.blur_scale;
+  k.dof[2] = c.dof.parameters.focus_depth;
   k.dof[3] = c.dof.scene_scale; // the scene tap's factor, 0 = 1
   for (u32 i = 0; i < 4; ++i) {
     k.w0[i] = GuestPixelConstant(device_guest, 13, i);
@@ -639,6 +639,40 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
 }
 
 } // namespace
+
+bool HostPostPrepareDof(GuestTexture *scene, GuestTexture *depth,
+                        const DofParameters &parameters) {
+#if defined(REBLUE_D3D12)
+  return false;
+#else
+  if (!REXCVAR_GET(bd_host_post) || !REXCVAR_GET(bd_host_post_composite) ||
+      !REXCVAR_GET(bd_host_post_atlas))
+    return false;
+  auto &s = state();
+  std::unique_lock<std::mutex> lock(s.mutex);
+  auto &c = chain();
+  if (c.failed || !s.ready || !Readable(Content(scene)) || !Readable(Content(depth)) ||
+      Content(scene)->layers != Content(depth)->layers)
+    return false;
+  Video::OpenCommandListLocked();
+  if (!s.command_list_open || !s.command_list)
+    return false;
+  if (s.plume_framebuffer_bound)
+    DrawQueueFlush(s.command_list);
+  const bool built = BuildDofPyramid(s, c, scene, depth, parameters);
+  // No DoF tile target, quad, seed or resolve is needed: the later combined
+  // composite consumes this atlas and the explicit scene source directly.
+  s.command_list->setFramebuffer(nullptr);
+  s.plume_framebuffer_bound = false;
+  s.draw_framebuffer_bound = false;
+  s.bound_fb_rt = nullptr;
+  s.bound_fb_ds = nullptr;
+  s.dirtyStates.viewport = true;
+  s.dirtyStates.scissorRect = true;
+  s.dirtyStates.pipelineState = true;
+  return built && c.dof.valid;
+#endif
+}
 
 bool HostPostProducerSkip(VideoState &s, u64 ps_hash) {
   if (!REXCVAR_GET(bd_host_post) || !s.render_target)
@@ -708,7 +742,11 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
   case kDof: {
     if (s.plume_framebuffer_bound)
       DrawQueueFlush(s.command_list);
-    const bool built = BuildDofPyramid(s, c, device_guest);
+    // Explicit compatibility importer; the native producer never reaches it.
+    const DofParameters parameters{GuestPixelConstant(device_guest, 27, 0),
+        GuestPixelConstant(device_guest, 27, 1), GuestPixelConstant(device_guest, 27, 2),
+        GuestPixelConstant(device_guest, 27, 3)};
+    const bool built = BuildDofPyramid(s, c, s.textures[1], s.textures[0], parameters);
     {
       static u32 told = 0;
       if ((!built || !c.dof.valid) && told++ < 40)

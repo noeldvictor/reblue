@@ -30,6 +30,25 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native DoF producer checkpoint (2026-09-05): complete preparation and matching
+quad-submission bodies are replaced by native parameters, explicit scene/depth
+images and the host atlas. The supported path no longer executes the five-level
+allocation/blur loops, DoF texture-binding loop, intermediate target or resolve,
+and does not read PS c27. All 26 CTests and sixteen source guards pass; a flat
+diagnostic has 6901 matching original parameter publications. Normal flat and
+1440x1584 final-eye runs have 0/31 large changes in their 32-frame captures;
+both first/last eye checks show correctly crossed depth. Flat Shu/windmill
+shadows remain. Each normal run still records three startup/transition DoF
+fallbacks, whose exact failed preflight condition remains to be traced.
+Engine properties, authored camera/focus sources, image/getter adapters,
+bloom execution/register inputs and the outer post scheduler remain. VR blur,
+character-shadow and full-game coverage remain unqualified; field focus logs
+above 1.0 are a new investigation lead, not a complete blur diagnosis. Disk
+space limited the new sequences to 32 frames; they do not replace longer
+qualification. Native sun remains opt-in, the original profile is restored,
+and no Quest run occurred. See
+`research/20260905_1256_native-dof-producer.md`.
+
 Tracked camera ownership checkpoint (2026-09-05): a native per-view scope
 selects the submitted scene camera and reuses one composed result across
 its consumers. Arbitrary matrix setters no longer treat light cameras and

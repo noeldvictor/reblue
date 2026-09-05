@@ -113,8 +113,7 @@ plume::RenderFormat ConvertGuestFormat(u32 guest_format);
 bool IsRenderTargetCapable(plume::RenderFormat format);
 
 // True for any depth-attachment-capable plume format reblue uses: D32_FLOAT and
-// D32_FLOAT_S8_UINT (D24S8/D24FS8 map to the latter to keep the stencil plane
-// bdShadowStencilDrawIndexed relies on).
+// D32_FLOAT_S8_UINT (D24S8/D24FS8 preserve their requested stencil plane).
 inline bool IsDepthFormat(plume::RenderFormat format) {
   return format == plume::RenderFormat::D32_FLOAT ||
          format == plume::RenderFormat::D32_FLOAT_S8_UINT;

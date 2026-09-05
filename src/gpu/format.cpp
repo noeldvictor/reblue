@@ -186,8 +186,9 @@ plume::RenderFormat ConvertGuestFormat(u32 guest_format) {
     return plume::RenderFormat::R16G16B16A16_FLOAT;
   case D3DFormat::kD24FS8:
   case D3DFormat::kD24S8:
-    // Preserve the stencil plane: BD's bdShadowStencilDrawIndexed pass
-    // enables stencil, and a DSV without one is rejected at OM bind.
+    // Preserve the requested stencil plane for stencil-enabled passes.
+    // The historical bdShadowStencilDrawIndexed name actually identifies DoF;
+    // do not use that name as evidence of stencil ownership.
     return plume::RenderFormat::D32_FLOAT_S8_UINT;
   case D3DFormat::kR32F:
     return plume::RenderFormat::R32_FLOAT;
