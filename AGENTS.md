@@ -158,6 +158,11 @@ The owner explicitly requested disk cleanup and space-conscious work on
   make full backups/copies of builds or assets for a small change. Check for
   junctions and hard links: logical directory sizes can count the same bytes
   twice. Measure actual free-space change before claiming savings.
+- Cook or convert assets in bounded batches, reusing unchanged native outputs.
+  Avoid extracting the whole game or retaining every intermediate format for a
+  small test. Budget overlapping source, temporary and final representations;
+  remove only agent-created disposable intermediates after validating their
+  replacements. Preserve original game data and assets needed to reproduce them.
 - Recheck free space between batches and after large jobs. If growth exceeds
   the estimate or threatens the reserve, safely stop the agent-started producer
   before it fills the disk. Do not launch another batch until the budget fits.
@@ -192,6 +197,10 @@ The owner explicitly requested disk cleanup and space-conscious work on
   other data. Record what was removed, whether it can be regenerated, and the
   measured bytes recovered; note when historical raw evidence is no longer
   available. Ask before deleting anything whose ownership or value is unclear.
+- After storage-heavy work, report ending free space and the measured net disk
+  change, plus any large retained outputs and their cleanup condition. If the
+  budget cannot fit without deleting protected or uncertain data, stop the
+  space-producing work and ask; do not fill the disk to finish a checkpoint.
 
 ## Git and documentation
 
