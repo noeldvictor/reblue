@@ -122,6 +122,25 @@ void Verify(uint32_t owner, const DofParameters &parameters) {
 }
 } // namespace
 
+bool ReadDofProducerParameters(u32 owner, DofParameters &parameters) {
+  uint32_t bank = 0;
+  bool local_focus = false;
+  return ReadParameters(owner, parameters, bank, local_focus);
+}
+void PublishDofProducerProperties(u32 owner) {
+  const auto bank = rex::system::XThread::GetCurrentThreadId() ==
+      bd::mem::load<uint32_t>(kThread) ? 0u : 1u;
+  bd::mem::store<uint32_t>(owner + 2932 + bank * 4, 2);
+  const auto divisor = owner + 3020 + bank * 4;
+  const float resolution = bd::mem::load<float>(divisor);
+  if (resolution < 2.0f || resolution > 16.0f)
+    bd::mem::store<float>(divisor, std::clamp(resolution, 2.0f, 16.0f));
+  if (bd::mem::load<uint32_t>(owner + 2980 + bank * 4) == 1)
+    for (uint32_t offset = 4; offset <= 24; offset += 4)
+      bd::mem::store<uint32_t>(kFocus + offset,
+          bd::mem::load<uint32_t>(owner + 2988 + offset));
+}
+
 REX_HOOK_RAW(sub_82217108) {
   const auto owner = ctx.r3.u32, source = ctx.r4.u32;
   DofParameters parameters;
@@ -142,15 +161,7 @@ REX_HOOK_RAW(sub_82217108) {
     // Preserve authored-property getter semantics, not intermediate blur
     // resources or a register publication. The original forces mode 2 and
     // clamps the resolution divisor before building its obsolete pyramid.
-    bd::mem::store<uint32_t>(owner + 2932 + bank * 4, 2);
-    const auto divisor = owner + 3020 + bank * 4;
-    const float resolution = bd::mem::load<float>(divisor);
-    if (resolution < 2.0f || resolution > 16.0f)
-      bd::mem::store<float>(divisor, std::clamp(resolution, 2.0f, 16.0f));
-    if (local_focus)
-      for (uint32_t offset = 4; offset <= 24; offset += 4)
-        bd::mem::store<uint32_t>(kFocus + offset,
-            bd::mem::load<uint32_t>(owner + 2988 + offset));
+    PublishDofProducerProperties(owner);
     if (!preparation.Prepare(owner, source, FrameStatFrameCount()))
       throw std::runtime_error("Native DoF could not publish its preparation owner");
     ++stats.native;

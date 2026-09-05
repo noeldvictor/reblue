@@ -17,10 +17,11 @@
  * The normal Vulkan path replaces complete DoF preparation/submission with
  * explicit scene/depth images, native parameters and five rectangles in one
  * host-owned blur atlas. No DoF level allocation, quad or intermediate resolve
- * executes. The later combined DoF/bloom composite still enters at the ms_tex
- * draw; bloom parameters, its producer execution and outer scheduling remain
- * compatibility boundaries. Alternative diagnostic paths retain the old draw
- * intercept and per-level textures explicitly.
+ * executes. Native post scheduling also bypasses the bloom allocation/blur
+ * loops and ms_tex submission, with typed weights and an explicit completed
+ * output. Authored properties, image/getter adapters, other effect bodies and
+ * unsupported filter combinations remain. Diagnostic/compatibility paths
+ * retain the old draw intercept and per-level textures explicitly.
  *
  * The first host chain (same day, earlier) kept the guest's two composites
  * and only produced their inputs: the Quest measured 38.0 ms against 37.5,
@@ -37,6 +38,7 @@
 
 #include <cstring>
 #include <memory>
+#include <stdexcept>
 #include <unordered_map>
 #include <vector>
 
@@ -51,6 +53,7 @@
 #include "gpu/draw_queue.h"
 #include "gpu/frame.h"
 #include "gpu/frame_stats.h"
+#include "gpu/host_targets.h"
 #include "gpu/resources.h"
 
 #if defined(REBLUE_D3D12)
@@ -544,12 +547,13 @@ GuestTexture *BuildBloomMask(VideoState &s, Chain &c, GuestTexture *scene,
   return dst;
 }
 
-// One pass for both guest composites, into the frame the ms_tex draw would
-// have written. Needs the dof draw's inputs from earlier this frame.
+// One pass for both composites into an explicit output attachment, using only
+// native values. The compatibility intercept imports its registers separately.
 bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
-                   GuestTexture *bloom, u32 device_guest) {
+                   GuestTexture *bloom, GuestTexture *rt,
+                   const BloomParameters &parameters) {
 #if defined(REBLUE_D3D12)
-  (void)s; (void)c; (void)scene; (void)bloom; (void)device_guest;
+  (void)s; (void)c; (void)scene; (void)bloom; (void)rt; (void)parameters;
   return false; // the parameter block rides the Vulkan dynamic UBO binding
 #else
   const bool fold = REXCVAR_GET(bd_host_post_bloom_fold);
@@ -563,13 +567,12 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
               "bloom {}, rt {})",
               FrameStatFrameCount(), why, c.dof.valid ? 1 : 0,
               scene ? 1 : 0, bloom ? 1 : 0,
-              s.render_target ? 1 : 0);
+              rt ? 1 : 0);
     return false;
   };
   if (!REXCVAR_GET(bd_host_post_composite) || !c.dof.valid || !scene ||
       (!bloom && !fold))
     return bail("inputs");
-  GuestTexture *rt = s.render_target;
   if (!rt || !rt->texture || rt->layers > 2)
     return bail("target");
   GuestTexture *depth = Source(s, c.dof.depth);
@@ -581,12 +584,12 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
   k.dof[2] = c.dof.parameters.focus_depth;
   k.dof[3] = c.dof.scene_scale; // the scene tap's factor, 0 = 1
   for (u32 i = 0; i < 4; ++i) {
-    k.w0[i] = GuestPixelConstant(device_guest, 13, i);
-    k.w1[i] = GuestPixelConstant(device_guest, 14, i);
+    k.w0[i] = parameters.scene_weight[i];
+    k.w1[i] = parameters.bloom_weight[i];
   }
   k.indices0[0] = depth->descriptorIndex;
-  k.bloom[0] = GuestPixelConstant(device_guest, 27, 0);
-  k.bloom[1] = GuestPixelConstant(device_guest, 27, 1);
+  k.bloom[0] = parameters.threshold;
+  k.bloom[1] = parameters.intensity;
   k.bloom[2] = fold ? 1.0f : 0.0f;
   k.bloom[3] = c.dof.atlas ? 1.0f : 0.0f;
   if (c.dof.atlas) {
@@ -639,6 +642,51 @@ bool HostComposite(VideoState &s, Chain &c, GuestTexture *scene,
 }
 
 } // namespace
+
+bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *output,
+                    const DofParameters &dof, const BloomParameters &bloom) {
+#if defined(REBLUE_D3D12)
+  return false;
+#else
+  if (!REXCVAR_GET(bd_host_post) || !REXCVAR_GET(bd_host_post_composite) ||
+      !REXCVAR_GET(bd_host_post_atlas) || !REXCVAR_GET(bd_host_post_bloom_fold))
+    return false;
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  auto &c = chain();
+  auto *source = Content(scene);
+  auto *z = Content(depth);
+  if (!s.ready || c.failed || !Readable(source) || !Readable(z) ||
+      !output || !output->texture || source == output || z == output ||
+      source->layers != z->layers || source->layers != output->layers)
+    return false;
+  Video::OpenCommandListLocked();
+  if (!s.command_list_open || !s.command_list)
+    return false;
+  if (s.plume_framebuffer_bound)
+    DrawQueueFlush(s.command_list);
+  HostTargetDropLinks(s, output);
+  if (!BuildDofPyramid(s, c, scene, depth, dof) || !c.dof.valid)
+    throw std::runtime_error("Native post atlas production failed");
+  Transition(s, output->texture, output->layout, plume::RenderTextureLayout::COLOR_WRITE);
+  if (!HostComposite(s, c, source, nullptr, output, bloom))
+    throw std::runtime_error("Native post composite failed");
+  output->surfaceDrawn = true;
+  // The complete source is consumed before publishing the new output alias.
+  DetachSourceSurfaceLocked(s, scene);
+  c.dof.valid = false;
+  s.command_list->setFramebuffer(nullptr);
+  Transition(s, output->texture, output->layout, plume::RenderTextureLayout::SHADER_READ);
+  s.plume_framebuffer_bound = false;
+  s.draw_framebuffer_bound = false;
+  s.bound_fb_rt = nullptr;
+  s.bound_fb_ds = nullptr;
+  s.dirtyStates.viewport = true;
+  s.dirtyStates.scissorRect = true;
+  s.dirtyStates.pipelineState = true;
+  return true;
+#endif
+}
 
 bool HostPostPrepareDof(GuestTexture *scene, GuestTexture *depth,
                         const DofParameters &parameters) {
@@ -787,7 +835,15 @@ bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest) {
                               ? nullptr
                               : BuildBloomMask(s, c, bloom_src, device_guest);
     c.bloom_mask = bloom;
-    const bool composed = HostComposite(s, c, scene, bloom, device_guest);
+    BloomParameters parameters;
+    parameters.threshold = GuestPixelConstant(device_guest, 27, 0);
+    parameters.intensity = GuestPixelConstant(device_guest, 27, 1);
+    for (u32 lane = 0; lane < 4; ++lane) {
+      parameters.scene_weight[lane] = GuestPixelConstant(device_guest, 13, lane);
+      parameters.bloom_weight[lane] = GuestPixelConstant(device_guest, 14, lane);
+    }
+    VerifyNativePostParameters(parameters);
+    const bool composed = HostComposite(s, c, scene, bloom, s.render_target, parameters);
     // Nothing reads the scene texture after the composite (a field frame's
     // only materialisation was the surface's reuse next frame), so its
     // resolve links are dropped here: with them, the scaled copy would still

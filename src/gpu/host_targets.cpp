@@ -85,6 +85,8 @@ const char *HostTargetClassName(HostTargetClass cls) {
     return "reflection colour";
   case HostTargetClass::ReflectionDepth:
     return "reflection depth";
+  case HostTargetClass::PostColor:
+    return "post colour";
   default:
     return "none";
   }

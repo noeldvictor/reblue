@@ -28,6 +28,7 @@ enum class HostTargetClass : u8 {
   SceneDepth,
   ReflectionColor,
   ReflectionDepth,
+  PostColor,
   Count
 };
 

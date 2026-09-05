@@ -17,6 +17,20 @@ struct DofParameters {
   float focus_depth = 0;
 };
 
+struct BloomParameters {
+  float threshold = 0, intensity = 0;
+  std::array<float, 4> scene_weight{4, 4, 4, 4};
+  std::array<float, 4> bloom_weight{};
+};
+
+// Mode 1 adds two directional masks; other authored modes add one. The
+// native folded filter uses the atlas for both, retaining their total weight.
+inline BloomParameters MakeBloomParameters(float threshold, float intensity,
+                                           bool enabled, int32_t mode) {
+  const float weight = enabled ? (mode == 1 ? 2.0f : 1.0f) : 0.0f;
+  return {threshold, intensity, {4, 4, 4, 4}, {weight, weight, weight, 0}};
+}
+
 // Keep the authored curve, but produce its inputs without a shader-register
 // block. The adapter supplies a world-space focus point and this view's native
 // transforms. Projection is intentionally separate: the original convention

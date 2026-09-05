@@ -769,10 +769,8 @@ REXCVAR_DEFINE_BOOL(bd_debug_no_uab, false, kCvarGroup,
 // overdraws); exists to ask the render-stage trace whether depth-writing
 // draws are what keeps the scene pass direct - the one full-size pass that
 // binned (2026-09-02) was the effects instance, which does not write depth.
-// The host-owned post chain (gpu/post_chain.cpp): the depth-of-field pyramid
-// and the bloom mask are produced by host passes into the guest's own
-// textures, and the thirteen guest draws that made them through the EDRAM
-// tile are dropped. The guest's two composites run unchanged.
+// Native post scheduling owns the atlas and folded bloom/composite output.
+// Compatibility scopes retain the old draw intercept explicitly.
 // Host-generated mip chains for DXT1/3/5 textures the guest ships without
 // one - two thirds of its texture data, the world textures (2026-09-02).
 // Built once at upload on the CPU; costs about a third more texture memory.
@@ -789,6 +787,12 @@ REXCVAR_DEFINE_BOOL(bd_native_dof, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_native_dof_verify, false, kCvarGroup,
                     "Diagnostic: execute original DoF preparation and compare "
                     "native parameters; retains original submission for this run.");
+REXCVAR_DEFINE_BOOL(bd_native_post, true, kCvarGroup,
+                    "Native DoF/bloom scheduling and explicit post output; "
+                    "other effect scopes retain counted compatibility execution.");
+REXCVAR_DEFINE_BOOL(bd_native_post_verify, false, kCvarGroup,
+                    "Diagnostic: execute original post scheduling and compare "
+                    "authored native bloom inputs at the combined draw boundary.");
 // The composite half of the host chain: one full-resolution pass replaces the
 // guest's depth-of-field composite, the resolve after it and the bloom
 // composite. Off keeps the guest's two composites over the host's pyramid.

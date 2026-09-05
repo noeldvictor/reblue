@@ -30,6 +30,22 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native post scheduling checkpoint (2026-09-05): supported DoF/bloom dispatch
+now runs directly from authored native parameters into an explicit persistent
+post output. It bypasses the bloom texture caches, blur loops, ms_tex input
+array, shader-hash composite trigger and that scope's EDRAM allocation/resolve.
+All 26 CTests and nineteen source guards pass; 3642 flat diagnostic parameter
+checks match. Normal flat and 1440x1584 final-eye 120-frame sequences have
+0/119 large changes and no cyan patches, with correctly crossed first/last
+stereo depth. Flat Shu and windmill shadows remain. One trailing effect and
+three state-308 calls per tested field frame still execute; startup packed
+effect combinations and two image/preflight refusals per normal run retain
+the counted original scope. Other filter combinations, mode-1 dual masks,
+image/getter/UI adapters and complete frame ownership remain. VR blur,
+character-shadow visibility, late-scene and full-game qualification remain
+unfinished. Original profile restored; no Quest run. See
+`research/20260905_1344_native-post-scheduling.md`.
+
 Native DoF producer checkpoint (2026-09-05): complete preparation and matching
 quad-submission bodies are replaced by native parameters, explicit scene/depth
 images and the host atlas. The supported path no longer executes the five-level

@@ -1,7 +1,7 @@
 /**
  * @file    gpu/post_chain.h
- * @brief   Native DoF atlas and combined composite, with explicit remaining
- *          bloom, scheduling and image adapters.
+ * @brief   Native DoF/bloom passes and explicit combined output, with counted
+ *          remaining effect, scheduling and image adapters.
  *
  * @copyright Copyright (c) 2026 Tom Clay <tomc@tctechstuff.com>
  *            All rights reserved.
@@ -16,6 +16,21 @@ namespace bd::gpu {
 struct VideoState;
 struct GuestTexture;
 struct DofParameters;
+struct BloomParameters;
+
+// Whole native atlas + folded bloom/composite into an explicit attachment.
+// No draw interception, shader-register import or tile allocation. False is
+// a preflight refusal; failures after GPU work starts are fatal, not replayed.
+bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *output,
+                    const DofParameters &dof, const BloomParameters &bloom);
+
+// Authored-property adapters shared by direct scheduling and the transitional
+// DoF entry pair. No original rendering code executes in these functions.
+bool ReadDofProducerParameters(u32 owner, DofParameters &parameters);
+void PublishDofProducerProperties(u32 owner);
+
+// Diagnostic-only comparison at the original combined draw boundary.
+void VerifyNativePostParameters(const BloomParameters &parameters);
 
 // Direct native producer. Resolves no D3D slots or shader-register constants;
 // the caller supplies current scene/depth images and authored native values.
@@ -27,7 +42,7 @@ bool HostPostPrepareDof(GuestTexture *scene, GuestTexture *depth,
 // before its state is flushed, with the pixel shader hash the draw would use.
 // Returns true when the host consumes the draw. The normal DoF producer uses
 // HostPostPrepareDof directly and never issues a guest DoF draw. This intercept
-// still handles bloom's combined composite and explicit DoF compatibility modes.
+// handles explicit compatibility scopes; native post scheduling does not enter it.
 bool HostPostIntercept(VideoState &s, u64 ps_hash, u32 device_guest);
 
 // The producer half of the intercept, asked BEFORE the draw binds its
