@@ -33,12 +33,14 @@ All of these remain required; shipping an intermediate component is not completi
 Frustum producer checkpoint (2026-09-05): complete six-plane construction
 executes on the host, and the default-view host walk consumes a native
 current-frame volume instead of importing engine planes. All 20 CTests and
-three source-boundary guards pass. Original comparison records 33939 matching
-publications, 869630 matching consumer-shadow checks, zero culling
+three source-boundary guards pass. The final byte-safe build records 18341
+matching original publications, 436841 matching consumer-shadow checks, zero culling
 disagreements/fallbacks/missing native volumes and 0/119 large capture jumps.
 Exceptional startup values are handled natively too. Normal comparison-off
-flat/final-eye qualification is still pending at this checkpoint; previous
-late-scene and VR limitations remain. Engine view/projection/cache producers,
+flat and 1440x1584 final-eye sequences also have 0/119 large jumps and no
+frustum fallbacks or missing native volumes. VR remains blurred/letterboxed
+and depth-inconclusive; later scenery/text were not requalified.
+Engine view/projection/cache producers,
 other-view tables, getter publications and whole scene begin remain. This
 cluster is view-frustum construction, not the previously inferred fog helper.
 See `research/20260905_0559_native-frustum-producer.md`.

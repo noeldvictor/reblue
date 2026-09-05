@@ -191,8 +191,32 @@ mount and no error/critical/VK_ERROR/upload-exhaustion messages.
 or patch frames, median 0.012%, max 0.02%. Actual first/last previews again
 show stable village geometry and animated shadows without a broad missing
 band or cyan. This is the normal execution path of the byte-safe build,
-not an original-comparison run. Hardened final-eye verification is pending
-at this source-hardening checkpoint.
+not an original-comparison run.
+
+### Hardened final eyes and handoff
+
+PID 19072, 06:16:05-06:17:55, `reblue_724.log`, same 06:10:04 executable;
+the byte-safe source was committed/pushed as `9d7d2a1`. All 17 settings
+audited, identical to the earlier normal xrsim setup. Full archive mount,
+1440x1584 runtime/final eyes, 1440x808 scene content, MSAA 4, RTX 3060 Vulkan
+1.4.341. No error/critical/VK_ERROR/upload-exhaustion messages. Last totals:
+47,328 native constructions, 33,228 scene publications, 545,559 native walks,
+122 exceptional inputs, zero compatibility/refused/missing; comparisons off.
+
+`out/verification/native_frustum_guarded_vr`: 120 final stacked 1440x3168
+frames 11871-11990, `frame_1788603427_0.raw` through
+`frame_1788603435_119.raw`, 06:17:07.777-06:17:15.804. Zero of 119 pairs exceed
+6%; zero cyan threshold/patch frames, median/max 0%. Actual first/last
+previews of both eyes show stable but blurred, heavily letterboxed scenery.
+Both stereo checks are **inconclusive** (exit 2), again only 44%/52% bands,
+-1/-2 pixel disparities and spread 1 pixel. Stable captures do not establish
+correct VR framing, readable resolution, depth or full-game correctness.
+
+All renderers/analyzers completed. The exact original five profile entries
+were restored. No device deployment, dependency change or asset conversion
+was performed, and no performance improvement or headset result is claimed.
+The repository devloop and vrsim guides governed build/capture checks under
+the current desktop-first gate, not their historical device/performance rules.
 
 ## Remaining work
 
