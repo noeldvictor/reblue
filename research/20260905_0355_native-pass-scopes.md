@@ -67,3 +67,106 @@ Multiple colour attachment rendering and all representative scenes remain work.
 Capture inspection and later-scene/final-eye verification are pending at this
 initial implementation checkpoint. Known later scenery/text and VR
 letterboxing/blur/depth limitations remain open.
+
+## Normal short desktop sequence
+
+Implementation committed/pushed as `9a39837`. Process 25576 was stopped at
+03:59:38 after its complete sequence was preserved in
+`out/verification/native_passes_flat`. Captures are 1920x1080, frames 2843-2962,
+from `frame_1788595048_0.raw` through `frame_1788595051_119.raw`
+(03:57:28-03:57:31 EDT). All 119 pairs stay below 6%; none of 120 frames exceed
+0.30% cyan, with zero 2-60% cyan patches, median 0.011% and maximum 0.02%.
+Actual first/last previews show Shu and the field scenery without broad
+banding or a cyan patch. The `--mono` preview command does not make this a
+replay-off or pass-off control: all native paths remained enabled.
+
+Last reported pass totals: 211108 pushes / 211107 pops, 10501 depth-only,
+159473 null scopes, peak nesting 1; 422215 matching getter-shadow checks,
+zero compatibility/refusals/overflow/empty pops. The one-entry difference is
+a mid-scope periodic report, not proof of a leak or a balanced shutdown audit.
+No error/critical/VK_ERROR or upload-exhaustion entries were found. The full
+1673 archives / 119346 record names were mounted. Later scenes, deeper GPU
+nesting and stereo are not covered by this short sequence.
+
+## Normal late desktop run
+
+Process 25444 ran 03:59:42-04:06:51 EDT with the same 03:55:48 binary and native
+passes enabled; log `reblue_709.log`. The temporary five-setting profile used
+autoplay/perf true, delay 270, minimum 30 draws and 120 frames, with all five
+audited. Capture waited through a 20-draw loading screen and produced frames
+14195-14314 at 04:04:59.092-04:05:02.522. The isolated sequence is
+`out/verification/native_passes_late_flat`, from `frame_1788595499_0.raw`
+through `frame_1788595502_119.raw`, all 1920x1080.
+
+Last reported pass totals: 429247 pushes / 429246 pops, 21928 depth-only,
+330865 null scopes, peak nesting 1; 858493 matching getter-shadow checks,
+zero compatibility/refusals/overflow/empty pops. No error/critical/VK_ERROR or
+upload-exhaustion entries were found. These are normal native-path counters,
+not an original-producer or draw-state comparison.
+
+All 120 frames were analyzed: 110/119 pairs exceed 6%, with zero detected
+cyan frames/patches (median and maximum 0%). The first image is a dark
+transition; the last shows villagers on the wooden platform. Actual pair
+previews 080 and 104 show the recurring rock-wall/background surfaces
+appearing/disappearing between frames. Some sequence changes also include
+the transition and camera motion; 110 is not a count of independently
+classified rendering bugs. This pass conversion does not fix the later
+scenery defect, and the window does not requalify text rendering.
+
+## Full-size desktop final-eye setup
+
+Process 25088 started at 04:07:19 EDT, log `reblue_710.log`, same binary.
+The absolute local xrsim manifest and its 31232-byte runtime DLL were verified.
+Process-only environment: runtime manifest, width 1440, height 1584, head height
+0. All 14 temporary profile entries were audited:
+
+```toml
+bd_xr_autoplay = true
+bd_perf_csv = true
+bd_capture_after_s = 60
+bd_capture_min_draws = 450
+bd_capture_frames = 120
+bd_vr_enabled = true
+bd_stereo = false
+bd_stereo_multiview = true
+bd_mv_layered_textures = true
+bd_mv_capture_array = false
+bd_xr_mirror = false
+bd_vr_camera_mode = 2
+bd_vr_diorama_height = 0
+bd_xr_render_scale = 1.0
+```
+
+The log confirms a 1440x1584x2 runtime swapchain and direct final presentation.
+The content remains 1440x808 under the existing aspect-fit policy. The normal
+late-sequence analyzer overlaps this VR run; no timings or performance claims
+are inferred from either process.
+
+## Final-eye result and handoff
+
+Process 25088 was stopped at 04:09:27 EDT after its complete sequence was
+preserved in `out/verification/native_passes_vr_fullsize`. Captures are final
+stacked 1440x3168 images (1440x1584 per eye), frames 12404-12523, from
+`frame_1788595701_0.raw` through `frame_1788595708_119.raw`, recorded
+04:08:21.735-04:08:28.930. All 119 pairs stay below 6%. Cyan analysis reports
+zero flagged frames/patches, median and maximum 0%.
+
+Both eyes in the actual first/last images were inspected: no broad banding,
+but the familiar blur and large black bars remain. Both disparity checks are
+**inconclusive**: only 44%/52% bands are usable, at -1/-2 pixels, with a 1-pixel
+spread. Full-size eye allocation is not correct native 3D framing or proof of
+headset depth/comfort/performance. No pass-off/original-producer image control
+was run for this checkpoint.
+
+Last reported VR pass totals: 327532 pushes / 327531 pops, 15901 depth-only,
+257562 null scopes, peak nesting 1; 655063 matching getter-shadow checks and
+zero compatibility/refusals/overflow/empty pops. No error/critical/VK_ERROR or
+upload-exhaustion entries were found. Multiple native nesting levels, overflow,
+unwind through unsupported scopes and additional colour attachments have not
+been GPU-qualified by these runs.
+
+Both analysis sessions completed; all three owned renderer processes were
+stopped. The exact original five-setting profile was restored. No game assets
+or saves were manually modified or staged, and no headset/device runs occurred.
+Scene-begin producers and native frame scheduling remain the next ownership
+boundary; the known later scenery and VR framing defects remain open.
