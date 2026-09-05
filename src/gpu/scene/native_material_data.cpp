@@ -64,6 +64,8 @@ bool DecodeMeshMaterials(std::span<const uint16_t> commands,
       current.vertex_record = commands[cursor];
     } else if (kind == 0x5000) {
       current.index_record = command & 0x0fff;
+    } else if (kind == 0xe000) {
+      current.control_record = command & 0x0fff;
     } else if ((command & 0xff00) == 0x0100) {
       m.modulate_diffuse = (command & 0xff) == 0;
     } else if ((command & 0xff00) == 0x0400) {

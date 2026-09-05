@@ -36,6 +36,8 @@ struct NativeMaterialRange {
   uint16_t index_record = 0xffff;
   uint16_t vertex_record = 0xffff;
   uint16_t stream = 0;
+  // Import-only index into the model's control table, not a shader bool value.
+  uint16_t control_record = 0xffff;
 };
 
 // Operand framing is shared by the bounded guest reader and offline decoder.

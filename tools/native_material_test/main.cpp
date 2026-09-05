@@ -1,4 +1,5 @@
 #include "gpu/scene/native_material_data.h"
+#include "gpu/scene/native_shadow.h"
 #include <cmath>
 #include <iostream>
 #include <fstream>
@@ -75,5 +76,23 @@ int main(int argc, char **argv) {
   Check(DecodeMeshMaterials(repeated_power, ranges));
   Check(ranges[0].material.specular_colour == std::array<float, 3>{1, 1, 1});
   TestMaterialAssets();
+  const uint16_t controls[]{0xe003, 0x1000, 1, 0, 0xe005, 0x1000, 1, 3, 0xff};
+  Check(DecodeMeshMaterials(controls, ranges));
+  Check(ranges.size() == 2 && ranges[0].control_record == 3 && ranges[1].control_record == 5);
+  for (unsigned bits = 0; bits < 16; ++bits) {
+    NativeShadowInputs inputs{bool(bits & 1), bool(bits & 2), bool(bits & 4)};
+    const bool disabled = bits & 8;
+    // Truth table: pass-off always rejects; filter-off ignores object/material;
+    // filter-on requires a visible receiver and an enabled material.
+    Check(ReceivesNativeShadow(inputs, disabled) == bool((0x22a2u >> bits) & 1u));
+  }
+  Check(ShadowStampMatches(17, 17) && !ShadowStampMatches(17, 18));
+  Check(!ShadowStampMatches(0xffff, 0xffff) && !ShadowStampMatches(0x8000, 0x8000));
+  Check(!ShadowStampMatches(1, 0x10001)); // never truncate the frame counter
+  Check(ShadowStampMatches(0, 0) && ShadowStampMatches(0x7fff, 0x7fff));
+  Check(!MaterialControlDisablesShadow(0, 8));
+  Check(!MaterialControlDisablesShadow(2, 8));
+  Check(!MaterialControlDisablesShadow(1, 7));
+  Check(MaterialControlDisablesShadow(1, 8) && MaterialControlDisablesShadow(3, 15));
   std::cout << "native material decoding and composition passed\n";
 }
