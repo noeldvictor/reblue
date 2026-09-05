@@ -236,6 +236,12 @@ public:
                                  u32 face = 0);
   static void ResolveRtToTexture(GuestTexture *dst);
 
+  // Explicit completed scene attachment -> existing engine texture adapter.
+  // No EDRAM flags, bound/last-drawn source inference, or square-depth heuristic.
+  // Native MSAA/scale copies and downstream compatibility links remain shared.
+  static bool PublishSceneOutput(GuestTexture *source, GuestTexture *destination,
+                                 float exposure);
+
   // The other in-flight list may still reference it. Freed by DrainSlot. Takes
   // state().mutex.
   static void ParkTextureUntilFence(std::unique_ptr<plume::RenderTexture> tex);

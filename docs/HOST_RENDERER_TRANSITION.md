@@ -30,6 +30,19 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Scene lifecycle checkpoint (2026-09-05): both scene begin/end bodies now run
+on the host with explicit persistent colour/depth roles, typed native pass
+entry/exit and explicit-source output publication. The supported path no
+longer uses the engine's 16-slot allocation list, surface constructors,
+tiling branch or resolve-source guessing. All 21 CTests and five source
+guards pass; the normal desktop run has 65970 matching ownership checks,
+no begin/end fallback and 0/119 large capture jumps or cyan patches.
+Camera/projection/cache execution, state 308, engine descriptors/getters,
+shared MSAA/scale copies and downstream post/UI tile-chain adapters remain.
+This is not a completed scene producer set or fully native frame. Pixel and
+final-eye qualification beyond the short flat sequence remain work. See
+`research/20260905_0641_native-scene-pass-lifecycle.md`.
+
 Frustum producer checkpoint (2026-09-05): complete six-plane construction
 executes on the host, and the default-view host walk consumes a native
 current-frame volume instead of importing engine planes. All 20 CTests and
@@ -41,7 +54,8 @@ flat and 1440x1584 final-eye sequences also have 0/119 large jumps and no
 frustum fallbacks or missing native volumes. VR remains blurred/letterboxed
 and depth-inconclusive; later scenery/text were not requalified.
 Engine view/projection/cache producers,
-other-view tables, getter publications and whole scene begin remain. This
+other-view tables and getter publications remain. Scene lifecycle conversion
+is tracked above. This
 cluster is view-frustum construction, not the previously inferred fog helper.
 See `research/20260905_0559_native-frustum-producer.md`.
 

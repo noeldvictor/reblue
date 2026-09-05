@@ -5,6 +5,7 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/native_pass.h"
+#include "gpu/scene/native_pass_bridge.h"
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "gpu/device.h"
@@ -120,7 +121,7 @@ void CheckShadow(uint32_t depth) {
     throw std::runtime_error("Native pass stack getter shadow changed unexpectedly");
   }
 }
-bool Push(PPCContext &ctx) {
+bool Push(GuestTexture *color, GuestTexture *depth_image, uint32_t &result) {
   const auto refuse = [](size_t reason) {
     ++stats.refusal_reasons[reason];
     return false;
@@ -137,10 +138,6 @@ bool Push(PPCContext &ctx) {
     return false;
   if (depth != passes.Depth())
     return refuse(1); // an already active compatibility scope must unwind first
-  auto *color = Attachment(ctx.r3.u32, false);
-  auto *depth_image = Attachment(ctx.r7.u32, true);
-  if ((ctx.r3.u32 && !color) || (ctx.r7.u32 && !depth_image))
-    return refuse(2); // no effects before the complete input set is supported
   const auto previous = ReadDeviceShadow(*device);
   for (size_t i = 1; i < 4; ++i)
     if (previous.references[i])
@@ -164,22 +161,22 @@ bool Push(PPCContext &ctx) {
                             previous.references[i]);
   }
   EnginePassShadow selected;
-  selected.references[0] = ctx.r3.u32;
-  selected.references[4] = ctx.r7.u32;
+  selected.references[0] = color ? color->selfVa : 0;
+  selected.references[4] = depth_image ? depth_image->selfVa : 0;
   PublishTargets(*device, {color, depth_image}, selected);
   const auto next_depth = uint32_t(passes.Depth());
   bd::mem::store<uint32_t>(kStack + 4, next_depth);
   bd::mem::store<float>(kStack + 168 + next_depth * 8, passes.Content().width);
   bd::mem::store<float>(kStack + 172 + next_depth * 8, passes.Content().height);
   // GetDesc leaves the colour argument in r3; the null-colour path leaves the device.
-  ctx.r3.u64 = color ? selected.references[0] : bd::mem::load<uint32_t>(kDevice);
+  result = color ? selected.references[0] : bd::mem::load<uint32_t>(kDevice);
   ++stats.pushes;
   stats.depth_only += !color && depth_image;
   stats.null_passes += !color && !depth_image;
   stats.peak = std::max(stats.peak, next_depth);
   return true;
 }
-bool Pop(PPCContext &ctx) {
+bool Pop(uint32_t &result) {
   auto *device = Device();
   if (!device)
     return false;
@@ -201,7 +198,7 @@ bool Pop(PPCContext &ctx) {
     const auto remaining = address ? ReleaseResourceAdapter(address) : 0u;
     bd::mem::store<uint32_t>(kStack + kSavedOffsets[i] + next_depth * 4, 0u);
     if (i == 4)
-      ctx.r3.u64 = remaining;
+      result = remaining;
   }
   passes.Leave();
   shadows.pop_back();
@@ -209,23 +206,72 @@ bool Pop(PPCContext &ctx) {
   return true;
 }
 } // namespace
+
+std::size_t NativePassDepth() { return passes.Depth(); }
+bool CanEnterNativePass() {
+  auto *device = Device();
+  if (!device || (!REXCVAR_GET(bd_native_passes) && !passes.Depth()))
+    return false;
+  const auto depth = bd::mem::load<uint32_t>(kStack + 4);
+  if (depth >= 7 || depth != passes.Depth())
+    return false;
+  const auto previous = ReadDeviceShadow(*device);
+  for (size_t i = 1; i < 4; ++i)
+    if (previous.references[i])
+      return false;
+  if (Attachment(previous.references[0], false) != state().render_target ||
+      Attachment(previous.references[4], true) != state().depth_stencil)
+    return false;
+  CheckShadow(depth);
+  return true;
+}
+bool EnterNativePass(GuestTexture *color, GuestTexture *depth, uint32_t &result) {
+  if (!CanEnterNativePass())
+    return false;
+  const bool entered = Push(color, depth, result);
+  Report();
+  return entered;
+}
+bool LeaveNativePass(uint32_t &result) {
+  if (!passes.Depth())
+    return false;
+  const bool left = Pop(result);
+  Report();
+  return left;
+}
 } // namespace bd::gpu::scene
 
 REX_HOOK_RAW(bdSurfaceSetMSAA) {
   using namespace bd::gpu::scene;
-  if (!Push(ctx)) {
+  auto *color = Attachment(ctx.r3.u32, false);
+  auto *depth = Attachment(ctx.r7.u32, true);
+  uint32_t result = ctx.r3.u32;
+  // Preserve the adapter's overflow no-op even for otherwise invalid inputs.
+  const auto *device = Device();
+  const auto level = device ? bd::mem::load<uint32_t>(kStack + 4) : 0u;
+  const bool overflow = device && level >= 7 && level <= INT32_MAX;
+  const bool inputs = (!ctx.r3.u32 || color) && (!ctx.r7.u32 || depth);
+  if (!overflow && !inputs)
+    ++stats.refusal_reasons[2];
+  if ((!overflow && !inputs) || !Push(color, depth, result)) {
     ++stats.compatibility;
     stats.refused += REXCVAR_GET(bd_native_passes);
     __imp__bdSurfaceSetMSAA(ctx, base);
+  } else if (!overflow) {
+    ctx.r3.u64 = result;
   }
   Report();
 }
 REX_HOOK_RAW(bdDestroySurface) {
   using namespace bd::gpu::scene;
-  if (!Pop(ctx)) {
+  uint32_t result = ctx.r3.u32;
+  const bool was_empty = !passes.Depth();
+  if (!Pop(result)) {
     ++stats.compatibility;
     stats.refused += REXCVAR_GET(bd_native_passes);
     __imp__bdDestroySurface(ctx, base);
+  } else if (!was_empty) {
+    ctx.r3.u64 = result;
   }
   Report();
 }

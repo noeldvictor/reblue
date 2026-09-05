@@ -726,6 +726,43 @@ void NoteTileContentLocked(VideoState &s, GuestTexture *dst, bool pass_end) {
 
 } // namespace
 
+bool Video::PublishSceneOutput(GuestTexture *src, GuestTexture *dst, float exposure) {
+  if (!src || !dst || !src->texture || !dst->texture || src == dst ||
+      dst->sampleCount != plume::RenderSampleCount::COUNT_1 ||
+      dst->viewDimension == plume::RenderTextureViewDimension::TEXTURE_CUBE ||
+      src->layers != dst->layers || !std::isfinite(exposure) || exposure <= 0)
+    return false;
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  if (!s.ready)
+    return false;
+  // These are compatibility destination publications, never source selectors.
+  // A newer complete scene supersedes the prior inbound publication.
+  DetachSourceSurfaceLocked(s, dst);
+  dst->resolveLevel = dst->resolveFace = 0;
+  dst->resolveClearToFar = dst->resolveSourceFallback = false;
+  dst->resolveScale = exposure;
+  dst->sourceSurface = src;
+  src->destinationTextures.insert(dst);
+  BindTextureSRVLocked(s, src);
+  if (CanAliasResolveLocked(src, dst)) {
+    NoteResolveOp(ResolveOp::LazyLink);
+  } else {
+    if (!CopySurfaceToTextureLocked(s, src, dst, "Native scene output")) {
+      DetachSourceSurfaceLocked(s, dst);
+      return false;
+    }
+    NoteResolveOp(ResolveOp::EagerCopy);
+    DetachSourceSurfaceLocked(s, dst);
+  }
+  s.last_resolved_dst = dst;
+  // Remaining post/UI producers still consume the legacy chain publication.
+  // This adapter is not native frame scheduling or removal of their tile model.
+  NoteTileContentLocked(s, dst, /*pass_end=*/true);
+  s.draw_framebuffer_bound = false;
+  return true;
+}
+
 void Video::ResolveRtToTexture(GuestTexture *dst) {
   BD_CPU_ZONE("ResolveRtToTexture");
   if (!dst || !dst->texture)
