@@ -115,3 +115,85 @@ so far zero; the full unchanged 3,185,054,400-byte replacement allowance
 remains, split exactly 995,330,400 flat + 2,189,724,000 VR. This is fresh
 reclamation, not credit from the readiness checkpoint. Net volume reduction
 from initial preflight is currently 3,179,749,376 bytes before new captures.
+
+Implementation `7e17427` committed/pushed before image qualification. Same
+18:49:01 executable, no rebuild for documentation stamps.
+VR log 805, owned PID 24668, 18:55:03-18:56:16: all 16 settings audited;
+native sun/shadows, layered multiview, camera mode 2, height zero, mirror/legacy
+stereo off, XR scale 1, process-local simulator 1440x1584 per eye. Capture
+delay 60 / minimum 450 / count 120. Last sample 8,101 native sequences/roots,
+zero original sequences/post scopes/refusals, max roots one.
+Captures `frame_1788648965_0.raw` .. `frame_1788648973_119.raw`, frames
+7984-8103, stacked 1440x3168. Exactly 2,189,724,000 unique raw bytes retained
+with hard-link isolation. Analysis/pixel inspection in progress.
+
+Before the next producer: free after VR 55,436,337,152 bytes (51.63 GiB).
+Removed 3,185,054,400 unique raw bytes; consumed 2,189,724,000; remaining
+995,330,400, exactly the planned 120-frame flat set. No retry or cap increase.
+Small exports/logs share the original 100 MiB budget; no other large output.
+
+VR streaming analysis completed: 0/119 changes above 6%, maximum .52079%,
+zero cyan pixels. First/last stereo bands 44/52/62/72/82/90/95% are
+-1/-2/-3/-5/-6/-8/-9 pixels in both captures: correctly crossed depth,
+near-far -8, spread 8. All four full eye PNGs inspected: coherent orange sky,
+village, stairs, ground/rocks, moving windmill and shadows. Existing distant
+blur remains, and this framing does not qualify Shu's shadow. No new visual
+defect identified in this short normal window. No authored multi-root,
+late-scene, title-artwork or full-game qualification claim.
+
+## Flat verification and final retention
+
+Flat log 806, owned PID 24420, 18:57:51-18:58:58: original five-setting
+profile restored and audited (delay 60 / minimum 600 / count 120). Last sample
+2,701 native sequences/roots, zero original sequences/post scopes/refusals,
+max roots one. Captures `frame_1788649133_0.raw` ..
+`frame_1788649137_119.raw`, frames 2833-2952, 1920x1080.
+Streaming analysis: 0/119 changes above 6%, maximum 3.34505%, no cyan hits
+(maximum .02083%, median .01119%). Both full endpoint PNGs inspected:
+recognizable Shu and cast silhouette, vegetation, ground, windmill and changing
+shadows; existing distant DoF remains. No new defect identified in this window.
+
+All three logs mount 1673 archives / 119346 records and contain zero checked
+error/critical/VK_ERROR/device-loss/exception/assertion/fatal markers. All owned
+renderer, build and analysis sessions are terminal; original profile read back,
+no runtime registry change and no Quest/Thor run. Guest-source established the
+container/caller relationship and ordered focus side effect; devloop reused
+the existing desktop/test trees; vrsim verified both final eyes on desktop.
+No authored multi-root, empty/disabled-list or unknown-callback GPU coverage;
+capacity/order are CPU tested and refusal/focus ordering source guarded.
+
+Final new retained evidence: 240 unique raws / 3,185,054,400 bytes, eight
+endpoint/stereo PNGs / 9,772,550 bytes, app logs / 952,019 bytes, six perf
+files / 2,482,512 bytes. No every-frame PNG export. Incoming raw allowance
+is fully consumed, with zero retry/growth allowance. Current normal baseline
+is `native_sequence_flat` / `native_sequence_vr`; keep the readiness normal
+pair as previous control, eligible for review at the next replacement, not
+automatic deletion. Keep readiness startup probes, every effect preview/shared
+probe and unresolved failure/control evidence until their explicit replacement.
+
+Final scoped NTFS-identity inventory across automatic and isolated capture
+roots: 29,565 paths / 28,331 unique raw files, 263,324,814,100 logical and
+233,564,594,672 allocated bytes. Both unique counts and byte totals are unchanged
+from the readiness checkpoint. The historical archive remains over the 10 GiB
+target; its inventory/review obligation and no-growth gate remain in force.
+The older bloom pair now has zero raws; all eight existing PNGs remain.
+
+Ending measured free space: 54,396,416,000 bytes (50.66 GiB). Net volume
+usage increased 52,334,592 bytes (49.91 MiB) from initial preflight, despite
+the 2.97 GiB gross cleanup: replacement captures consumed the reclaimed raw
+allowance. Small evidence and build updates remain within their recorded caps.
+A scoped, reparse-free changed-file inspection of the runtime/build tree found
+the expected executable/PDB/host objects, build metadata, logs and perf files;
+no additional large runtime payload. The volume delta is not a precise sum of
+repo artifacts; the residual is unattributed, not claimed as raw capture growth
+or reclaimed space. No further producer launched after this reconciliation.
+
+Next: remove the scene scheduler's temporary post-container construction and
+cleanup, pass explicit native scene colour/depth/exposure through the frame,
+and remove downstream resolve-link/UI publication dependencies. Engine list,
+property/camera/focus/light/visibility/animation/material/scene producers and
+unknown callbacks still need conversion. Title artwork, VR blur, late-scene
+failures and representative fields/battles/cutscenes/menus/transitions/reloads
+in both eyes remain unqualified. This is another removed guest rendering
+execution boundary, not a completed native frame. Full goal stays active;
+Quest optimization has not started.

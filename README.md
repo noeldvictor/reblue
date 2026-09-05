@@ -86,6 +86,7 @@ Quest-ready release.
 | Frame and VR | Host targets/post-processing, layered multiview presentation and desktop OpenXR test runtime | Complete host frame scheduling, effects/UI/animation ownership and representative full-game visual checks |
 | DoF production | Complete preparation/submission replacements, native parameters and explicit-input atlas; no supported-path DoF level allocations, quads, intermediate target/resolve or PS c27 reads; enabled by default | Authored camera/focus sources, image/getter adapters, compatibility scopes and broader view/focus qualification |
 | DoF/bloom/flare scheduling | Native atlas/composite and 15 optical sprites in one instanced draw into an explicit persistent output; host-prepared input descriptors remove the three startup/transition guest warm-up scopes; normal flat/VR record zero post fallbacks | Native light/visibility producers, per-eye optics, image/property/UI adapters and broader scene coverage |
+| Effect-sequence scheduling | Host-owned ordered post-root dispatch with direct depth, complete callback/plan preflight and at most two alternating outputs; no supported-path global-depth copy or guest wrapper execution; normal flat/VR have zero wrapper fallbacks | Scene temporary containers, engine list/property producers, resolve-link/UI adapters, unknown callbacks and multi-root GPU qualification |
 | Directional bloom | Independent horizontal/vertical 13-tap masks in at most two private quarter-pair atlases; layered native passes replace the mode-1 guest mask cache, blur submission and resolves | Authored mode-1 activation/kernel comparisons and combined heat/bloom coverage; strong previews are stable but washed-out VR makes preview depth inconclusive; other bloom modes retain native approximations |
 | Optical adjustments | Fisheye and colour inversion fused into one native layered pass; output-aspect-aware curve, explicit attachment records and private input scratch without a seed copy or emulated resolve; visible flat/both-eye previews verified | Authored activation/parameter comparisons and event coverage, VR comfort |
 | Scanline filter | Native four-tap layered pass after optical adjustments, with host-frame animation independent of gameplay RNG; existing noise-off default retained; 860 authored strength comparisons match | Broad event coverage; earlier noisy VR preview has 1/31 large changes in visible wave bands, not a normal stability qualification |
@@ -93,15 +94,15 @@ Quest-ready release.
 | Heat shimmer | Native depth-aware scene displacement fused into the composite, with unwarped bloom, four noise taps, shared-eye animation and explicit 224-byte composite layout; no extra full-image target or guest phase writes | Authored activation/parameter checks, events and VR comfort; strong synthetic previews have 31/31 large changes, not normal stability passes |
 | Native eye geometry | Shared full runtime extent for scene and final layers; separate authored UI scale; 1440x1584 scene/final-eye pixels verified without letterboxing at XR scale 1.0 | Blur, UI/cinema/movie GPU qualification and broader modes; the default XR scale remains 0.65 |
 | Tracked camera ownership | Explicit per-view native composition, reused by scene and shadow preparation; generic light/2D/post matrix writes no longer drive tracking | Native camera sources, interpolation, reflection derivation, focus production and complete frame scheduling; renderer descriptor adapters remain |
-| Desktop verification | All 29 material/texture/state/camera/post CTests and 34 source guards pass; latest normal flat/VR have 0/119 large changes, no cyan and correctly crossed first/last VR depth; both eyes inspected | Authored effect events, title artwork, distant VR blur, per-eye flare optics and character-shadow/full-game coverage remain unqualified; earlier late-scene failures are not superseded |
+| Desktop verification | All 30 material/texture/state/camera/post CTests and 36 source guards pass; latest normal flat/VR have 0/119 large changes, no cyan and correctly crossed first/last VR depth; both eyes inspected | Authored effect events, multi-root scheduling, title artwork, distant VR blur, per-eye flare optics and character-shadow/full-game coverage remain unqualified; earlier late-scene failures are not superseded |
 | Android / Quest 2 | ARM64 build/APK and OpenXR/controller foundations exist from earlier work | Full desktop completion gate, then fresh device qualification and optimization |
 
-The latest [native post-input readiness evidence](research/20260905_1807_native-post-input-readiness.md)
-records removal of the three guest warm-up scopes, exact binary/settings and
-both-eye checks. Three superseded raw sets were removed, retaining reports,
-images and protected evidence. After bounded verification, net volume usage
-decreased 1.20 GiB with 50.71 GiB free. The historical archive still exceeds
-its budget; the frozen inventory and no-growth gate remain in force.
+The latest [native effect-sequence evidence](research/20260905_1842_native-effect-sequence.md)
+records removal of the guest list/depth wrapper, exact binary/settings and
+both-eye checks. Two superseded raw sets were removed, retaining reports and
+images; replacement captures used exactly the same raw byte count. Net volume
+usage increased 49.91 MiB, with 50.66 GiB free. The historical archive still
+exceeds its budget; the frozen inventory and no-growth gate remain in force.
 
 The mesh/capture evidence and its limits are recorded in
 [the native mesh research note](research/20260904_1713_native-mesh-assets-and-capture-ownership.md);

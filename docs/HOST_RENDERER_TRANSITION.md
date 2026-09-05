@@ -30,6 +30,22 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native effect-sequence checkpoint (2026-09-05): the supported complete list
+wrapper now schedules post roots on the host with explicit depth, without
+the guest global-depth copy, virtual dispatch or container cleanup. Full
+callback/plan preflight, bounded alternating outputs and ordered focus
+publication preserve the sequence contract. All 30 CTests and 36 source guards
+pass. Normal flat/VR record 2,701/8,101 native sequences, zero original wrappers
+or post scopes/refusals; only one root per sequence is GPU exercised. Both
+120-frame captures have 0/119 large changes and no cyan; first/last VR depth
+is correctly crossed and both full eyes were inspected. Multi-root/unknown
+callback GPU coverage, scene temporary containers, resolve links/exposure,
+engine producers, UI and complete frame/game gates remain. No Quest.
+Two superseded normal raw sets removed with eight PNGs/reports retained;
+replacement raw bytes exactly match removal, so the raw archive did not grow.
+Net volume usage increased 49.91 MiB, ending with 50.66 GiB free. Exact evidence:
+`research/20260905_1842_native-effect-sequence.md`.
+
 Native post-input readiness checkpoint (2026-09-05): the three recurring
 startup/transition refusals were fresh depth images lacking sampling descriptors.
 Native whole-post and direct DoF preparation now create/refresh explicit input
