@@ -30,6 +30,16 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Parameter producer checkpoint (2026-09-05): two complete pass-projection
+builders, matrix transposition, parameter flushing and both float setters
+execute on the host for supported inputs. All 19 material/texture/state CTests
+and three source-boundary guards pass. The final guarded-build comparison
+records 1891328 matching publications, zero refusals/fallbacks, and 0/119 large
+jumps in its short desktop sequence. Normal comparison-off and final eyes are
+not yet qualified at this checkpoint. Engine inputs/parameter descriptors,
+inline writers, draw-time shader-register import and full scene-begin ownership
+remain. See `research/20260905_0513_host-parameter-producers.md`.
+
 Sampler producer checkpoint (2026-09-05): complete scene defaults, seven direct
 sampler setters and supported changed engine setter calls execute on the host.
 All 18 material/texture/state CTests and three source-boundary guards pass.

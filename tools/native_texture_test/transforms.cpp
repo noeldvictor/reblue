@@ -38,6 +38,8 @@ int main() {
   assert(result->view_projection[12] == -14);
   assert(result->view_projection[13] == 12);
   assert(result->view_projection[14] == -10);
+  assert(MultiplyRenderMatrices(inputs.view, inputs.projection) == result->view_projection);
+  assert(MultiplyRenderMatrices(inputs.projection, inputs.view) != result->view_projection);
   // Asymmetric perspective terms and arbitrary affine/projective matrices.
   uint32_t random = 0x24519682;
   auto sample = [&] {

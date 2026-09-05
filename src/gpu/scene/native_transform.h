@@ -30,23 +30,28 @@ inline RenderMatrix TransposeRenderMatrix(const RenderMatrix &matrix) {
 
 // Arithmetic layer also preserves IEEE exceptional values from transitional
 // engine imports. Native assets should use the checked entry point below.
-inline RenderTransforms
-ComposeRenderTransformValues(const RenderTransformInputs &inputs) {
+inline RenderMatrix MultiplyRenderMatrices(const RenderMatrix &left,
+                                          const RenderMatrix &right) {
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
-  RenderTransforms result{inputs};
+  RenderMatrix result;
   // Explicit pairwise sums preserve the established CPU transform convention.
   // The native output is not a register block; packing belongs to a backend.
   for (size_t row = 0; row < 4; ++row)
     for (size_t column = 0; column < 4; ++column) {
-      const auto *v = inputs.view.data() + row * 4;
-      const auto *p = inputs.projection.data() + column;
+      const auto *v = left.data() + row * 4;
+      const auto *p = right.data() + column;
       const float value =
           (v[0] * p[0] + v[1] * p[4]) + (v[2] * p[8] + v[3] * p[12]);
-      result.view_projection[row * 4 + column] = value;
+      result[row * 4 + column] = value;
     }
   return result;
+}
+
+inline RenderTransforms
+ComposeRenderTransformValues(const RenderTransformInputs &inputs) {
+  return {inputs, MultiplyRenderMatrices(inputs.view, inputs.projection)};
 }
 
 inline std::optional<RenderTransforms>

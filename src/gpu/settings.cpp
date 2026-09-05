@@ -660,6 +660,12 @@ REXCVAR_DEFINE_BOOL(bd_host_sampler_state, true, kCvarGroup,
 REXCVAR_DEFINE_BOOL(bd_host_sampler_verify, false, kCvarGroup,
                     "Compare host sampler publications with one original "
                     "execution; correctness only, not normal host execution.");
+REXCVAR_DEFINE_BOOL(bd_host_parameters, true, kCvarGroup,
+                    "Execute pass projection builders and float parameter "
+                    "publication on the host; engine/shader ABI adapters remain.");
+REXCVAR_DEFINE_BOOL(bd_host_parameters_verify, false, kCvarGroup,
+                    "Compare host parameter publications with one original "
+                    "execution; correctness only, not normal host execution.");
 
 // 337 of 530 field-scene draws blend AND write depth - 64% of the frame,
 // counted on the desktop, not inferred. On a Xenon that was free: EDRAM had no

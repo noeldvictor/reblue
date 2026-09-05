@@ -21,6 +21,7 @@
 #include "gpu/draw_queue.h"
 #include "gpu/d3d.h"
 #include "gpu/constant_buffers.h"
+#include "gpu/scene/host_parameter_bridge.h"
 #include "gpu/device.h"
 #include "gpu/shadow_fit.h"
 #include "gpu/frame_stats.h"
@@ -202,12 +203,8 @@ void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
   bd::gpu::Video::NoteIndexSource(indices_guest);
 }
 
-// SetSamplerState is deliberately NOT hooked: its recompiled body writes the
-// sampler state table at device+0x1BC, which FlushRenderState reads directly.
-//
-// The constant setters below stay raw: they touch no argument, only run the
-// original and then mark dirty to gate the CBV upload, and their arities
-// differ.
+// Integer/bool and remaining inline constant writers retain their original
+// execution and dirty adapters. Float setters execute in the host bridge.
 #define REBLUE_CONSTANT_DIRTY_HOOK(fn, mark)                                   \
   REX_EXTERN(__imp__##fn);                                                     \
   REX_HOOK_RAW(fn) {                                                           \
@@ -217,27 +214,11 @@ void D3DDevice_SetIndices_hook(u32 /*device*/, u32 indices_guest) {
 
 // The float setters also tell the host-issued node draw which registers a
 // node's interpreter run writes: (device, start register, data, count).
-REX_EXTERN(__imp__D3DDevice_SetVertexShaderConstantFN);
 REX_HOOK_RAW(D3DDevice_SetVertexShaderConstantFN) {
-  const u32 start = ctx.r4.u32;
-  const u32 src = ctx.r5.u32;
-  const u32 count = ctx.r6.u32;
-  __imp__D3DDevice_SetVertexShaderConstantFN(ctx, base);
-  bd::gpu::NoteGuestConstantWrite();
-  bd::gpu::Video::MarkVSConstantsDirty();
-  bd::gpu::scene::NoteConstantsSet(true, start, count);
-  bd::gpu::scene::NoteConstantsSource(true, start, count, src);
+  bd::gpu::scene::SetHostFloatParameters(ctx, base, true);
 }
-REX_EXTERN(__imp__D3DDevice_SetPixelShaderConstantFN);
 REX_HOOK_RAW(D3DDevice_SetPixelShaderConstantFN) {
-  const u32 start = ctx.r4.u32;
-  const u32 src = ctx.r5.u32;
-  const u32 count = ctx.r6.u32;
-  __imp__D3DDevice_SetPixelShaderConstantFN(ctx, base);
-  bd::gpu::NoteGuestConstantWrite();
-  bd::gpu::Video::MarkPSConstantsDirty();
-  bd::gpu::scene::NoteConstantsSet(false, start, count);
-  bd::gpu::scene::NoteConstantsSource(false, start, count, src);
+  bd::gpu::scene::SetHostFloatParameters(ctx, base, false);
 }
 REBLUE_CONSTANT_DIRTY_HOOK(D3DDevice_SetVertexShaderConstantI,
                            bd::gpu::Video::MarkVSConstantsDirty())
