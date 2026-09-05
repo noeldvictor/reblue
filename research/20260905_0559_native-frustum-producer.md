@@ -68,7 +68,7 @@ Stack scratch/caller-clobbered registers and NaN payload bits are not compared.
 
 ## Build and standalone verification
 
-Final desktop Vulkan executable: `out/build/win-amd64-release/reblue_vk.exe`,
+Initial checkpoint desktop Vulkan executable: `out/build/win-amd64-release/reblue_vk.exe`,
 47,300,096 bytes, 05:59:12 EDT. The existing `reblue` target built successfully
 with four jobs. Codegen reported the module up to date; no guest translation
 unit rebuilt and no dependency changed. Log version is `39f46df2e` plus local
@@ -92,7 +92,7 @@ finite-input/output restriction. That restriction was removed: exceptional
 inputs now follow native arithmetic too, with explicit counting and matching
 NaNs in the comparison. Its captures are not final-build qualification.
 
-Final-build comparison PID 24724 started 05:59:33, `reblue_719.log`. All eight
+Checkpoint-build comparison PID 24724 started 05:59:33, `reblue_719.log`. All eight
 settings audited: the preserved autoplay/perf/60-second/600-minimum-draw/
 120-frame capture settings, plus host frustum, original comparison and
 culling diagnostics enabled. Field comparisons include exceptional startup
@@ -106,6 +106,7 @@ archives / 119346 names; RTX 3060 Vulkan 1.4.341, MSAA 4. No error/critical,
 VK_ERROR or upload-exhaustion messages.
 
 `out/verification/native_frustum_compare`: 120 1920x1080 captures,
+frames 2843-2962,
 `frame_1788602435_0.raw` through `frame_1788602439_119.raw`,
 06:00:35.789-06:00:39.078. Sequence analysis reports 0/119 jumps over 6%;
 cyan analysis reports zero threshold/patch frames, median 0.011%, max 0.02%.
@@ -113,6 +114,85 @@ Actual first/last previews show Shu in the village and moving waterwheel
 shadows without a broad missing band or cyan patch. `--mono` only decoded
 flat pixels; it is not a replay-disabled control. This comparison run does
 not qualify the normal comparison-off path, later scenes or final eyes.
+
+### Normal comparison-off runs of `9a2e5bc`
+
+Flat PID 22636, 06:03:27-06:05:04, `reblue_720.log`, same 05:59:12 binary.
+All eight settings audited, with both comparison flags false. Last totals:
+18,344 native constructions, 13,544 scene publications, 437,173 native walks,
+13 exceptional inputs, zero compatibility/refused/missing. Comparison/shadow
+check counters remain zero as expected. Full archives mounted and no
+error/critical/VK_ERROR/upload-exhaustion messages.
+
+`out/verification/native_frustum_flat`: 120 1920x1080 frames 2838-2957,
+`frame_1788602669_0.raw` through `frame_1788602672_119.raw`,
+06:04:29.507-06:04:32.985. Zero of 119 pairs exceed 6%; zero cyan threshold
+or patch frames, median 0.011%, max 0.02%. Actual first/last previews show
+the village with animated waterwheel shadows, no broad missing band or cyan.
+This is short-field coverage, not a requalification of later rock-wall/text.
+
+Desktop VR PID 19768, 06:05:46-06:08:52, `reblue_721.log`, same binary.
+Absolute xrsim manifest/DLL (31,232 bytes), process-only 1440x1584 eye size,
+head height 0. All 17 settings audited: normal eight, capture minimum 450,
+and VR enabled, old stereo false, multiview/layered textures true,
+scene-array capture false, mirror false, camera mode 2, diorama height 0,
+XR scale 1.0. Final runtime eyes are 1440x1584 each, but scene content
+remains 1440x808, MSAA 4. Full archives and no error/critical/VK_ERROR/upload
+exhaustion. Last totals: 57,905 constructions, 41,105 scene publications,
+820,464 native walks, 122 exceptional inputs, zero compatibility/refused/
+missing; diagnostics off.
+
+`out/verification/native_frustum_vr`: 120 final stacked 1440x3168 captures,
+frames 12156-12275,
+`frame_1788602809_0.raw` through `frame_1788602846_119.raw`,
+06:06:49.375-06:07:26.894. Zero of 119 pairs exceed 6%; no cyan threshold or
+patch frames, median/max 0%. Both eyes of actual first/last previews show
+stable but blurred scenery with large black bars. Both stereo checks are
+**inconclusive** (exit 2): only 44%/52% bands usable, -1/-2 pixel disparities,
+spread 1 pixel. This does not establish correct stereo depth or framing.
+
+### Byte-safe import hardening
+
+A final source review found that scalar shape reads could dereference
+unaligned `be<uint32_t>` objects even though the builder accepts unaligned
+input addresses. `LoadFloat` now copies bytes into an aligned local endian
+scalar. Plane arithmetic and ownership are unchanged. This is not a fix for
+an observed visual mismatch or the open VR/late-scene issues.
+
+The hardened executable built at 06:10:04, 47,300,608 bytes, revision
+`9a2e5bc3e` plus the local read change. All 20 CTests and three guards pass
+again; no guest translation unit rebuilt. Earlier captures above retain their
+original binary attribution. Hardened-build runtime results follow below.
+
+Hardened comparison PID 6208, 06:10:40-06:12:18, `reblue_722.log`, same eight
+settings as the earlier comparison, all audited. Last counters: 18,341 matching
+publications, 13,541 scene publications, 436,841 native walks/shadow checks,
+13 exceptional inputs, zero compatibility/refused/missing/wrong. Logged
+visibility diagnostics all report zero disagreements. Full archive mount and
+no error/critical/VK_ERROR/upload-exhaustion messages.
+
+`out/verification/native_frustum_guarded_compare`: 120 1920x1080 frames
+2841-2960, `frame_1788603103_0.raw` through `frame_1788603107_119.raw`,
+06:11:43.022-06:11:47.306. Zero of 119 pairs exceed 6%; zero cyan threshold
+or patch frames, median 0.012%, max 0.03%. Actual first/last previews show
+the stable village with animated shadows, no broad missing band or cyan.
+This repeats the live producer/consumer correctness checks after hardening;
+deliberately unaligned engine input injection has not been exercised live.
+
+Hardened normal flat PID 7800, 06:12:55-06:15:11, `reblue_723.log`, all eight
+settings audited and both comparison flags false. Last totals: 19,539 native
+constructions, 14,439 scene publications, 469,918 native walks, 13 exceptional
+inputs, zero compatibility/refused/missing; diagnostics off. Full archive
+mount and no error/critical/VK_ERROR/upload-exhaustion messages.
+
+`out/verification/native_frustum_guarded_flat`: 120 1920x1080 frames
+2845-2964, `frame_1788603238_0.raw` through `frame_1788603242_119.raw`,
+06:13:58.323-06:14:02.342. Zero of 119 pairs exceed 6%; zero cyan threshold
+or patch frames, median 0.012%, max 0.02%. Actual first/last previews again
+show stable village geometry and animated shadows without a broad missing
+band or cyan. This is the normal execution path of the byte-safe build,
+not an original-comparison run. Hardened final-eye verification is pending
+at this source-hardening checkpoint.
 
 ## Remaining work
 

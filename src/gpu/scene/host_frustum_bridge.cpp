@@ -9,6 +9,7 @@
 #include "core/memory_helpers.h"
 #include "gpu/frame_stats.h"
 #include <bit>
+#include <cstring>
 #include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/ppc/context.h>
@@ -56,7 +57,11 @@ bool Overlap(uint64_t a, uint64_t size, uint64_t b, uint64_t other_size) {
   return a < b + other_size && b < a + size;
 }
 float LoadFloat(uint32_t address) {
-  return std::bit_cast<float>(bd::mem::load<uint32_t>(address));
+  // Shape inputs need not be word-aligned. Keep the endian scalar aligned
+  // locally rather than dereferencing a misaligned be<uint32_t> in the arena.
+  bd::be<uint32_t> word;
+  std::memcpy(&word, bd::mem::at<const uint8_t>(address), sizeof(word));
+  return std::bit_cast<float>(static_cast<uint32_t>(word));
 }
 bool Close(float a, float b) {
   return a == b || (std::isnan(a) && std::isnan(b)) ||
