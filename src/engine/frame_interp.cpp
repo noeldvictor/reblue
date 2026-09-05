@@ -31,6 +31,7 @@
 #include "engine/mouse_cursor.h"
 #include "engine/virtual_buttons.h"
 #include "gpu/gpu.h"
+#include "gpu/scene/native_transform_bridge.h"
 #include "xr/xr_game_camera.h"
 
 namespace {
@@ -55,7 +56,6 @@ struct CamEntry {
 
 std::unordered_map<u32, CamEntry> g_cams; // render-thread only
 u64 g_camFrame = 0;
-u32 g_viewScratch = 0; // guest scratch holding the interpolated view matrix
 bool g_inCameraRender =
     false; // true only inside bdCameraRenderSetup (render thread)
 
@@ -526,10 +526,9 @@ REX_HOOK_RAW(bdCameraRenderSetup) {
   g_inCameraRender = false;
 }
 
-// Redirects r4 to a scratch holding the interpolated view when it names a
-// tracked camera. Raw rather than marshaled because the callee also reads stack
-// params, which only the caller's own frame carries.
-REX_EXTERN(__imp__bdBuildViewMatrix);
+// Compose the tracked camera/XR view in native memory and feed the native
+// transform producer. Its temporary compatibility path preserves the inherited
+// PPC context if an unsupported engine callback still needs execution.
 REX_HOOK_RAW(bdBuildViewMatrix) {
   float view[16];
   bool replaced = false;
@@ -573,17 +572,7 @@ REX_HOOK_RAW(bdBuildViewMatrix) {
     }
   }
 
-  if (replaced) {
-    if (g_viewScratch == 0) {
-      g_viewScratch = bd::gpu::HostHeap::Get().AllocGuest(64, 16);
-    }
-    if (g_viewScratch != 0) {
-      auto *dst = bd::mem::at<be_f32>(g_viewScratch);
-      WriteFloats(dst, view, 16);
-      ctx.r4.u32 = g_viewScratch;
-    }
-  }
-  __imp__bdBuildViewMatrix(ctx, base);
+  bd::gpu::scene::UpdateRenderTransforms(ctx, base, replaced ? view : nullptr);
 }
 
 // Poll input at 30Hz so edge-detect and auto-repeat stay in lockstep with the

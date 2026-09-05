@@ -28,15 +28,13 @@ inline RenderMatrix TransposeRenderMatrix(const RenderMatrix &matrix) {
   return result;
 }
 
-inline std::optional<RenderTransforms>
-ComposeRenderTransforms(const RenderTransformInputs &inputs) {
+// Arithmetic layer also preserves IEEE exceptional values from transitional
+// engine imports. Native assets should use the checked entry point below.
+inline RenderTransforms
+ComposeRenderTransformValues(const RenderTransformInputs &inputs) {
 #if defined(__clang__)
 #pragma clang fp contract(off)
 #endif
-  for (const auto *matrix : {&inputs.world, &inputs.view, &inputs.projection})
-    for (float value : *matrix)
-      if (!std::isfinite(value))
-        return {};
   RenderTransforms result{inputs};
   // Explicit pairwise sums preserve the established CPU transform convention.
   // The native output is not a register block; packing belongs to a backend.
@@ -46,10 +44,21 @@ ComposeRenderTransforms(const RenderTransformInputs &inputs) {
       const auto *p = inputs.projection.data() + column;
       const float value =
           (v[0] * p[0] + v[1] * p[4]) + (v[2] * p[8] + v[3] * p[12]);
-      if (!std::isfinite(value))
-        return {};
       result.view_projection[row * 4 + column] = value;
     }
+  return result;
+}
+
+inline std::optional<RenderTransforms>
+ComposeRenderTransforms(const RenderTransformInputs &inputs) {
+  for (const auto *matrix : {&inputs.world, &inputs.view, &inputs.projection})
+    for (float value : *matrix)
+      if (!std::isfinite(value))
+        return {};
+  auto result = ComposeRenderTransformValues(inputs);
+  for (float value : result.view_projection)
+    if (!std::isfinite(value))
+      return {};
   return result;
 }
 } // namespace bd::gpu::scene

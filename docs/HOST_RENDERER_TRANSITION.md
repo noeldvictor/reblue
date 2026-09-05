@@ -110,7 +110,7 @@ sequence has 0/119 jumps and no cyan patches; final multiview still has 10/119 j
 at a 64-frame cadence and an inconclusive stereo-depth result. See
 `research/20260904_2154_host-deferred-consumer.md` for verification and limits.
 
-This is not a fully native frame: visual/material/world/shader callbacks and
+This is not a fully native frame: visual/material/shader callbacks and
 state/resource adapters remain, with separate bridge counters. Some resource
 adapters already route to host hooks, so these are boundary-call counts, not a
 precise guest-instruction census. Engine entry storage, resource/declaration
@@ -118,6 +118,21 @@ associations, shader-register packing and replay's retained-state assumptions
 still need replacement. Fur/stencil policies have standalone coverage but the
 captured field does not exercise those GPU paths. The known later-scene failure
 and full-game/both-eye acceptance gates remain open.
+
+Object/pass transform publication is now host-produced too
+(`gpu/scene/native_transform*`). The normal `bdBuildViewMatrix` path replaces
+the guest producer, its default callback, transpose/multiply helpers and
+constant setter. Camera interpolation/XR view composition feeds it directly
+from native memory. `bd_native_transforms` defaults on; comparisons and
+compatibility calls are counted independently. The final comparison recorded
+826215 checks with no cache/constant/mask mismatches or compatibility calls,
+including 203 nonfinite loading updates previously refused. Native assets
+still use strict finite-value validation. See
+`research/20260904_2216_native-render-transforms.md`.
+Engine object/camera/projection sources, inherited matrix cache and the
+shader-register publication ABI remain temporary boundaries. This does not
+replace native scene/pass scheduling or fix/qualify the previously documented
+multiview and later-scene failures.
 
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free

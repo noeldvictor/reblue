@@ -8,6 +8,7 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
+#include <bit>
 #include <cassert>
 #include <cstdint>
 #include <limits>
@@ -77,4 +78,18 @@ int main() {
   assert(!ComposeRenderTransforms(inputs));
   inputs = {};
   assert(ComposeRenderTransforms(inputs)); // zero is not a singularity error
+  inputs.world[1] = std::bit_cast<float>(0x7fc12345u);
+  inputs.world[4] = -0.0f;
+  const auto exceptional = ComposeRenderTransformValues(inputs);
+  const auto exceptional_transpose =
+      TransposeRenderMatrix(exceptional.inputs.world);
+  assert(std::bit_cast<uint32_t>(exceptional_transpose[4]) == 0x7fc12345u);
+  assert(std::signbit(exceptional_transpose[1]));
+  assert(!ComposeRenderTransforms(inputs));
+  inputs = {identity, identity, identity};
+  inputs.view[0] = std::numeric_limits<float>::infinity();
+  const auto infinite = ComposeRenderTransformValues(inputs);
+  assert(std::isinf(infinite.view_projection[0]));
+  assert(std::isnan(infinite.view_projection[1])); // infinity * zero
+  assert(!ComposeRenderTransforms(inputs));
 }
