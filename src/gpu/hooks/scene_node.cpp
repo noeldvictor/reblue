@@ -200,14 +200,14 @@ REX_HOOK_RAW(bdSceneNodeDrawSingle) {
     if (has_draws && list_status != 2) {
       if (HostDrawReplay(tag)) {
         replayed = true;
-        if (list_status == 1 && !HostListBuildReplay(tag, ctx, base)) {
+        if (list_status == 1 && !HostListBuildReplay(tag)) {
           static u32 told = 0;
           if (told++ < 4)
             BD_WARN("[node] list part not built after a draw replay");
         }
       }
     } else if (!has_draws && list_status == 1) {
-      replayed = HostListBuildReplay(tag, ctx, base);
+      replayed = HostListBuildReplay(tag);
     }
     if (!replayed) {
       const bool capture = HostDrawEnabled() && HostDrawWantsCapture(tag);

@@ -4,6 +4,7 @@
  * @copyright Copyright (c) 2026 reblue contributors
  * @license BSD 3-Clause, see LICENSE
  */
+#include "gpu/scene/deferred_entry_bridge.h"
 #include "gpu/scene/deferred_work.h"
 #include <array>
 #ifdef NDEBUG
@@ -54,7 +55,8 @@ int main() {
   for (DeferredArenaState invalid : {DeferredArenaState{2659, 100, 8, 4},
                                      {3000, 100, 6, 4},
                                      {99, 100, 8, 4},
-                                     {3000, 100, 3, 4}}) {
+                                     {3000, 100, 3, 4},
+                                     {3000, 101, 8, 4}}) {
     assert(!PlanDeferredBatch(invalid, sizes, plan));
     assert(plan.offsets == saved.offsets &&
            plan.bytes_used == saved.bytes_used &&
@@ -71,4 +73,35 @@ int main() {
                             std::span(&four, 1), plan));
   assert(PlanDeferredBatch({0, 0, 0, 0}, {}, plan));
   assert(plan.offsets.empty() && !plan.bytes_used && !plan.items_used);
+
+  std::vector<uint8_t> image(816 + 9 * 4, 0x35);
+  image[289] = 9;
+  std::array<uint8_t, 64> matrix;
+  for (size_t i = 0; i < matrix.size(); ++i)
+    matrix[i] = uint8_t(i);
+  auto relocated = image;
+  assert(ValidDeferredEntryImage(image));
+  assert(RelocateDeferredEntry(image, matrix, 0x50000, 0x12345678, relocated));
+  assert(std::equal(matrix.begin(), matrix.end(), relocated.begin() + 16));
+  assert(relocated[264] == 0 && relocated[265] == 5 && relocated[266] == 1 &&
+         relocated[267] == 0x84);
+  assert(relocated[268] == 0x12 && relocated[269] == 0x34 &&
+         relocated[270] == 0x56 && relocated[271] == 0x78);
+  for (size_t i = 0; i < image.size(); ++i)
+    if (!(i >= 16 && i < 80) && !(i >= 264 && i < 272))
+      assert(relocated[i] == image[i]);
+  const auto before = relocated;
+  for (uint32_t bad : {0u, 1u, 0xffffff00u}) {
+    assert(!RelocateDeferredEntry(image, matrix, bad, 0, relocated));
+    assert(relocated == before);
+  }
+  image[289] = 10; // declared bones exceed payload
+  assert(!ValidDeferredEntryImage(image));
+  assert(!RelocateDeferredEntry(image, matrix, 0x50000, 0, relocated));
+  assert(relocated == before);
+  image.resize(816);
+  image[289] = 0xff; // negative bone count has no palette payload
+  assert(ValidDeferredEntryImage(image));
+  image.resize(815);
+  assert(!ValidDeferredEntryImage(image));
 }

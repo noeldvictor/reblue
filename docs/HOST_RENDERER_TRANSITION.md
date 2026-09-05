@@ -73,6 +73,15 @@ assets remain unconverted. It does not fix the recurring multiview defect.
 See `research/20260904_2041_native-shadow-receiver-inputs.md` for exact coverage,
 flat captures and the failed/inconclusive VR checks.
 
+Deferred depth ordering and bounded allocation/batch planning now execute on
+the host (`gpu/scene/deferred_work.h` and the temporary `deferred_list.cpp`
+bridge). Replayed batches refresh world/palette and relocate their material
+self-reference instead of retaining the original pooled pointer. The native
+core has standalone capacity, ordering and relocation tests. This still
+publishes big-endian entry images to the guest draw loop; captured depth,
+material/pass records, visual switches and the list consumer remain required
+conversion work. See `research/20260904_2055_host-deferred-work.md`.
+
 Static textures now cross a persistent native boundary too: `.bdtex` files
 preserve BC/RGBA data, mips, cube faces and volume slices with address-free
 content IDs. The SDK-independent mip cooker persists missing chains; subsequent

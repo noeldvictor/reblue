@@ -9,6 +9,7 @@
 #include <cmath>
 #include <cstdint>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace bd::gpu::scene {
@@ -45,7 +46,7 @@ struct DeferredBatchPlan {
 inline bool PlanDeferredBatch(const DeferredArenaState &arena,
                               std::span<const uint32_t> sizes,
                               DeferredBatchPlan &out) {
-  if (arena.bytes_used > arena.byte_capacity ||
+  if ((arena.bytes_used & 3u) || arena.bytes_used > arena.byte_capacity ||
       arena.items_used > arena.item_capacity ||
       sizes.size() > arena.item_capacity - arena.items_used)
     return false;

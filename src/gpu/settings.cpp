@@ -476,6 +476,8 @@ REXCVAR_DEFINE_BOOL(bd_native_materials_verify, false, kCvarGroup,
                     "Compare decoded material properties with interpreted draws.");
 REXCVAR_DEFINE_BOOL(bd_native_shadow_inputs, true, kCvarGroup,
                     "Compose receiver shadows from current node visibility and material policy.");
+REXCVAR_DEFINE_BOOL(bd_native_deferred_order, true, kCvarGroup,
+                    "Order deferred work on the host (off only for correctness comparisons).");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
 // when the interpreter issues them and when the host replays them, so the
 // two can be diffed.

@@ -86,8 +86,9 @@ bool HostDrawReplay(const NodeTag &tag);
 // (sub_8227DB50) and fills it - a per-node constant image (the mesh record,
 // draw parameters, pass flags, bone table) plus the node matrix (r5, at +16)
 // and the traverse context's palette pointer (+268). The host records the
-// entries such a run produced and re-emits them next time: the guest's own
-// allocator, the recorded bytes, a fresh matrix and palette.
+// entries such a run produced and re-emits them next time through the bounded
+// host batch writer, with a fresh matrix/palette and relocated self references.
+// The opaque entry image and guest consumer remain compatibility dependencies.
 u32 RenderListCount();
 void HostListBuildCapture(const NodeTag &tag, u32 count_before);
 // A node's two parts are replayed together or not at all: the direct draws
@@ -101,7 +102,7 @@ bool HostDrawHasDrawTemplate(const NodeTag &tag);
 bool HostSceneEye(float out[3]);
 // 0 no list record, 1 fresh (replayable), 2 stale (the interpreter runs).
 u32 HostListBuildStatus(const NodeTag &tag);
-bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base);
+bool HostListBuildReplay(const NodeTag &tag);
 
 // Whether a pipeline state's vertex shader reads the bone palette
 // (c60..c155): the draw is a skinned node - a character.

@@ -67,6 +67,7 @@
 #include "gpu/frame_stats.h"
 #include "gpu/hooks/draw_dispatch.h"
 #include "gpu/scene/guest_scene.h"
+#include "gpu/scene/deferred_list.h"
 #include "gpu/scene/mesh_lod.h"
 #include "gpu/scene/native_mesh.h"
 #include "gpu/scene/native_material.h"
@@ -1764,8 +1765,6 @@ void HostListBuildCapture(const NodeTag &tag, u32 count_before) {
   st.lists[KeyOf(tag)] = std::move(lt);
 }
 
-REX_EXTERN(sub_8227DB50);
-
 bool HostSceneEye(float out[3]) {
   auto &st = store();
   std::lock_guard lock(st.mutex);
@@ -1809,10 +1808,14 @@ u32 HostListBuildStatus(const NodeTag &tag) {
     return 2;
   if (st.matrix_disagree > st.matrix_agree)
     return 2;
+  // A mixed node must not issue its direct draws if its deferred batch cannot
+  // be published in full. There are no allocations between this gate and replay.
+  if (!CanAppendDeferredEntries(it->second.entries))
+    return 2;
   return 1;
 }
 
-bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
+bool HostListBuildReplay(const NodeTag &tag) {
   if (!tag.valid || !REXCVAR_GET(bd_host_list_build) || tag.from_list)
     return false;
   auto &st = store();
@@ -1837,26 +1840,13 @@ bool HostListBuildReplay(const NodeTag &tag, PPCContext &ctx, uint8_t *base) {
   const u8 *matrix = bd::mem::try_at<u8>(tag.matrix_va);
   if (!matrix)
     return false;
-  const u32 r3 = ctx.r3.u32, r4 = ctx.r4.u32, r5 = ctx.r5.u32, r6 = ctx.r6.u32;
-  u32 built = 0;
-  for (const auto &image : *entries) {
-    ctx.r3.u64 = image.size();
-    sub_8227DB50(ctx, base); // the guest's own bump allocator
-    const u32 entry = ctx.r3.u32;
-    u8 *dst = entry ? bd::mem::try_at<u8>(entry) : nullptr;
-    if (!dst)
-      break; // the list is full; the entries already placed still draw
-    std::memcpy(dst, image.data(), image.size());
-    std::memcpy(dst + kEntryMatrix, matrix, 64);
-    const u32 palette_be = __builtin_bswap32(tag.palette_va);
-    std::memcpy(dst + kEntryPalette, &palette_be, 4);
-    ++built;
-  }
-  ctx.r3.u32 = r3; ctx.r4.u32 = r4; ctx.r5.u32 = r5; ctx.r6.u32 = r6;
+  if (!AppendDeferredEntries(*entries, std::span<const u8, 64>(matrix, 64),
+                             tag.palette_va))
+    return false;
   {
     std::lock_guard lock(st.mutex);
     Tally(st, true, false);
-    st.list_built += built;
+    st.list_built += u32(entries->size());
     ++st.list_built_runs;
   }
   return true;
