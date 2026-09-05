@@ -69,6 +69,12 @@ struct Stats {
 thread_local Stats stats;
 thread_local const BloomParameters *comparison = nullptr;
 thread_local uint32_t comparison_count = 0;
+bool RefuseInput(const char *reason, uint32_t owner) {
+  if (stats.inputs++ < 8)
+    BD_WARN("[native-post] input refusal {} owner {:08X} frame {}",
+            reason, owner, FrameStatFrameCount());
+  return false;
+}
 void Report() {
   const auto frame = FrameStatFrameCount();
   if (frame - stats.frame < 300)
@@ -220,7 +226,7 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
       heat.depth_power = 1;
     }
     tail.heat_image = ResolveGuestTexture(bd::mem::load<uint32_t>(owner + 2712 + 616));
-    if (!tail.heat_image) { ++stats.inputs; return false; }
+    if (!tail.heat_image) return RefuseInput("heat image", owner);
   }
   tail.grade_scope = bd::mem::load<uint8_t>(owner + 48 + bank) != 0 ||
       bd::mem::load<uint8_t>(owner + 56 + bank) != 0 ||
@@ -272,11 +278,10 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   if (grade.grain) {
     tail.grain_image = ResolveGuestTexture(bd::mem::load<uint32_t>(
         owner + 7792 + 672 + grade.grain_image * 32));
-    if (!tail.grain_image) { ++stats.inputs; return false; }
+    if (!tail.grain_image) return RefuseInput("grain image", owner);
   }
   if (!ReadLensFlare(owner + 8660, bank, flag(32), tail)) {
-    ++stats.inputs;
-    return false;
+    return RefuseInput("lens flare", owner);
   }
   constexpr std::array<uint32_t, 3> flags{40, 64, 72};
   constexpr std::array<uint32_t, 3> strengths{12724, 12740, 12748};
@@ -325,8 +330,7 @@ bool ReadPlan(uint32_t owner, DofParameters &dof, BloomParameters &bloom,
   has_dof = flag(24);
   dof = {1, 0, 0, 0.5f}; // authored DoF-off, not an override of enabled DoF
   if (has_dof && !ReadDofProducerParameters(owner + 3440, dof)) {
-    ++stats.inputs;
-    return false;
+    return RefuseInput("DoF properties/transforms", owner);
   }
   const auto mode = bd::mem::load<int32_t>(owner + 12648 + bank * 4);
   bloom = MakeBloomParameters(bd::mem::load<float>(owner + 736 + bank * 4),
@@ -576,6 +580,10 @@ REX_HOOK_RAW(sub_8221B1D8) {
       }
       ReleaseResourceAdapter(target->selfVa);
     }
+    if (stats.inputs < 8)
+      BD_WARN("[native-post] render refusal frame {} scene {:08X} depth {:08X} target {}",
+              FrameStatFrameCount(), scene ? scene->selfVa : 0, depth ? depth->selfVa : 0,
+              target != nullptr);
     ++stats.inputs;
   }
   ++stats.original;

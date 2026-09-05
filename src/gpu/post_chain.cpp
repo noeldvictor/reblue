@@ -408,6 +408,26 @@ bool Readable(GuestTexture *t) {
          t->layers <= 2;
 }
 
+// Explicit native inputs must own their sampling readiness. A newly created
+// depth image has never passed through the compatibility SetTexture path;
+// waiting for that side effect would execute one guest post scope per scene.
+// The binder also refreshes a view when a pooled image changes, without
+// touching retained texture slots, copying content or issuing a guest call.
+bool PrepareReadable(VideoState &s, GuestTexture *image) {
+  if (!image || !image->texture)
+    return false;
+  const auto previous = image->descriptorIndex;
+  if (BindTextureSRVLocked(s, image) == kInvalidDescriptorIndex)
+    return false;
+  if (previous == kInvalidDescriptorIndex) {
+    static u32 prepared = 0;
+    if (prepared++ < 8)
+      BD_INFO("[native-post] prepared sampled image {:08X} slot {} layers {} frame {}",
+              image->selfVa, image->descriptorIndex, image->layers, FrameStatFrameCount());
+  }
+  return Readable(image);
+}
+
 // Content, transitioned for sampling; null when it cannot be sampled.
 GuestTexture *Source(VideoState &s, GuestTexture *t) {
   GuestTexture *src = Content(t);
@@ -839,10 +859,26 @@ bool HostPostRender(GuestTexture *scene, GuestTexture *depth, GuestTexture *outp
   auto &c = chain();
   auto *source = Content(scene);
   auto *z = Content(depth);
-  if (!s.ready || c.failed || !Readable(source) || !Readable(z) ||
-      !output || !output->texture || source == output || z == output ||
-      source->layers != z->layers || source->layers != output->layers)
+  if (!s.ready || c.failed)
     return false;
+  const bool scene_ready = PrepareReadable(s, source);
+  const bool depth_ready = PrepareReadable(s, z);
+  if (!scene_ready || !depth_ready ||
+      !output || !output->texture || source == output || z == output ||
+      source->layers != z->layers || source->layers != output->layers) {
+    static u32 refused = 0;
+    if (refused++ < 8)
+      BD_WARN("[native-post] image preflight frame {} ready {} failed {}; "
+              "source {:08X} texture {} slot {} layers {}; depth {:08X} texture {} slot {} layers {}; "
+              "output {:08X} texture {} layers {}",
+              FrameStatFrameCount(), s.ready, c.failed,
+              source ? source->selfVa : 0, source && source->texture,
+              source ? source->descriptorIndex : kInvalidDescriptorIndex, source ? source->layers : 0,
+              z ? z->selfVa : 0, z && z->texture,
+              z ? z->descriptorIndex : kInvalidDescriptorIndex, z ? z->layers : 0,
+              output ? output->selfVa : 0, output && output->texture, output ? output->layers : 0);
+    return false;
+  }
   if (flare.count > flare.sprites.size()) return false;
   if (flare.count) {
     for (auto *image : flare_images) {
@@ -992,7 +1028,11 @@ bool HostPostPrepareDof(GuestTexture *scene, GuestTexture *depth,
   auto &s = state();
   std::unique_lock<std::mutex> lock(s.mutex);
   auto &c = chain();
-  if (c.failed || !s.ready || !Readable(Content(scene)) || !Readable(Content(depth)) ||
+  if (c.failed || !s.ready)
+    return false;
+  const bool scene_ready = PrepareReadable(s, Content(scene));
+  const bool depth_ready = PrepareReadable(s, Content(depth));
+  if (!scene_ready || !depth_ready ||
       Content(scene)->layers != Content(depth)->layers)
     return false;
   Video::OpenCommandListLocked();

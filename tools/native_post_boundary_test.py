@@ -25,6 +25,20 @@ class NativePostBoundaryTest(unittest.TestCase):
         cls.bloom = (root / "src/gpu/post_bloom.h").read_text(encoding="utf-8")
         cls.bloom_shader = (root / "src/gpu/shaders/hlsl/post_bloom_direction_ps.hlsl").read_text(encoding="utf-8")
 
+    def test_native_inputs_prepare_their_own_sampling_descriptors(self):
+        helper = self.post.split("bool PrepareReadable(", 1)[1].split("// Content, transitioned", 1)[0]
+        self.assertIn("BindTextureSRVLocked(s, image) == kInvalidDescriptorIndex", helper)
+        self.assertLess(helper.index("BindTextureSRVLocked("), helper.index("return Readable(image)"))
+        for name in ("s.textures[", "SetTexture(", "ResolveRtToTexture", "copyTexture", "__imp__"):
+            self.assertNotIn(name, helper)
+        for function, following in (("HostPostRender", "HostPostPrepareDof"),
+                                    ("HostPostPrepareDof", "HostPostProducerSkip")):
+            body = self.post.split(f"bool {function}(", 1)[1].split(f"bool {following}(", 1)[0]
+            self.assertEqual(body.count("PrepareReadable(s,"), 2)
+            self.assertLess(body.index("lock(s.mutex)"), body.index("PrepareReadable(s,"))
+            self.assertLess(body.index("const bool depth_ready"), body.index("Video::OpenCommandListLocked()"))
+            self.assertIn("if (!scene_ready || !depth_ready ||", body)
+
     def test_directional_bloom_imports_intent_without_original_mask_production(self):
         body = self.scheduler.split("bool ReadPlan(", 1)[1].split("void VerifyAdjustmentPublication", 1)[0]
         for offset in (12612, 12624, 12636):
