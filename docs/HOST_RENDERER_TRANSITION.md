@@ -129,6 +129,10 @@ compatibility calls are counted independently. The final comparison recorded
 including 203 nonfinite loading updates previously refused. Native assets
 still use strict finite-value validation. See
 `research/20260904_2216_native-render-transforms.md`.
+The final normal flat sequence has 0/119 jumps and no cyan patches. Normal
+desktop multiview produced 2387514 native transform updates with zero
+comparison/compatibility calls, but still has 10/119 jumps at the 64-frame
+cadence, blurred/banded eyes and an inconclusive stereo-depth result.
 Engine object/camera/projection sources, inherited matrix cache and the
 shader-register publication ABI remain temporary boundaries. This does not
 replace native scene/pass scheduling or fix/qualify the previously documented

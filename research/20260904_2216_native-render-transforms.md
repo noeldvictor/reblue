@@ -143,3 +143,44 @@ or refused imports. Suppression was not exercised. No error/critical, Vulkan
 error/failure, overflow, exhaustion or retirement-race matches. Exact-path
 validated process stopped and confirmed exited at 22:19:41. This is the
 normal-path short field check, not later-scene/full-game qualification.
+
+### Normal desktop multiview, log 671
+
+Integration `2a672be` was committed and pushed after the flat check. PID 25472
+launched 22:21:02 EDT with the same final source binary. Native transforms were
+on and comparison off by default. All 13 temporary profile settings applied:
+autoplay/perf CSV, capture after 60 seconds, minimum 450 draws, 120 frames;
+VR on, legacy stereo off, multiview/layered textures on, scene-array capture
+off, mirror off, camera mode 2 and diorama height 0. The process-local simulator
+requested 1440x1584 per eye with head height 0. OpenXR created a session and an
+actual 936x1030x2 swapchain; logged eye and game cameras differed. This is not
+verification at the eventual full-resolution headset target.
+
+Sequence 119 completed 22:22:09.907 at frame 20156, 936x2060 stacked eyes.
+Isolated output: `out/verification/native_transform_vr`. There were 10/119
+jumps over 6%, at destination frames 16, 17, 19, 20, 22 and 80, 81, 83, 84, 86:
+the known 64-frame cadence remains. No cyan patches (median/maximum 0.000%).
+Both eyes in the first/last images and the 15-to-16 jump pair were inspected.
+The scene remains blurred/banded with large black bars; the jump visibly
+changes the ground's sharpness/appearance in both eyes. `stereo_check.py`
+returned 2, INCONCLUSIVE: only one textured band had a bounded match. Its
+output image was inspected too. Neither clean counters nor absent cyan qualify
+these eyes as correct.
+
+Last transform report at 22:25:32.057: 2387514 native updates (2222985 world-only,
+164529 pass), 428 nonfinite updates; zero comparison calls, compatibility calls,
+custom callbacks or refused imports. Suppression remained unexercised. The
+log has no error/critical, Vulkan error/failure, overflow, exhaustion or
+retirement-race matches. The exact-path validated process was stopped and
+confirmed exited at 22:25:36. The original five-setting profile was restored.
+
+## Remaining acceptance
+
+This checkpoint replaces transform production/publication, not engine scene or
+camera ownership. Native scene/pass records, animation/skinning, remaining
+visual/material/state producers and shader-ABI removal still need conversion.
+The multiview failure is reproduced, not fixed. The previously damaged later
+flat scene was not recaptured here; full fields/battles/cutscenes/menus,
+transitions/reloads and both-eye acceptance remain open. The devloop and vrsim
+skills kept verification desktop-only and required actual capture inspection.
+No Quest/Thor run or headset performance claim is made.
