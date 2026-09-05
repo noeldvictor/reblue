@@ -17,6 +17,7 @@ class NativeSceneBoundaryTest(unittest.TestCase):
         cls.sun = (root / "src/gpu/scene/native_sun_camera_bridge.cpp").read_text(encoding="utf-8")
         cls.sun_math = (root / "src/gpu/scene/native_sun_camera.h").read_text(encoding="utf-8")
         cls.sun_fit = (root / "src/gpu/shadow_fit.cpp").read_text(encoding="utf-8")
+        cls.tweaks = (root / "config/hooks/render_tweaks.toml").read_text(encoding="utf-8")
 
     def test_whole_native_pair_does_not_use_console_allocation_or_resolve(self):
         native = self.bridge[self.bridge.index("bool Begin("):self.bridge.index("REX_HOOK_RAW(")]
@@ -109,6 +110,19 @@ class NativeSceneBoundaryTest(unittest.TestCase):
         self.assertIn("IntersectsSunVolume(sun->frustum, center, radius)", native)
         self.assertIn("if (REXCVAR_GET(bd_shadow_fit_diag))", native)
         self.assertNotIn("REX_HOOK_RAW(bdVisualObjectFrustumCull)", self.shadow)
+
+    def test_native_character_visibility_does_not_use_light_eye_distance(self):
+        hooks = [h for h in self.tweaks.split("[[midasm_hook]]")
+                 if 'name = "bdNativeSunCharacterDistanceHook"' in h]
+        self.assertEqual(len(hooks), 1)
+        for field in ('address = 0x822D3AF8', 'jump_address_on_true = 0x822D3B14',
+                      'registers = ["r26", "f0"]', 'after_instruction = false'):
+            self.assertIn(field, hooks[0])
+        native = self.shadow[self.shadow.index("bool bdNativeSunCharacterDistanceHook("):]
+        for condition in ("view.u32 != 1", "shadows.empty()", "!shadows.back().depth",
+                          "NativePassDepth() != shadows.back().nesting", "!GetNativeSunCamera()"):
+            self.assertIn(condition, native)
+        self.assertIn("++stats.character_depth_skipped", native)
 
 
 if __name__ == "__main__":

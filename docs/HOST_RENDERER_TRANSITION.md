@@ -32,17 +32,20 @@ All of these remain required; shipping an intermediate component is not completi
 
 Native sun camera experiment (2026-09-05): current-view orthographic fitting,
 scene snapshot and an explicit sun-scope culling volume are implemented, but
-`bd_native_sun_camera` is **off by default**. Opt-in flat captures lose Shu's
-cast silhouette despite stable sequences, zero camera-fit fallback and matching
-attachment ownership. Preserving the authored light-position getter and
-replacing the special view-1 cull did not resolve that failure. GPU replay
-confirms a populated 4096 depth image and matching caster/terrain light matrices;
-the remaining cause is not isolated. All 23 CTests and twelve source guards
-pass, which does not qualify the image. The final default-off flat control
-restores Shu's cast silhouette and has 0/119 large jumps or cyan patches, with
-218561 matching attachment checks. The default still executes the counted
-engine snapshot/light fitter. No new VR or Quest qualification is claimed.
-See `research/20260905_0914_experimental-native-sun-camera.md`.
+`bd_native_sun_camera` is **off by default**. GPU controls and exact character
+submission source isolated a second, obsolete light-eye-distance cutoff after
+the sphere cull. A scoped instruction adapter now skips that cutoff only for
+the owned native sun pass; complete character submission is not converted.
+The normal comparison-off short flat sequence restores Shu's cast silhouette,
+with 0/119 large jumps, no cyan patches, 28173 matching attachment checks and
+zero original snapshot/light-fit/cull-comparison calls. The diagnostic sequence
+flagged two transitions around one changed foliage/shadow frame; the normal
+run does not establish their cause or longer-term absence. All 23 CTests and
+thirteen source guards pass. The default still executes the counted engine
+snapshot/light fitter. Final-eye and broader camera qualification remain;
+no Quest result is claimed. See
+`research/20260905_0956_native-sun-character-visibility.md`, which supersedes
+the missing-caster conclusion in the earlier experimental-camera note.
 
 Sun-shadow lifecycle checkpoint (2026-09-05): the complete begin/end bodies
 now own an explicit persistent depth attachment and retained output association.

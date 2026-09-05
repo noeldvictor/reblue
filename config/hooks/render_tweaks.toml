@@ -74,6 +74,22 @@ name = "bdShadowCoverageScaleHook"
 registers = ["f1"]
 after_instruction = false
 
+# Character submission (sub_822D3598) applies another cutoff AFTER its world
+# sphere test: (-light_view_z - constant) * scale >= 1 rejects the character.
+# A directional camera's upstream padding is not a visibility distance. Once
+# the native sun scope owns the volume, retain its sphere verdict and skip this
+# obsolete light-eye cutoff. View 8 and the compatibility camera keep their path.
+# 0x822D3AF8 starts the seven-instruction cutoff; 0x822D3B14 starts a fresh
+# compare and consumes neither f12/f13 nor the skipped condition-register value.
+# Body: src/gpu/scene/native_shadow_pass_bridge.cpp. This remains an instruction
+# adapter until the whole character submission producer is host-owned.
+[[midasm_hook]]
+address = 0x822D3AF8
+name = "bdNativeSunCharacterDistanceHook"
+registers = ["r26", "f0"]
+after_instruction = false
+jump_address_on_true = 0x822D3B14
+
 # Pin PS reg50.xy (screen-space->UV half-scale) to its resolution-independent 0.5.
 # 0x82142FAC: both bdCameraRender reg50 stores done, r11 = g_pD3DDevice.
 [[midasm_hook]]

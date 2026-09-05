@@ -55,6 +55,7 @@ struct Stats {
   uint64_t refused = 0, outputs = 0, null_outputs = 0, empty_clears = 0;
   uint64_t checked = 0, wrong = 0, camera_snapshots = 0, light_fits = 0;
   uint64_t object_culls = 0, object_visible = 0, object_comparisons = 0, object_changed = 0;
+  uint64_t character_depth_skipped = 0;
   uint32_t frame = 0;
 };
 thread_local Stats stats;
@@ -71,8 +72,10 @@ void Report() {
           stats.empty_clears, stats.checked, stats.wrong, stats.camera_snapshots,
           stats.light_fits);
   stats.frame = frame;
-  BD_INFO("[native-sun-cull] objects {} visible {} original comparisons {} changed {}",
-          stats.object_culls, stats.object_visible, stats.object_comparisons, stats.object_changed);
+  BD_INFO("[native-sun-cull] objects {} visible {} original comparisons {} changed {}; "
+          "character light-eye cutoffs skipped {}",
+          stats.object_culls, stats.object_visible, stats.object_comparisons, stats.object_changed,
+          stats.character_depth_skipped);
 }
 bool Range(uint64_t address, uint64_t bytes) {
   if (!address || !bytes || address + bytes - 1 > UINT32_MAX ||
@@ -290,4 +293,20 @@ REX_HOOK_RAW(sub_82287788) {
               ctx.r3.u32, visible, center[0], center[1], center[2], radius);
   }
   ctx.r3.u64 = visible;
+}
+
+// sub_822D3598's separate character cutoff follows its world-sphere test.
+// Native orthographic padding can move the light eye arbitrarily far upstream;
+// that distance must not veto a caster already admitted by the owned volume.
+// Keep other views and the default-off compatibility path unchanged.
+bool bdNativeSunCharacterDistanceHook(PPCRegister &view, PPCRegister &depth) {
+  using namespace bd::gpu::scene;
+  if (view.u32 != 1 || shadows.empty() || !shadows.back().depth ||
+      NativePassDepth() != shadows.back().nesting || !GetNativeSunCamera())
+    return false;
+  ++stats.character_depth_skipped;
+  if (REXCVAR_GET(bd_shadow_fit_diag) && stats.character_depth_skipped <= 8)
+    BD_INFO("[native-sun-cull] character keeps native volume verdict; light-view z {:.3f}",
+            depth.f64);
+  return true;
 }
