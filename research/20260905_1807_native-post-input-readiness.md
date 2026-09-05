@@ -158,3 +158,69 @@ stability, stereo depth or exact frame-zero pixels. They do establish native
 startup execution with coherent UI fading in both eyes; no unchanged-art or
 original/native pixel-equivalence claim. Existing later-startup grading
 controls remain protected. Normal field image verification is pending.
+
+## Normal field verification and final retention
+
+Implementation checkpoint `4bdddca` pushed during verification. The 18:12:54
+binary/hash remains unchanged; no rebuild for the documentation revision.
+
+Normal VR log 802, PID 776, 18:23:08-18:24:20, all 16 settings audited.
+Same native sun/shadows, layered multiview and process-local 1440x1584/height-zero
+simulator as startup, with delay 60/minimum 450/count 120, no previews or
+parameter comparisons. Three new two-layer depth descriptors initialized on
+the host at frames 0, 5525 and 6237. Last sample: 8101 native post scopes,
+zero original scopes, zero input refusals. Captures
+`frame_1788647050_0.raw` through `frame_1788647060_119.raw`, frames 8017-8136,
+1440x3168. Streaming analysis: 0/119 changes over 6%, max .53193%, zero cyan.
+First/last stereo bands 44/52/62/72/82/90/95% are -1/-2/-3/-5/-6/-8/-9:
+both correctly crossed, near-far -8, spread 8. All four full eye PNGs inspected:
+coherent village, stairs/ground/rocks, moving windmill and shadows, normal
+orange sky. Distant blur remains; this framing does not qualify Shu's shadow.
+
+Normal flat log 803, PID 24436, 18:25:31-18:26:38, original five settings
+restored and audited (delay 60/minimum 600/count 120). New depth descriptors
+initialized natively at frames 0, 904 and 1621. Last sample: 3001 native post
+scopes, zero original scopes/input refusals. Captures
+`frame_1788647193_0.raw` through `frame_1788647196_119.raw`, frames 2833-2952,
+1920x1080. Streaming analysis: 0/119 changes over 6%, max 3.22140%, no cyan
+hits (max .01929%, median .01104%). Full endpoints inspected: recognizable
+Shu and cast silhouette, vegetation, ground, moving windmill/shadows and the
+existing distant DoF. No additional visual defect identified in these windows.
+
+All six logs 798-803 mount 1673 archives / 119346 names and contain zero
+checked error/critical/VK_ERROR/device-lost/exception/assertion/fatal markers.
+Log 798 is the diagnostic pre-fix build; 799-803 use the unchanged fixed binary.
+All agent-started renderer/analysis processes are terminal. Original five-setting
+profile read back, no runtime registry change, no Quest/Thor run. Guest-source
+identified the hidden setter dependency; devloop reused existing trees; vrsim
+verified both final eyes on desktop. The standalone DoF entry has a source
+guard/build check; normal whole-post runs do not exercise that separate entry.
+
+Final new retained evidence: exactly 304 raw payloads, 4,034,402,240 bytes,
+with hard-link isolation only; PNGs 10,062,492 bytes, app logs 1,377,724 bytes,
+12 perf files 3,617,440 bytes. Endpoint/worst startup images only; no full-sequence
+PNG export. Small artifacts remain well within the cumulative 100 MiB cap.
+No assets/dependencies/downloads or duplicate build trees were added.
+Ending free space 54,447,575,040 bytes (50.71 GiB); measured net volume usage
+decreased 1,288,298,496 bytes (1.20 GiB) from source preflight. The 5.01 GiB
+cleanup is gross reclamation, not the net saving after replacement evidence.
+
+Final scoped archive union, deduplicated by direct NTFS file identity:
+28,331 unique raws, 263,324,814,100 logical and 233,564,594,672 allocated bytes.
+Unique raw bytes decreased 1,340,376,160; the archive still exceeds the 10 GiB
+target. Historical inventory remains frozen with zero additional allowance.
+Current normal baseline is `native_readiness_flat` / `native_readiness_vr`;
+the bloom normal pair is the previous control, eligible for review at the next
+replacement checkpoint, not automatic deletion. Keep the two early-startup
+sets until equivalent startup probes supersede them. All authored/synthetic
+effect controls, grading startup original/native, and unresolved late/failure
+evidence remain protected. Do not reuse this turn's reclamation as a fresh
+allowance; another capture requires a new measured budget and eligible cleanup.
+
+This removes a real recurring guest execution dependency, not all rendering
+dependencies. Next: native scene/post image associations and output/UI getters,
+authored property/animation/light/visibility producers, diverse effect events,
+native scene/material/frame ownership and removal of all remaining console
+resource paradigms. Title artwork, distant VR blur, late-scene failures and
+representative fields/battles/cutscenes/menus/transitions/reloads in both eyes
+remain unqualified. The full desktop goal stays active; no Quest optimization.

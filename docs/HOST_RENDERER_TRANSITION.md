@@ -30,6 +30,22 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native post-input readiness checkpoint (2026-09-05): the three recurring
+startup/transition refusals were fresh depth images lacking sampling descriptors.
+Native whole-post and direct DoF preparation now create/refresh explicit input
+views under the host mutex, without a guest texture-binding warm-up frame.
+Normal flat/VR runs have 3001/8101 sampled native post scopes, zero original
+scopes and zero input refusals. All 29 CTests and 34 source guards pass;
+120-frame normal flat/VR sequences have 0/119 large changes, no cyan and
+correctly crossed first/last VR depth. Both eyes inspected. Early-startup
+probes show the existing blank title background and fade, not qualified artwork
+or stereo depth. Image/property/UI adapters, authored effect-event coverage,
+late-scene failures and complete frame/game gates remain. No Quest.
+Three superseded raw sets removed with reports/images retained; net volume
+usage decreased 1.20 GiB after verification, with 50.71 GiB free. The archive
+is still over budget and frozen against growth. Exact evidence and retention:
+`research/20260905_1807_native-post-input-readiness.md`.
+
 Native directional-bloom checkpoint (2026-09-05): mode 1 now imports authored
 sigma/gain/count into native parameters and produces independent horizontal
 and vertical masks in at most two private quarter-pair atlases. One layered
