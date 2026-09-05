@@ -30,6 +30,20 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Reflection binding checkpoint (2026-09-05): supported direct phase-0 draws now
+decode explicit selection and enable recipes, resolve current pass/table inputs
+before submission, and discard the retained slot-5 image. All sub-draw bindings
+are preflighted before dispatch. Null-selection inheritance remains an explicit
+compatibility refusal, not an invented unbind; ordinary/animated overrides,
+deferred/nonzero-phase recipes and persistent native scene associations also
+remain. See `research/20260905_0144_native-reflection-selection.md` for source,
+the initial diagnostic failure, corrected integration and verification scope.
+This is not a completed reflection pass or fully native frame.
+The corrected sampled transition has 490655 matching source checks, 179
+unsupported scene-target callback draws and no slot-5 differences in the
+bounded replay log. Supported GPU coverage here is disabled, pass-default
+reflection selection; table-selected/enabled/dynamic cases remain unqualified.
+
 Lighting checkpoint (2026-09-05): the complete lighting setup producer and its
 reset/dimension helper execution now run on the host. Address-free records hold
 ambient/camera/colour and shadow sampling inputs; supported direct phase-0

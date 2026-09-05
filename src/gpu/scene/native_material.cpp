@@ -6,6 +6,7 @@
  */
 #include "gpu/scene/native_material.h"
 #include "gpu/scene/native_shadow.h"
+#include "gpu/scene/reflection_texture_import.h"
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -124,6 +125,42 @@ bool Matches(const NativeMaterialRange &range, uint32_t ib, uint32_t vb,
       bd::mem::try_load<uint32_t>(vb + 4 + range.vertex_record * 12 + 8) == stream_va;
 }
 } // namespace
+
+bool ModelOwnsReflectionBinding(const NodeTag &tag) {
+  const uint32_t vtable = tag.visual_va
+      ? bd::mem::try_load<uint32_t>(tag.visual_va) : 0;
+  const auto *begin = vtable && vtable <= UINT32_MAX - 35
+      ? bd::mem::try_at<const be_u32>(vtable + 32) : nullptr;
+  // sub_8221DB00 calls visual vf08 after model commands. This material
+  // callback binds current/next scene targets to slots 5/10 through
+  // sub_8221E618, overriding the model recipe. Its own native pass recipe
+  // (and placement between sub-draws) is a separate conversion boundary.
+  return begin && ModelReflectionCallbackSupported(uint32_t(*begin));
+}
+
+std::optional<NativeReflectionRecipe> ImportNativeReflectionRecipe(
+    const NodeTag &tag, uint32_t index_va, uint32_t stream_va,
+    uint32_t first_index, uint32_t index_count) {
+  if (!ModelOwnsReflectionBinding(tag))
+    return {};
+  const auto *commands = FindCommands(tag);
+  if (!commands)
+    return {};
+  const uint32_t ib = bd::mem::try_load<uint32_t>(tag.mesh_va + 8);
+  const uint32_t vb = bd::mem::try_load<uint32_t>(tag.mesh_va + 16);
+  if (!ib || !vb)
+    return {};
+  std::optional<NativeReflectionRecipe> found;
+  for (const auto &range : commands->ranges) {
+    if (!Matches(range, ib, vb, index_va, stream_va, first_index, index_count))
+      continue;
+    if (range.reflection.source == ReflectionTextureSource::Unknown ||
+        (found && *found != range.reflection))
+      return {}; // ambiguous geometry or an unconverted texture override
+    found = range.reflection;
+  }
+  return found;
+}
 
 std::optional<NativeSkinBinding> ImportNativeSkinBinding(
     const NodeTag &tag, uint32_t index_va, uint32_t stream_va,

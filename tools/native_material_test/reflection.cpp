@@ -5,7 +5,9 @@
  * @license BSD 3-Clause, see LICENSE
  */
 #include "gpu/scene/native_material_data.h"
+#include "gpu/scene/reflection_texture_import.h"
 #include <stdexcept>
+#include <unordered_map>
 
 using namespace bd::gpu::scene;
 namespace {
@@ -15,6 +17,10 @@ void Require(bool value) {
 }
 }
 void TestNativeReflectionRecipes() {
+  Require(!ModelReflectionCallbackSupported(0));
+  Require(!ModelReflectionCallbackSupported(0x8221E618));
+  Require(!ModelReflectionCallbackSupported(0x82454C08));
+  Require(ModelReflectionCallbackSupported(0x820EFA50));
   std::vector<uint16_t> words;
   std::vector<NativeReflectionRecipe> expected;
   auto draw = [&](NativeReflectionRecipe recipe) {
@@ -59,4 +65,38 @@ void TestNativeReflectionRecipes() {
   Require(DecodeMeshMaterials(next_model, ranges));
   Require(ranges.size() == 1 &&
           ranges[0].reflection == NativeReflectionRecipe{});
+
+  std::unordered_map<uint64_t, uint32_t> memory{
+      {kReflectionPassDefault, 11}, {kReflectionTableState + 4, 1000},
+      {kReflectionTableState, 2}, {kReflectionTableState + 32, 22},
+      {1000, 4}, {1004, 2000}, {2000 + 3 * 28 + 24, 33}};
+  auto read = [&](uint64_t address) -> std::optional<uint32_t> {
+    const auto it = memory.find(address);
+    return it == memory.end() ? std::nullopt : std::optional(it->second);
+  };
+  auto inputs = ReadReflectionTextureImport(read);
+  Require(bool(inputs));
+  auto select = [&](NativeReflectionRecipe recipe) {
+    return SelectReflectionTextureImport(*inputs, recipe, read);
+  };
+  Require(select({Source::PassDefault, 0, false}) == 11);
+  Require(select({Source::Table, 1, true}) == 33);
+  Require(select({Source::Table, 1, false}) == 33); // disabled still retains selection
+  Require(select({Source::Table, 2, true}) == 22); // out of bounds is fallback
+  Require(!select({Source::Unknown, 0, true}));
+  Require(!select({Source::Table, 0, true})); // unreadable row is not a null texture
+  memory[kReflectionPassDefault] = 44;
+  auto next_inputs = ReadReflectionTextureImport(read);
+  Require(next_inputs && next_inputs->pass_default == 44);
+  Require(select({Source::PassDefault, 0, true}) == 11); // prior packet is unchanged
+  memory[kReflectionTableState + 4] = 0;
+  inputs = ReadReflectionTextureImport(read);
+  Require(inputs && select({Source::Table, 1, true}) == 0);
+  memory.erase(kReflectionPassDefault);
+  Require(!ReadReflectionTextureImport(read));
+  inputs = ReflectionTextureImport{11, UINT32_MAX, 4, 2000, 22, true};
+  memory[2024] = 55;
+  Require(select({Source::Table, 1, true}) == 55); // unsigned index wrap matches source
+  inputs->table_entries = UINT32_MAX - 4;
+  Require(!select({Source::Table, 1, true})); // address overflow refuses before reading
 }

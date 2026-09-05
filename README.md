@@ -64,6 +64,7 @@ Quest-ready release.
 | Material properties | Shared, content-keyed `.bdmat` assets for supported diffuse/specular/reflection recipes, independent cooker/loader and bounded residency; enabled by default | Native texture/lighting definitions, asset-level scene bindings, remaining draw recipes and replacement of the shader-register compatibility boundary |
 | Receiver shadows | Host policy composition from current node visibility and model controls for supported direct-tree draws; enabled by default | Native pass/visibility producers, persistent feature policy and remaining draw recipes |
 | Lighting pass inputs | Host ambient/camera/colour/shadow parameter production and explicit direct-node shadow sampling; short publication/input comparisons pass | Native scene/light/texture associations, other draw recipes and removal of the material staging/shader ABI |
+| Reflection bindings | Explicit model selection/enable recipes and current pass/table resolution for supported direct draws; old slot-5 image handles are not retained | Null-selection inheritance, animated/ordinary texture overrides, deferred/other-phase recipes and persistent native scene associations |
 | Texture assets | Persistent `.bdtex` assets, independent mip cooking, shared host GPU ownership, direct immutable material bindings and native stable samplers; enabled by default | Asset-level scene associations, dynamic/inherited inputs, remaining imports and headset-specific formats |
 | Resource uploads | Bounded host staging pages, fence-safe reuse/retirement, separate from shader constants | Complete native dynamic-geometry producers and asset streaming/backpressure |
 | Deferred work | Host depth, ordering, bounded batch planning, consumer loop, surface expansion and cleanup | Native scene/pass inputs, remaining entry fields, engine storage and visual/material/state adapters |
@@ -158,6 +159,12 @@ fallbacks or direct-node source mismatches, but later scenery/text still fail
 and stereo depth remains inconclusive. Engine scene/texture associations,
 material staging and other retained inputs remain; this is not complete frame
 ownership.
+
+The [reflection-selection checkpoint](research/20260905_0144_native-reflection-selection.md)
+separates material selection from image lifetime and reflection enable. Supported
+direct draws resolve current bindings before submission; null selections remain
+an explicit compatibility boundary because the existing texture adapter treats
+them as no-ops. This is not full reflection-pass or frame ownership.
 
 ## Project documentation
 

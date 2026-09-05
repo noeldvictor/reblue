@@ -77,6 +77,7 @@
 #include "gpu/scene/native_lighting_bridge.h"
 #include "gpu/scene/native_shadow.h"
 #include "gpu/scene/native_texture_binding.h"
+#include "gpu/scene/reflection_texture_import.h"
 #include "gpu/host_upload.h"
 #include "gpu/scene/scene_recipe_residency.h"
 #include "gpu/native_texture_mirror.h"
@@ -91,6 +92,7 @@ REXCVAR_DECLARE(bool, bd_native_materials);
 REXCVAR_DECLARE(bool, bd_native_materials_verify);
 REXCVAR_DECLARE(bool, bd_native_shadow_inputs);
 REXCVAR_DECLARE(bool, bd_native_texture_bindings);
+REXCVAR_DECLARE(bool, bd_native_reflection_inputs);
 REXCVAR_DECLARE(i32, bd_host_draw_refresh);
 REXCVAR_DECLARE(bool, bd_host_list_build);
 REXCVAR_DECLARE(bool, bd_host_draw_verify);
@@ -132,6 +134,7 @@ struct SubDraw {
   NativeMaterialHandle native_material;
   std::optional<NativeSkinBinding> skin;
   std::optional<bool> material_disables_shadow;
+  std::optional<NativeReflectionRecipe> reflection;
   std::array<NativeTextureBinding, 16> native_textures;
   PipelineState pipelineState{};
   GuestTexture *textures[16]{};
@@ -376,6 +379,51 @@ NativeTextureBinding CaptureNativeTexture(const GuestTexture *t) {
           t->companionCube ? t->companionCube->nativeGpu : nullptr};
 }
 
+std::optional<u32> ReadReflectionWord(u64 address) {
+  if (!address || address > UINT32_MAX - 3)
+    return {};
+  const auto *word = bd::mem::try_at<const be_u32>(u32(address));
+  return word ? std::optional(u32(*word)) : std::nullopt;
+}
+std::optional<ReflectionTextureImport> NodeReflectionInputs(const NodeTag &tag) {
+  if (!REXCVAR_GET(bd_native_reflection_inputs) ||
+      !REXCVAR_GET(bd_native_texture_bindings) || !tag.valid || tag.from_list ||
+      !tag.ctx_va || tag.tech == 11 ||
+      bd::mem::try_load<u32>(tag.ctx_va + 16, ~0u) != 0)
+    return {};
+  return ReadReflectionTextureImport(ReadReflectionWord);
+}
+struct ReflectionBinding {
+  NativeTextureBinding native;
+  GuestTexture *texture = nullptr; // live surface/compatibility adapter only
+};
+struct ReflectionStats {
+  u64 checked = 0, wrong = 0, unsupported = 0, refused = 0;
+  u64 pass = 0, table = 0, enabled = 0;
+  u64 replayed = 0, native = 0, dynamic = 0, null = 0;
+  u32 frame = 0;
+};
+thread_local ReflectionStats t_reflection_stats;
+std::optional<ReflectionBinding> ResolveReflectionBinding(
+    const ReflectionTextureImport &inputs, const NativeReflectionRecipe &recipe) {
+  const auto address = SelectReflectionTextureImport(inputs, recipe, ReadReflectionWord);
+  if (!address)
+    return {};
+  if (!*address) {
+    // Video::SetTexture treats null as a no-op, not an unbind. If an earlier
+    // command selected a non-null image, resolving only the final selector
+    // cannot recover it. Keep this legacy inheritance recipe explicitly
+    // unconverted; never invent a null image or take a sibling draw's binding.
+    ++t_reflection_stats.null;
+    return {};
+  }
+  auto *texture = ResolveGuestTexture(*address);
+  if (!texture)
+    return {};
+  auto native = CaptureNativeTexture(texture);
+  return ReflectionBinding{native, native.primary ? nullptr : texture};
+}
+
 // The files as they were when the interpreter started on this node, what it
 // has set since, and the draws it has issued.
 struct Pending {
@@ -383,6 +431,7 @@ struct Pending {
   bool replayable = true;
   std::optional<NativeShadowInputs> shadow_inputs;
   std::optional<LightingVector> shadow_sampling;
+  std::optional<ReflectionTextureImport> reflection_inputs;
   alignas(16) u8 vs[kBlockBytes];
   alignas(16) u8 ps[kBlockBytes];
   u32 fetch[32][6];
@@ -695,6 +744,10 @@ bool MergeDraws(std::vector<SubDraw> &have, const std::vector<SubDraw> &now) {
       ++g_why[3];
       return false;
     }
+    if (x.reflection != y.reflection) {
+      ++g_why[2];
+      return false;
+    }
     if (std::memcmp(&x.pipelineState, &y.pipelineState, sizeof(PipelineState)) != 0) {
       ++g_why[1];
       return false;
@@ -991,6 +1044,7 @@ void HostDrawSnapshotBefore() {
   p.shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
       ? ImportNodeShadowInputs(CurrentNodeTag()) : std::nullopt;
   p.shadow_sampling = NativeNodeShadowSampling(CurrentNodeTag());
+  p.reflection_inputs = NodeReflectionInputs(CurrentNodeTag());
   p.valid = false;
   p.replayable = true;
   p.set_mask = 0;
@@ -1439,6 +1493,49 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
     d.bools_set[i] = p.vs_bools_set[i] | (d.bools[i] ^ p.vs_bools_before[i]);
     d.bools_set[4 + i] = p.ps_bools_set[i] | (d.bools[4 + i] ^ p.ps_bools_before[i]);
   }
+  if (p.reflection_inputs && d.indexed) {
+    d.reflection = ImportNativeReflectionRecipe(tag, d.index_va, d.stream_va[0],
+                                                d.start_index, d.count);
+    if (d.reflection) {
+      const auto binding = ResolveReflectionBinding(*p.reflection_inputs, *d.reflection);
+      if (!binding) {
+        ++t_reflection_stats.refused;
+        p.replayable = false;
+      } else {
+        ++t_reflection_stats.checked;
+        t_reflection_stats.pass += d.reflection->source == ReflectionTextureSource::PassDefault;
+        t_reflection_stats.table += d.reflection->source == ReflectionTextureSource::Table;
+        t_reflection_stats.enabled += d.reflection->enabled;
+        const bool texture_matches = binding->native.primary
+            ? binding->native == CaptureNativeTexture(s.textures[5])
+            : binding->texture == s.textures[5];
+        if (!texture_matches || d.reflection->enabled != bool(d.bools[4] & (1u << 4))) {
+          if (++t_reflection_stats.wrong <= 8) {
+            const auto actual_native = CaptureNativeTexture(s.textures[5]);
+            BD_WARN("[native-reflection] source mismatch view {} node {} source {} "
+                    "index {} enabled {}/{} texture matches {}; mesh {:08X} visual {:08X} "
+                    "tech {} range {}/{}; pass before/current {:08X}/{:08X}; "
+                    "native expected/actual {:016X}/{:016X} wrapper expected/actual {:08X}/{:08X} "
+                    "mask {:04X} material begin {:08X}",
+                    tag.render_view, tag.node_index, u32(d.reflection->source),
+                    d.reflection->table_index, d.reflection->enabled,
+                    bool(d.bools[4] & (1u << 4)), texture_matches, tag.mesh_va,
+                    tag.visual_va, tag.tech, d.start_index, d.count,
+                    p.reflection_inputs->pass_default,
+                    bd::mem::try_load<u32>(kReflectionPassDefault),
+                    binding->native.primary ? binding->native.primary->asset->id : 0,
+                    actual_native.primary ? actual_native.primary->asset->id : 0,
+                    binding->texture ? binding->texture->selfVa : 0,
+                    s.textures[5] ? s.textures[5]->selfVa : 0, d.tex_mask,
+                    bd::mem::try_load<u32>(bd::mem::try_load<u32>(tag.visual_va) + 32));
+          }
+          p.replayable = false;
+        }
+      }
+    } else {
+      ++t_reflection_stats.unsupported;
+    }
+  }
   if (p.shadow_inputs && d.material_disables_shadow) {
     auto &stats = t_shadow_stats;
     ++stats.checked;
@@ -1466,6 +1563,17 @@ void HostDrawCapture(const VideoState &s, const QueuedDraw &q, u32 device_guest,
 }
 
 void HostDrawCommit(const NodeTag &tag) {
+  if (FrameStatFrameCount() - t_reflection_stats.frame >= 300) {
+    const auto &r = t_reflection_stats;
+    BD_INFO("[native-reflection] checked {} wrong {} unsupported {} refused {}; "
+            "source pass {} table {} enabled {}; "
+            "replayed {} native {} dynamic {}; null selections refused {}; "
+            "engine associations remain",
+            r.checked, r.wrong, r.unsupported, r.refused, r.pass, r.table, r.enabled,
+            r.replayed, r.native,
+            r.dynamic, r.null);
+    t_reflection_stats.frame = FrameStatFrameCount();
+  }
   if (FrameStatFrameCount() - t_skin_stats.last_report >= 300) {
     BD_INFO("[native-skin] checked {} wrong {} unsupported {}; replayed {} palettes / {} joints (cumulative, engine pose import remains)",
             t_skin_stats.checked, t_skin_stats.wrong, t_skin_stats.unsupported,
@@ -1578,6 +1686,18 @@ void HostDrawCommit(const NodeTag &tag) {
           }
       }
     }
+  }
+
+  for (auto &d : p.draws) {
+    if (!d.reflection)
+      continue;
+    // Keep the actual capture through verification and the compatibility
+    // visual history above. Only the recipe persists in the draw template:
+    // a live native image is not necessarily today's selected material image.
+    d.native_textures[5] = {};
+    d.textures[5] = nullptr;
+    d.tex_va[5] = 0;
+    d.surface_mask &= ~(1u << 5);
   }
 
   const u64 key = KeyOf(tag);
@@ -1705,7 +1825,7 @@ void HostDrawCommit(const NodeTag &tag) {
           a.pipelineState.zWriteEnable != b.pipelineState.zWriteEnable ||
           a.index_va != b.index_va || a.indexed != b.indexed ||
           a.primitive_type != b.primitive_type ||
-          a.base_vertex != b.base_vertex)
+          a.base_vertex != b.base_vertex || a.reflection != b.reflection)
         continue;
       bool same = true;
       for (u32 k = 0; k < 16 && same; ++k)
@@ -1732,6 +1852,10 @@ void HostDrawCommit(const NodeTag &tag) {
         h ^= v + 0x9E3779B97F4A7C15ull + (h << 6) + (h >> 2);
       };
       const auto &ps = d.pipelineState;
+      if (d.reflection)
+        mix(0x5245464Cull ^ (u64(d.reflection->source) << 32) ^
+            (u64(d.reflection->table_index) << 40) ^
+            (u64(d.reflection->enabled) << 48));
       mix(ps.pixelShader ? XXH3_64bits(&ps.pixelShader, sizeof(void *)) : 0);
       mix(ps.vertexShader ? XXH3_64bits(&ps.vertexShader, sizeof(void *)) : 0);
       mix(u64(ps.alphaBlendEnable) | (u64(ps.srcBlend) << 1) |
@@ -1960,6 +2084,8 @@ bool HostDrawReplay(const NodeTag &tag) {
   const auto shadow_inputs = REXCVAR_GET(bd_native_shadow_inputs)
       ? ImportNodeShadowInputs(tag) : std::nullopt;
   const auto shadow_sampling = NativeNodeShadowSampling(tag);
+  const auto reflection_inputs = NodeReflectionInputs(tag);
+  const bool model_owns_reflection = reflection_inputs && ModelOwnsReflectionBinding(tag);
   bool sampled_verify = false;
   {
     std::lock_guard lock(st.mutex);
@@ -2223,6 +2349,7 @@ bool HostDrawReplay(const NodeTag &tag) {
   // whose buffer is gone refuses the replay and recaptures.
   struct ResolvedStreams {
     SkinPalette skin_pose;
+    ReflectionBinding reflection;
     plume::RenderVertexBufferView views[16];
     plume::RenderIndexBufferView index;
     // The guest bytes behind the streams and the index buffer, for the
@@ -2241,6 +2368,19 @@ bool HostDrawReplay(const NodeTag &tag) {
   for (size_t di = 0; di < t->draws.size(); ++di) {
     const SubDraw &d = t->draws[di];
     ResolvedStreams &rs = resolved[di];
+    if (d.reflection) {
+      // One mesh can be shared by visuals with different material callbacks.
+      // Validate today's owner too, not only the visual that made the template.
+      const auto binding = model_owns_reflection
+          ? ResolveReflectionBinding(*reflection_inputs, *d.reflection) : std::nullopt;
+      if (!binding) {
+        ++t_reflection_stats.refused;
+        return false; // preflight the whole node before issuing any draw
+      }
+      rs.reflection = *binding;
+    } else {
+      rs.reflection = {}; // release a prior node's temporary native handles
+    }
     // Preflight all poses before issuing any sub-draw. The packet owns this
     // frame's gathered palette; the shader upload never follows an old pose.
     if (d.skin && !ImportSkinPose(tag, *d.skin, rs.skin_pose)) {
@@ -2546,9 +2686,17 @@ bool HostDrawReplay(const NodeTag &tag) {
           (receives ? shadow_bit : 0u);
     }
     plume::RenderSamplerDesc native_samplers[16];
+    auto native_textures = d.native_textures;
+    if (d.reflection) {
+      native_textures[5] = rs.reflection.native;
+      bools[4] = (bools[4] & ~(1u << 4)) | (d.reflection->enabled ? 1u << 4 : 0u);
+      ++t_reflection_stats.replayed;
+      t_reflection_stats.native += bool(rs.reflection.native.primary);
+      t_reflection_stats.dynamic += bool(rs.reflection.texture);
+    }
     ov.native_sampler_mask = 0;
     for (const FetchDelta &f : d.fetch_delta) {
-      if (f.slot < 16 && f.stable && d.native_textures[f.slot].primary) {
+      if (f.slot < 16 && f.stable && native_textures[f.slot].primary) {
         native_samplers[f.slot] = f.native_recipe;
         ov.native_sampler_mask |= 1u << f.slot;
       }
@@ -2565,14 +2713,16 @@ bool HostDrawReplay(const NodeTag &tag) {
     ov.ps = t_ps_block;
     ov.fetch = t_fetch;
     ov.bools = bools;
-    ov.native_textures = d.native_textures.data();
+    ov.native_textures = native_textures.data();
     ov.native_samplers = native_samplers;
     {
       std::lock_guard lock(s.mutex);
       s.pipelineState = d.pipelineState;
       s.native_draw_pipeline = &d.pipelineState;
       for (u32 k = 0; k < 16; ++k) {
-        if (d.native_textures[k].primary) {
+        if (k == 5 && d.reflection) {
+          s.textures[k] = rs.reflection.texture; // null only when a native handle owns the image
+        } else if (native_textures[k].primary) {
           s.textures[k] = nullptr; // every downstream consumer sees native ownership
         } else if (((d.tex_mask & ~d.surface_mask) >> k) & 1u) {
           s.textures[k] = d.textures[k];
@@ -2683,7 +2833,7 @@ bool HostDrawReplay(const NodeTag &tag) {
       // What the replay would dispatch, kept for the interpreter's draws
       // to be checked against (VerifyAgainstReplay).
       VerifyDraw e;
-      e.native_textures = d.native_textures;
+      e.native_textures = native_textures;
       std::copy(std::begin(native_samplers), std::end(native_samplers),
                 e.native_samplers.begin());
       e.native_sampler_mask = ov.native_sampler_mask;
@@ -2723,7 +2873,7 @@ bool HostDrawReplay(const NodeTag &tag) {
                                          lod_count, lod_start, d.base_vertex,
                                          d.start_vertex);
     bool native_draw = false;
-    for (const auto &binding : d.native_textures) {
+    for (const auto &binding : native_textures) {
       if (binding.primary) {
         ++st.native_binding_slots;
         native_draw = true;

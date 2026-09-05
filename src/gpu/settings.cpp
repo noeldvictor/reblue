@@ -504,6 +504,8 @@ REXCVAR_DEFINE_BOOL(bd_native_lighting, true, kCvarGroup,
                    "Produce native lighting passes and live direct-node shadow sampling inputs.");
 REXCVAR_DEFINE_BOOL(bd_native_lighting_verify, false, kCvarGroup,
                    "Compare native lighting publication with the original producer.");
+REXCVAR_DEFINE_BOOL(bd_native_reflection_inputs, true, kCvarGroup,
+                   "Resolve direct-node reflection recipes from current pass/table inputs.");
 // Diagnostic: the mesh (guest VA) whose queued draws are logged in full, both
 // when the interpreter issues them and when the host replays them, so the
 // two can be diffed.
