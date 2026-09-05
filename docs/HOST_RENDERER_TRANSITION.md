@@ -30,6 +30,21 @@ All of these remain required; shipping an intermediate component is not completi
 
 ## Current conversion
 
+Native eye geometry checkpoint (2026-09-05): scene and final layered output
+now share the full native runtime extent instead of fitting the whole 3D
+frame to the authored 16:9 HUD canvas. UI scaling remains separate; native
+projection presentation uses the complete viewport without console alignment
+rounding. All 24 CTests and thirteen source guards pass. The scale-1.0 desktop
+OpenXR run verifies 1440x1584 scene/final eyes with image content across all
+1584 rows in both inspected eyes, superseding earlier 1440x808/letterbox
+findings for this path. The foreground passage still flags 10/119 large
+changes; blur and inconclusive depth remain. Normal flat output has 0/119
+large jumps and Shu's cast silhouette. UI/cinema/movie GPU coverage, readable
+near/far framing, scene/output getter adapters, other frame producers and
+broader desktop qualification remain. Native sun camera stays opt-in and
+the default XR scale stays 0.65. See
+`research/20260905_1026_native-full-eye-geometry.md`.
+
 Native sun camera experiment (2026-09-05): current-view orthographic fitting,
 scene snapshot and an explicit sun-scope culling volume are implemented, but
 `bd_native_sun_camera` is **off by default**. GPU controls and exact character
@@ -44,9 +59,10 @@ run does not establish their cause or longer-term absence. All 23 CTests and
 thirteen source guards pass. Normal 1440x1584 final-eye output has 10/119 large
 changes during an inspected foreground-object passage, with 103019 matching
 shadow ownership checks and no camera fallback. That passage is not yet
-attributed to the camera change. Both eyes remain blurred/letterboxed with
-1440x808 scene content; depth is inconclusive and the character shadow is not
-qualified in that framing. The default still executes the counted engine
+attributed to the camera change. That run's eyes were blurred/letterboxed with
+1440x808 scene content; the native eye geometry checkpoint above supersedes
+its sizing/letterbox finding, but depth and character-shadow visibility remain
+unqualified in that framing. The default still executes the counted engine
 snapshot/light fitter; the hooked binary's default-off short flat control has
 0/119 large jumps, Shu's cast silhouette present and zero cutoff bypasses.
 Final-eye and broader camera qualification remain;

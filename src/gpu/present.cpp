@@ -46,6 +46,7 @@
 #include "gpu/frag_census.h"
 #include "gpu/occlusion_cull.h"
 #include "gpu/output.h"
+#include "gpu/native_output_geometry.h"
 #include "gpu/screenshot.h"
 #include "gpu/settings.h"
 
@@ -401,8 +402,10 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
   // latched render rect. A Sofdec movie is prerendered 16:9 and BD stretches it
   // across that rect, so fitting the present to the design ratio squeezes it
   // back out. Stretch mode asked for the distortion and keeps it.
+  const bool movie = bd::engine::SofdecMoviePlaying();
+  const bool cinema = Output::EyeSized() && !Output::ProjectionEye();
   const double present_aspect =
-      (bd::engine::SofdecMoviePlaying() && !Output::StretchToFill())
+      ((movie && !Output::StretchToFill()) || cinema)
           ? kDesignCanvasAspect
           : Output::RenderAspect();
   const bool cel = REXCVAR_GET(bd_cel_shading) && s.cel_pipeline;
@@ -417,21 +420,11 @@ void RecordPresentPass(VideoState &s, GuestTexture *rt, GuestTexture *chosen,
 
   u32 fit_w = swap_w, fit_h = swap_h;
   i32 off_x = 0, off_y = 0;
-  // The fit stays on the layered path too, and the reason is worth writing
-  // down because removing it looked right and was not (2026-09-04). Under
-  // bd_mv_half_width the latched render width is halved while RenderAspect
-  // keeps the *full* width (output.cpp), so the guest draws content for 1.78
-  // into a 0.89-shaped layer - anamorphically squeezed 2:1 by design, the same
-  // squeeze side-by-side's half-width viewports carry. This fit is what undoes
-  // it: 1.78 into 960x1080 lands on 960x540. Mapping the layer 1:1 filled the
-  // eye and left every frame stretched 2x vertically.
-  //
-  // So the black bars are not this pass's to remove. They go when the guest
-  // renders at the eye's own aspect in the first place, which is
-  // Output::LatchedFit taking the runtime's per-eye size - and that has to
-  // carry the 2D layout with it.
-  Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x,
-                     off_y);
+  // Native projection eyes already contain their whole runtime frustum. Use
+  // every pixel, including non-eight-aligned runtime sizes. Flat/cinema/movie
+  // and the old packed-eye path still need their authored aspect fit.
+  if (!FullEyeViewport(Output::EyeSized(), layered_present, Output::ProjectionEye(), movie))
+    Output::ComputeFit(swap_w, swap_h, present_aspect, fit_w, fit_h, off_x, off_y);
   {
     // What the present actually samples from and into. Written down because
     // the source's size and the rect it lands in are the two numbers that say
@@ -711,13 +704,19 @@ void XrPresentSize(VideoState &s, const GuestTexture *front, u32 &w, u32 &h) {
     return;
   }
   // The layered swapchain is one eye. Under bd_xr_eye_sized the layer is the
-  // runtime's own per-eye rect and the guest's 16:9 content is fitted into it
-  // at present, 1:1; otherwise it is whatever the frame's layer happens to be.
+  // runtime's own per-eye rect, shared with native scene sizing. The authored
+  // 2D canvas is independent; it no longer restricts the scene to 16:9.
   if (XrWantsLayeredSwapchain() && REXCVAR_GET(bd_xr_eye_sized) &&
       session.RecommendedWidth() && session.RecommendedHeight()) {
-    const double scale = std::clamp(REXCVAR_GET(bd_xr_render_scale), 0.05, 2.0);
-    w = std::max<u32>(64, static_cast<u32>(session.RecommendedWidth() * scale + 0.5));
-    h = std::max<u32>(64, static_cast<u32>(session.RecommendedHeight() * scale + 0.5));
+    const auto extent = ScaleEyeExtent({session.RecommendedWidth(), session.RecommendedHeight()},
+                                       REXCVAR_GET(bd_xr_render_scale));
+    if (!extent) {
+      w = h = 0;
+      BD_ERROR("[xr] invalid native eye extent");
+      return;
+    }
+    w = extent->width;
+    h = extent->height;
     if (!g_xr_layered_size_w) {
       g_xr_layered_size_w = w;
       g_xr_layered_size_h = h;

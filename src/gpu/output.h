@@ -35,6 +35,11 @@ public:
   // is upscaled at present.
   static bool LatchedFit(u32 &w, u32 &h);
 
+  // True after native runtime dimensions own the latched frame. Projection
+  // mode fills that eye; cinema fits the flat authored picture at present.
+  static bool EyeSized();
+  static bool ProjectionEye();
+
   // The latched width at the composed aspect. Equal to LatchedFit's width
   // except under multiview at half width, where the pixel rect is half of it
   // and every layer is presented stretched back to this.

@@ -9,6 +9,7 @@
  *            See LICENSE file in the project root for full license text.
  */
 #include "gpu/output.h"
+#include "gpu/native_output_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -18,6 +19,7 @@
 
 #include "gpu/device.h"
 #include "xr/xr_session.h"
+#include "xr/xr_settings.h"
 #include "gpu/settings.h"
 
 REXCVAR_DECLARE(i32, bd_max_render_height);
@@ -33,12 +35,12 @@ namespace {
 // The latched rect at the composed aspect, before the multiview halving
 // below: the aspect the frame is projected and fitted for.
 u32 g_latched_full_w = 0;
+bool g_eye_latched = false;
 } // namespace
 
 bool Output::LatchedFit(u32 &w, u32 &h) {
   static u32 latched_w = 0;
   static u32 latched_h = 0;
-  static bool eye_latched = false;
   // The headset decides the frame's shape, not the desktop window it happens
   // to have been launched beside. Until 2026-09-04 this fitted the window and
   // then halved the width for multiview, which is how a 960x1080 target came
@@ -54,37 +56,22 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
   // meaningful there and that path is deliberately left as it was - it has not
   // been verified against this and does not need it.
   if (REXCVAR_GET(bd_xr_eye_sized) && REXCVAR_GET(bd_stereo_multiview) &&
-      !eye_latched) {
+      !g_eye_latched) {
     auto &session = bd::xr::Session::Get();
     const u32 eye_w = session.RecommendedWidth();
     const u32 eye_h = session.RecommendedHeight();
     if (eye_w && eye_h) {
-      const double scale =
-          std::clamp(REXCVAR_GET(bd_xr_render_scale), 0.05, 2.0);
-      const u32 base_w =
-          std::max<u32>(64, static_cast<u32>(eye_w * scale + 0.5));
-      const u32 base_h =
-          std::max<u32>(64, static_cast<u32>(eye_h * scale + 0.5));
-      i32 ox = 0, oy = 0;
-      u32 cw = 0, ch = 0;
-      // The content keeps the game's aspect, because the 2D layout is authored
-      // for it. It lands in the eye-shaped layer's fitted rect at present, 1:1.
-      //
-      // Not ConfiguredAspect() alone: that returns 0 in Auto mode, meaning
-      // "follow the target", which on a 16:9 desktop window is the game's
-      // aspect by luck and on a square or eye-shaped rect is not. A square
-      // simulated eye produced 512x512 content this way, which would put the
-      // HUD through a mangle.
-      const double want = ConfiguredAspect() > 0.0 ? ConfiguredAspect()
-                                                   : kDesignCanvasAspect;
-      ComputeFit(base_w, base_h, want, cw, ch, ox, oy);
-      if (cw && ch) {
-        latched_w = std::max<u32>(8u, cw & ~7u);
-        latched_h = ch;
-        g_latched_full_w = latched_w; // no squeeze: RenderAspect is its own
-        eye_latched = true;
+      const double scale = REXCVAR_GET(bd_xr_render_scale);
+      // The 3D frame fills the native eye. Fitting the entire scene to the
+      // authored HUD canvas letterboxed the runtime frustum. Only
+      // 2D vertices use DesignScaleX/Y; their canvas does not size the scene.
+      if (const auto extent = ScaleEyeExtent({eye_w, eye_h}, scale)) {
+        latched_w = extent->width;
+        latched_h = extent->height;
+        g_latched_full_w = latched_w;
+        g_eye_latched = true;
         BD_INFO("[output] eye-sized frame: runtime {}x{} an eye x{:.2f} -> "
-                "content {}x{} at aspect {:.3f}",
+                "native scene {}x{} at aspect {:.3f}; separate 2D canvas",
                 eye_w, eye_h, scale, latched_w, latched_h,
                 double(latched_w) / double(latched_h));
       }
@@ -164,6 +151,15 @@ bool Output::LatchedFit(u32 &w, u32 &h) {
   return true;
 }
 
+bool Output::EyeSized() {
+  u32 w = 0, h = 0;
+  return LatchedFit(w, h) && g_eye_latched;
+}
+
+bool Output::ProjectionEye() {
+  return EyeSized() && bd::xr::Settings::Get().Mode() != bd::xr::CameraMode::Cinema;
+}
+
 u32 Output::LatchedFullWidth() {
   u32 w = 0, h = 0;
   if (!LatchedFit(w, h))
@@ -203,6 +199,10 @@ double Output::RenderAspect() {
 }
 
 double Output::ProjectionAspect() {
+  // Cinema still composes a flat authored picture, fitted as one image at
+  // present. Projection-mode VR ignores desktop stretch/aspect preferences.
+  if (EyeSized())
+    return ProjectionEye() ? RenderAspect() : kDesignCanvasAspect;
   return StretchToFill() ? kDesignCanvasAspect : RenderAspect();
 }
 
@@ -212,17 +212,13 @@ bool Output::DesignFitActive() {
 }
 
 float Output::DesignScaleX() {
-  const double ar = ProjectionAspect();
-  if (!DesignFitActive() || ar <= kDesignCanvasAspect)
-    return 1.0f;
-  return static_cast<float>(kDesignCanvasAspect / ar);
+  return DesignCanvasScale(ProjectionAspect(), kDesignCanvasAspect,
+                           kDesignCanvasAspectEpsilon)[0];
 }
 
 float Output::DesignScaleY() {
-  const double ar = ProjectionAspect();
-  if (!DesignFitActive() || ar >= kDesignCanvasAspect)
-    return 1.0f;
-  return static_cast<float>(ar / kDesignCanvasAspect);
+  return DesignCanvasScale(ProjectionAspect(), kDesignCanvasAspect,
+                           kDesignCanvasAspectEpsilon)[1];
 }
 
 float Output::DesignOverscanX() {

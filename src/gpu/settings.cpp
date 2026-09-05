@@ -1021,25 +1021,13 @@ REXCVAR_DEFINE_INT32(bd_material_tier_bits, 2, kCvarGroup,
 // the order. This is bd_draw_instancing_reorder_blended's replacement: that
 // one moved blended draws freely and put the clear colour through the ground
 // at the village rock (2026-09-03).
-// Drop the anamorphic squeeze on the layered multiview path, so the guest
-// renders the size the present actually delivers instead of twice it. Off
-// until the owner picks between this and the two other ways to spend the
-// difference (research/20260904_1330_...md): it changes what the player sees.
-// The frame's shape from the headset instead of the desktop window: the
-// render target is the game's aspect fitted into the runtime's per-eye rect
-// (times bd_xr_render_scale), and the layered swapchain's layer is that rect,
-// so the present maps the content 1:1 into its letterboxed place. Off until
-// the owner picks a budget - at scale 1.0 a Quest eye is 1440x1584, which is
-// far more shading than the frame does today.
-// On since 2026-09-05, multiview only. It is not a trade: on a Quest eye of
-// 1440x1584 at scale 0.65 the frame renders 936x520 = 487k pixels against the
-// half-width path's 688x720 = 495k, and delivers all 487k where that path
-// delivers 688x360 = 248k. The same shading budget for twice the image,
-// because the factor of two the present used to discard is spent on the image.
-// Side-by-side keeps its squeeze: two eyes pack into one panel there.
+// Native multiview scene and final layers share the full runtime eye extent.
+// The authored HUD canvas is fitted separately, never used to letterbox the
+// 3D frustum. Cinema/movies still fit their flat picture at presentation.
+// Side-by-side remains an explicitly unconverted packed-eye compatibility path.
 REXCVAR_DEFINE_BOOL(bd_xr_eye_sized, true, kCvarGroup,
-                    "Render size from the runtime's per-eye rect, not the "
-                    "desktop window (multiview only).");
+                    "Full scene and final-layer size from the runtime eye; "
+                    "authored UI is fitted separately (multiview only).");
 REXCVAR_DEFINE_DOUBLE(bd_xr_render_scale, 0.65, kCvarGroup,
                       "Fraction of the runtime's per-eye rect to render, "
                       "under bd_xr_eye_sized.")
