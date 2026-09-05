@@ -92,3 +92,42 @@ also has no mismatches/fallbacks; native views have no imports/fallbacks and
 host culling reports no missing native volume. All analysis completed after
 the renderer stopped. This is short-field correctness evidence, not an FPS
 claim, later-scene qualification, VR qualification or full desktop acceptance.
+
+## Normal final-eye sequence
+
+The code and flat evidence were committed and pushed as `2a7c288`. Process
+19872 ran 08:01:00-08:02:48, log `reblue_735.log`, using the same 07:56:29
+binary. The vrsim skill was used; all 15 temporary profile settings audited:
+original autoplay/perf/delay/count, minimum 450 draws, native shadow passes on,
+VR on, legacy stereo off, multiview and layered textures on, scene-array capture
+and mirror off, camera mode 2, diorama height 0, XR render scale 1.0. The
+process-only environment named the absolute simulator manifest and its absolute
+31232-byte runtime DLL, with width 1440, height 1584, head height 0. Full archive
+mount succeeded. XR eye coordinates differ from the game camera, confirming
+the override is active. No Quest or Thor was used.
+
+The 120 final stacked 1440x3168 captures are in
+`out/verification/native_shadow_vr`, from `frame_1788609722_0.raw` through
+`frame_1788609731_119.raw`, frames 13142-13261, 08:02:02.672-08:02:11.102.
+There are 0/119 jumps over 6%, no cyan patches and zero measured cyan. Actual
+first/last previews show both eyes with stable rocky scenery/orange sky, but
+heavy blur and black bars. Both stereo tests return INCONCLUSIVE: useful
+bands 44/52%, disparities -1/-2 pixels, spread 1. Stable pixels do not prove
+depth, comfort, complete vertical scene content or headset performance.
+The 4096x4096 shadow map and scene depth/colour each have two layers. Final
+eyes are 1440x1584 each, but scene content remains 1440x808 during capture.
+
+Last shadow totals: 15301 begins / 15300 ends, 15300 explicit outputs, 10450
+empty clears, 102251 matching ownership checks and zero compatibility, refusal,
+wrong ownership or null outputs. Remaining camera snapshots and light fits
+are 15301 each. Main-scene ownership has 117551 matches and no fallback;
+native views have 35589 updates and no imports/fallbacks, while host frustum
+walks report no missing volume. No error/critical/VK_ERROR or exhaustion
+entries were found. All analysis completed after the renderer stopped; the
+original five-setting profile is restored and no renderer remains running.
+
+The new sun-shadow lifecycle now has normal flat and final-eye short-sequence
+evidence on the same binary. Null output, shadows-off/layer-policy refusal,
+setting changes during a live scope, deeper nesting and secondary shadow GPU
+coverage were not exercised. Known later rock-wall/text failures were not
+requalified. The full desktop completion gate remains open.

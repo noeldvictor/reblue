@@ -37,8 +37,11 @@ pass wrappers and resolve-source guessing. Empty caster passes publish their
 owned far-depth clear; shadow output no longer publishes a post/UI tile chain.
 All 22 CTests and nine source guards pass. The normal short desktop sequence
 has 0/119 large jumps or cyan patches, 38674 matching ownership checks and no
-lifecycle fallback. Final-eye qualification is pending. Engine scene-camera
-snapshot and light-fitting execution remain
+lifecycle fallback. The same binary's normal 1440x1584 final-eye sequence also
+has no large jumps/cyan patches, with 102251 matching ownership checks and no
+fallback. VR remains blurred/letterboxed and depth-inconclusive; scene content
+is still 1440x808. Later scenery/text and other shadow modes are not qualified.
+Engine scene-camera snapshot and light-fitting execution remain
 counted, and secondary shadows, caster scheduling and sampling/resource/getter
 adapters remain. This is not a complete shadow system or fully native frame.
 See `research/20260905_0756_native-shadow-pass-lifecycle.md`.
